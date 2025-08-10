@@ -1246,7 +1246,8 @@
           tempDiv.querySelectorAll('span.math-field').forEach(span => {
             if (span._mqInstance) {
               const latex = span._mqInstance.latex();
-              span.textContent = `$${latex}$`;
+              const textNode = document.createTextNode(`$${latex}$`);
+              span.parentNode.replaceChild(textNode, span);
             }
           });
           const rawContent = tempDiv.innerHTML.trim();
@@ -1270,6 +1271,10 @@
         tempDiv.innerHTML = content;
 
         if (stripDelimiters) {
+          tempDiv.querySelectorAll('span.math-field').forEach(span => {
+            span.replaceWith(span.textContent || '');
+          });
+
           // Convert $...$ into editable math-field spans
           const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT);
           const textNodes = [];
