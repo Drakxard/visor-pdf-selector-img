@@ -154,12 +154,11 @@
       max-width: 350px; min-width: 200px; border-radius: 8px; color: #333; font-size: 14px; line-height: 1.4;
     }
     .note-popup .math-field { display: inline-block; margin: 2px; background: #f8f9fa; padding: 2px 4px; border-radius: 3px; }
-    .note-popup .note-counter { text-align: right; margin-top: 8px; font-size: 12px; color: #555; }
 
     .note-textarea {
       position: fixed; z-index: 1500; border: 2px solid #8ab4f8; border-radius: 8px; padding: 12px; background: white;
       box-shadow: 0 4px 20px rgba(0,0,0,0.3); font-family: inherit; resize: both; min-width: 250px; min-height: 120px;
-      color: #333; font-size: 14px; line-height: 1.4; outline: none; overflow: auto;
+      color: #333; font-size: 14px; line-height: 1.4; outline: none;
     }
     .note-textarea:focus { border-color: #4285f4; }
     .mq-editable-field, .mq-editable-field .mq-root-block {
@@ -1168,9 +1167,6 @@
         tempDiv.innerHTML = htmlContent;
         Array.from(tempDiv.childNodes).forEach(node => element.appendChild(node.cloneNode(true)));
         initMathFields(element);
-        if (window.MathJax && window.MathJax.typesetPromise) {
-          MathJax.typesetPromise([element]);
-        }
       }
       function createTextarea(x, y, icon, targetLayer) {
         const textarea = document.createElement('div');
@@ -1180,8 +1176,7 @@
         textarea.style.left = (pageRect.left + x) + 'px';
         textarea.style.top = (pageRect.top + y) + 'px';
         if (icon) {
-          const contentForEdit = icon.dataset.content.replace(/<span class="note-sep"><\/span>/g, '\\n');
-          renderContentInElement(textarea, processNoteContent(contentForEdit));
+          renderContentInElement(textarea, processNoteContent(icon.dataset.content));
         } else {
           textarea.innerHTML = '<p></p>';
         }
@@ -1220,8 +1215,7 @@
               span.textContent = `$${latex}$`;
             }
           });
-          const rawContent = tempDiv.innerHTML.trim();
-          const content = rawContent.replace(/\\n/g, '<span class="note-sep"></span>');
+          const content = tempDiv.innerHTML.trim();
           document.body.removeChild(textarea);
           if (content && content !== '<p></p>') {
             if (icon) {
@@ -1287,37 +1281,12 @@
         hidePopup();
         const popup = document.createElement('div');
         popup.className = 'note-popup';
-        popup.tabIndex = 0;
-        const parts = icon.dataset.content.split('<span class="note-sep"></span>');
-        let partIndex = 0;
-        function renderPart() {
-          renderContentInElement(popup, processNoteContent(parts[partIndex]));
-          if (parts.length > 1) {
-            const counter = document.createElement('div');
-            counter.className = 'note-counter';
-            counter.textContent = `${partIndex + 1}/${parts.length}`;
-            popup.appendChild(counter);
-          }
-        }
-        renderPart();
+        renderContentInElement(popup, processNoteContent(icon.dataset.content));
         const iconRect = icon.getBoundingClientRect();
         popup.style.left = (iconRect.left + window.scrollX) + 'px';
         popup.style.top = (iconRect.bottom + window.scrollY + 5) + 'px';
         document.body.appendChild(popup);
         activePopup = popup; activeIcon = icon;
-        popup.focus();
-        popup.addEventListener('keydown', (e) => {
-          if (parts.length <= 1) return;
-          if (e.key === 'ArrowRight') {
-            partIndex = (partIndex + 1) % parts.length;
-            renderPart();
-            e.preventDefault();
-          } else if (e.key === 'ArrowLeft') {
-            partIndex = (partIndex - 1 + parts.length) % parts.length;
-            renderPart();
-            e.preventDefault();
-          }
-        });
         popup.addEventListener('mouseleave', () => {
           setTimeout(() => {
             if (!popup.matches(':hover') && !icon.matches(':hover')) hidePopup();
