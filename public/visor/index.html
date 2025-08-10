@@ -1253,7 +1253,9 @@
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
-            cloneSpans[idx].textContent = `$${latex}$`;
+            const span = cloneSpans[idx];
+            const textNode = document.createTextNode(`$${latex}$`);
+            span.replaceWith(textNode);
           });
           const rawContent = tempDiv.innerHTML.trim();
           const content = rawContent.replace(/\\n/g, '<span class="note-sep"></span>');
@@ -1274,6 +1276,12 @@
       function processNoteContent(content, stripDelimiters = false) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = content;
+        if (!stripDelimiters) {
+          // Remove legacy math-field spans when just displaying
+          tempDiv.querySelectorAll('span.math-field').forEach(span => {
+            span.replaceWith(span.textContent || '');
+          });
+        }
 
         if (stripDelimiters) {
           // Convert $...$ into editable math-field spans
@@ -1304,6 +1312,7 @@
           if (stripDelimiters && textContent.startsWith('$') && textContent.endsWith('$')) {
             span.textContent = textContent.substring(1, textContent.length - 1);
           }
+          if (stripDelimiters) span.className = 'math-field';
         });
 
         return tempDiv.innerHTML;
