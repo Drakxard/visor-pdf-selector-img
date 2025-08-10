@@ -1268,12 +1268,38 @@
       function processNoteContent(content, stripDelimiters = false) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = content;
+
+        if (stripDelimiters) {
+          // Convert $...$ into editable math-field spans
+          const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT);
+          const textNodes = [];
+          while (walker.nextNode()) textNodes.push(walker.currentNode);
+          textNodes.forEach(node => {
+            const parts = node.textContent.split(/\$([^$]+)\$/g);
+            if (parts.length > 1) {
+              const frag = document.createDocumentFragment();
+              for (let i = 0; i < parts.length; i++) {
+                if (i % 2 === 0) {
+                  if (parts[i]) frag.appendChild(document.createTextNode(parts[i]));
+                } else {
+                  const span = document.createElement('span');
+                  span.className = 'math-field';
+                  span.textContent = parts[i];
+                  frag.appendChild(span);
+                }
+              }
+              node.parentNode.replaceChild(frag, node);
+            }
+          });
+        }
+
         tempDiv.querySelectorAll('span.math-field').forEach(span => {
           const textContent = span.textContent || '';
           if (stripDelimiters && textContent.startsWith('$') && textContent.endsWith('$')) {
             span.textContent = textContent.substring(1, textContent.length - 1);
           }
         });
+
         return tempDiv.innerHTML;
       }
       function enhanceMathField(span) {
