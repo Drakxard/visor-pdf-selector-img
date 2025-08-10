@@ -7,7 +7,7 @@
 
   <script>
     window.MathJax = {
-      tex: { inlineMath: [['$', '$'], ['\\$$', '\\$$']] },
+      tex: { inlineMath: [['$', '$'], ['$$', '$$']] },
       svg: { fontCache: 'global' }
     };
   </script>
@@ -154,11 +154,12 @@
       max-width: 350px; min-width: 200px; border-radius: 8px; color: #333; font-size: 14px; line-height: 1.4;
     }
     .note-popup .math-field { display: inline-block; margin: 2px; background: #f8f9fa; padding: 2px 4px; border-radius: 3px; }
+    .note-popup .note-counter { text-align: right; margin-top: 8px; font-size: 12px; color: #555; }
 
     .note-textarea {
       position: fixed; z-index: 1500; border: 2px solid #8ab4f8; border-radius: 8px; padding: 12px; background: white;
       box-shadow: 0 4px 20px rgba(0,0,0,0.3); font-family: inherit; resize: both; min-width: 250px; min-height: 120px;
-      color: #333; font-size: 14px; line-height: 1.4; outline: none;
+      color: #333; font-size: 14px; line-height: 1.4; outline: none; overflow: auto;
     }
     .note-textarea:focus { border-color: #4285f4; }
     .mq-editable-field, .mq-editable-field .mq-root-block {
@@ -243,6 +244,25 @@
     .category-btn.teo { background: #0ea5a3; }
     .category-btn.prac { background: #16a34a; }
     .category-tip { color: #666; font-size: 13px; margin-top: 8px; text-align: center; }
+
+    /* Light mode overrides */
+    body.light-mode {
+      background: #f5f5f5;
+      color: #202124;
+    }
+    body.light-mode #app-header {
+      background: #e0e0e0;
+      border-bottom: 1px solid #ccc;
+    }
+    body.light-mode .header-center { color: #202124; }
+    body.light-mode .control-btn { color: #202124; }
+    body.light-mode .control-btn:hover { background: rgba(0,0,0,0.1); }
+    body.light-mode #drop-zone,
+    body.light-mode #pdf-container,
+    body.light-mode .loading-overlay {
+      background: #f5f5f5;
+    }
+    body.light-mode .fullscreen { background: #f5f5f5 !important; }
   </style>
 </head>
 <body>
@@ -252,7 +272,7 @@
     </div>
     <div class="header-center" id="file-info">Visor PDF</div>
     <div class="header-right">
-       NUEVOS: carpeta de PDFs e iniciar 
+       NUEVOS: carpeta de PDFs e iniciar
       <button class="control-btn" id="pdf-folder-btn" title="Seleccionar carpeta de PDFs">📂 PDFs</button>
       <button class="control-btn" id="start-btn" title="Abrir primer PDF" disabled>▶ iniciar →</button>
       <input type="file" id="pdf-folder-input" class="hidden" style="display:none"
@@ -271,6 +291,7 @@
         <button class="control-btn" id="folder-btn" title="Configurar carpeta">⚙️</button>
       </div>
 
+      <button class="control-btn" id="theme-toggle" title="Cambiar modo">☀️</button>
       <button class="control-btn" id="info-btn" title="Ayuda">ℹ️</button>
     </div>
   </header>
@@ -437,6 +458,21 @@
       const startBtn = document.getElementById('start-btn');
       const pdfFolderInput = document.getElementById('pdf-folder-input');
       let pdfDirectoryHandle = null;
+      const themeToggle = document.getElementById('theme-toggle');
+
+      // Configuración de tema
+      const savedTheme = localStorage.getItem('theme');
+      if (savedTheme === 'light') {
+        document.body.classList.add('light-mode');
+        themeToggle.textContent = '🌙';
+      } else {
+        themeToggle.textContent = '☀️';
+      }
+      themeToggle.addEventListener('click', () => {
+        const isLight = document.body.classList.toggle('light-mode');
+        themeToggle.textContent = isLight ? '🌙' : '☀️';
+        localStorage.setItem('theme', isLight ? 'light' : 'dark');
+      });
       let pdfEntries = [];
       let currentPdfIndex = -1;
       let currentObjectUrl = null;
@@ -1161,12 +1197,16 @@
       // ========================================
       // SISTEMA DE NOTAS (existente)
       // ========================================
-      function renderContentInElement(element, htmlContent) {
+      function renderContentInElement(element, htmlContent, editable = false) {
         element.innerHTML = '';
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = htmlContent;
         Array.from(tempDiv.childNodes).forEach(node => element.appendChild(node.cloneNode(true)));
-        initMathFields(element);
+        if (editable) {
+          initMathFields(element);
+        } else if (window.MathJax && window.MathJax.typesetPromise) {
+          MathJax.typesetPromise([element]);
+        }
       }
       function createTextarea(x, y, icon, targetLayer) {
         const textarea = document.createElement('div');
@@ -1176,7 +1216,8 @@
         textarea.style.left = (pageRect.left + x) + 'px';
         textarea.style.top = (pageRect.top + y) + 'px';
         if (icon) {
-          renderContentInElement(textarea, processNoteContent(icon.dataset.content));
+          const contentForEdit = icon.dataset.content.replace(/<span class="note-sep"><\/span>/g, '\\n');
+          renderContentInElement(textarea, processNoteContent(contentForEdit, false), true);
         } else {
           textarea.innerHTML = '<p></p>';
         }
@@ -1215,7 +1256,8 @@
               span.textContent = `$${latex}$`;
             }
           });
-          const content = tempDiv.innerHTML.trim();
+          const rawContent = tempDiv.innerHTML.trim();
+          const content = rawContent.replace(/\\n/g, '<span class="note-sep"></span>');
           document.body.removeChild(textarea);
           if (content && content !== '<p></p>') {
             if (icon) {
@@ -1230,13 +1272,13 @@
           }
         });
       }
-      function processNoteContent(content) {
+      function processNoteContent(content, forDisplay = false) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = content;
         tempDiv.querySelectorAll('span.math-field').forEach(span => {
           const textContent = span.textContent || '';
           if (textContent.startsWith('$') && textContent.endsWith('$')) {
-            span.textContent = textContent.substring(1, textContent.length - 1);
+            span.textContent = forDisplay ? textContent : textContent.substring(1, textContent.length - 1);
           }
         });
         return tempDiv.innerHTML;
@@ -1281,12 +1323,37 @@
         hidePopup();
         const popup = document.createElement('div');
         popup.className = 'note-popup';
-        renderContentInElement(popup, processNoteContent(icon.dataset.content));
+        popup.tabIndex = 0;
+        const parts = icon.dataset.content.split('<span class="note-sep"></span>');
+        let partIndex = 0;
+        function renderPart() {
+          renderContentInElement(popup, processNoteContent(parts[partIndex], true));
+          if (parts.length > 1) {
+            const counter = document.createElement('div');
+            counter.className = 'note-counter';
+            counter.textContent = `${partIndex + 1}/${parts.length}`;
+            popup.appendChild(counter);
+          }
+        }
+        renderPart();
         const iconRect = icon.getBoundingClientRect();
         popup.style.left = (iconRect.left + window.scrollX) + 'px';
         popup.style.top = (iconRect.bottom + window.scrollY + 5) + 'px';
         document.body.appendChild(popup);
         activePopup = popup; activeIcon = icon;
+        popup.focus();
+        popup.addEventListener('keydown', (e) => {
+          if (parts.length <= 1) return;
+          if (e.key === 'ArrowRight') {
+            partIndex = (partIndex + 1) % parts.length;
+            renderPart();
+            e.preventDefault();
+          } else if (e.key === 'ArrowLeft') {
+            partIndex = (partIndex - 1 + parts.length) % parts.length;
+            renderPart();
+            e.preventDefault();
+          }
+        });
         popup.addEventListener('mouseleave', () => {
           setTimeout(() => {
             if (!popup.matches(':hover') && !icon.matches(':hover')) hidePopup();
