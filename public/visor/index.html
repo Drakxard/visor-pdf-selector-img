@@ -468,6 +468,13 @@
       let loadingOverlay = document.getElementById('loading-overlay');
       let loadingText = document.getElementById('loading-text');
 
+      container.addEventListener('scroll', () => {
+        if (currentPdfName) {
+          const p = getCurrentPage();
+          localStorage.setItem('lastPage-' + currentPdfName, String(p));
+        }
+      });
+
       let pdfDoc = null;
       let currentZoom = 1.0;
       let isFullscreen = false;
@@ -790,12 +797,10 @@
 
           buildPageSkeletons();
           prepareInitialReveal();
-
-          if (pendingAfterLoadGoTo === 'last') {
-            setTimeout(() => scrollToPage(totalPages), 0);
-          } else {
-            setTimeout(() => scrollToPage(1), 0);
-          }
+          const saved = parseInt(
+            localStorage.getItem('lastPage-' + filename) || '1',
+          );
+          setTimeout(() => scrollToPage(saved), 0);
           pendingAfterLoadGoTo = null;
 
           if (directoryHandle) {
@@ -2084,6 +2089,14 @@
         await writable.close();
         const file = new File([blob], pdfName, { type: 'application/pdf' });
         return { handle: fileHandle, file, blob };
+      }
+
+      // cargar pdf inicial si viene por query
+      const params = new URLSearchParams(window.location.search);
+      const urlParam = params.get('url');
+      const nameParam = params.get('name');
+      if (urlParam && nameParam) {
+        loadPdf(urlParam, nameParam);
       }
 
       // ========================================
