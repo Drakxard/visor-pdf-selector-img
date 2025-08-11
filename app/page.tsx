@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useTheme } from "next-themes"
 import * as XLSX from "xlsx"
 import { PDFDocument } from "pdf-lib"
@@ -38,7 +38,10 @@ export default function Home() {
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [pdfMeta, setPdfMeta] = useState<
-    Record<string, { kind?: "teoria" | "practica" | null; order: number; pages?: number }>
+    Record<
+      string,
+      { kind?: "teoria" | "practica" | null; order: number; pages?: number; lastPage?: number }
+    >
   >({})
   const [subjectColors, setSubjectColors] = useState<Record<string, string>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
@@ -50,6 +53,8 @@ export default function Home() {
   const [showSchedule, setShowSchedule] = useState(false)
   const [scheduleFilter, setScheduleFilter] = useState<string>("all")
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [lastOpened, setLastOpened] = useState<string | null>(null)
+  const colorPickers = useRef<Record<string, HTMLInputElement | null>>({})
 
   // theme and setup flag
   useEffect(() => {
@@ -99,6 +104,47 @@ export default function Home() {
     localStorage.setItem("pdfMeta", JSON.stringify(pdfMeta))
   }, [pdfMeta])
 
+  // load additional settings
+  useEffect(() => {
+    const s = localStorage.getItem("subjectColors")
+    if (s) setSubjectColors(JSON.parse(s))
+    const t = localStorage.getItem("theory")
+    if (t) setTheory(JSON.parse(t))
+    const p = localStorage.getItem("practice")
+    if (p) setPractice(JSON.parse(p))
+    const lo = localStorage.getItem("lastOpened")
+    if (lo) setLastOpened(lo)
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((cfg) => {
+        if (cfg.subjectColors) setSubjectColors(cfg.subjectColors)
+        if (cfg.theory) setTheory(cfg.theory)
+        if (cfg.practice) setPractice(cfg.practice)
+        if (cfg.pdfMeta) setPdfMeta(cfg.pdfMeta)
+        if (cfg.completed) setCompleted(cfg.completed)
+        if (cfg.lastOpened) setLastOpened(cfg.lastOpened)
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem("subjectColors", JSON.stringify(subjectColors))
+  }, [subjectColors])
+  useEffect(() => {
+    localStorage.setItem("theory", JSON.stringify(theory))
+  }, [theory])
+  useEffect(() => {
+    localStorage.setItem("practice", JSON.stringify(practice))
+  }, [practice])
+  useEffect(() => {
+    if (lastOpened) localStorage.setItem("lastOpened", lastOpened)
+  }, [lastOpened])
+
+  useEffect(() => {
+    const body = { pdfMeta, completed, subjectColors, theory, practice, lastOpened }
+    fetch("/api/config", { method: "POST", body: JSON.stringify(body) })
+  }, [pdfMeta, completed, subjectColors, theory, practice, lastOpened])
+
   // build tree from selected directory
   useEffect(() => {
     const build = async () => {
@@ -110,6 +156,7 @@ export default function Home() {
         if (parts.length >= 4) {
           const weekPart = parts[1]
           const subject = parts[2]
+          if (!names.includes(subject)) continue
           if (!file.name.toLowerCase().endsWith(".pdf")) continue
           const week = parseInt(weekPart.replace(/\D/g, ""))
           const path = parts.slice(1).join("/")
@@ -145,7 +192,7 @@ export default function Home() {
       setFileTree(tree)
     }
     build()
-  }, [dirFiles])
+  }, [dirFiles, names])
 
   // update tree when metadata changes (order or labels)
   useEffect(() => {
@@ -207,14 +254,15 @@ export default function Home() {
     setQueue(q)
     if (q.length) {
       const current = currentPdf && q.find((f) => f.path === currentPdf.path)
-      const target = current || q[0]
+      const last = lastOpened ? q.find((f) => f.path === lastOpened) : null
+      const target = current || last || q[0]
       setCurrentPdf(target)
       setQueueIndex(q.findIndex((f) => f.path === target.path))
     } else {
       setCurrentPdf(null)
       setQueueIndex(0)
     }
-  }, [fileTree, completed, theory, practice])
+  }, [fileTree, completed, theory, practice, lastOpened])
 
   // object url for viewer
   useEffect(() => {
@@ -461,6 +509,7 @@ export default function Home() {
     } else {
       setCurrentPdf(pdf)
     }
+    setLastOpened(pdf.path)
   }
 
   const prevPdf = () => {
@@ -468,6 +517,7 @@ export default function Home() {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      setLastOpened(queue[i].path)
     }
   }
 
@@ -476,6 +526,7 @@ export default function Home() {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      setLastOpened(queue[i].path)
     }
   }
 
@@ -510,6 +561,18 @@ export default function Home() {
     })
   }
 
+  const openFull = () => {
+    if (!currentPdf || !pdfUrl) return
+    const page = pdfMeta[currentPdf.path]?.lastPage || 1
+    const params = new URLSearchParams({
+      url: pdfUrl,
+      name: currentPdf.file.name,
+      path: currentPdf.path,
+      page: String(page),
+    })
+    window.location.href = `/visor/index.html?${params.toString()}`
+  }
+
   const computeRemaining = (pdf: PdfFile) => {
     const meta = pdfMeta[pdf.path]
     const schedule = meta?.kind === "practica" ? practice[pdf.subject] : theory[pdf.subject]
@@ -536,23 +599,46 @@ export default function Home() {
         </button>
         {showSchedule && (
           <div className="mt-4 space-y-4">
-            <div>
-              <label className="mr-2">Materia:</label>
-              <select
-                className="border p-1"
-                value={scheduleFilter}
-                onChange={(e) => {
-                  setScheduleFilter(e.target.value)
-                  setSelectedDay(null)
-                }}
-              >
-                <option value="all">Todas</option>
-                {names.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
+            <div className="flex gap-2 items-center">
+              <div key="all">
+                <button
+                  className={`w-6 h-6 rounded-full border ${
+                    scheduleFilter === 'all' ? 'ring-2 ring-black' : ''
+                  }`}
+                  style={{ backgroundColor: '#9ca3af' }}
+                  onClick={() => {
+                    setScheduleFilter('all')
+                    setSelectedDay(null)
+                  }}
+                />
+              </div>
+              {names.map((n) => (
+                <div key={n} className="relative">
+                  <button
+                    className={`w-6 h-6 rounded-full border ${
+                      scheduleFilter === n ? "ring-2 ring-black" : ""
+                    }`}
+                    style={{ backgroundColor: subjectColors[n] || "#9ca3af" }}
+                    onClick={() => {
+                      setScheduleFilter(scheduleFilter === n ? "all" : n)
+                      setSelectedDay(null)
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      colorPickers.current[n]?.click()
+                    }}
+                  />
+                  <input
+                    type="color"
+                    ref={(el) => (colorPickers.current[n] = el)}
+                    className="hidden"
+                    value={subjectColors[n] || "#9ca3af"}
+                    onChange={(e) =>
+                      setSubjectColors((prev) => ({ ...prev, [n]: e.target.value }))
+                    }
+                  />
+                </div>
+              ))}
             </div>
             <div className="flex gap-4">
               {days.map((d) => (
@@ -569,12 +655,13 @@ export default function Home() {
                         const isT = theory[n] === d
                         const isP = practice[n] === d
                         if (!isT && !isP) return null
-                        const color = subjectColors[n] || "bg-gray-400"
+                        const color = subjectColors[n] || "#9ca3af"
                         const label = isT && isP ? "T/P" : isT ? "T" : "P"
                         return (
                           <div
                             key={n}
-                            className={`w-6 h-6 rounded-full ${color} text-white text-xs flex items-center justify-center`}
+                            className="w-6 h-6 rounded-full text-white text-xs flex items-center justify-center"
+                            style={{ backgroundColor: color }}
                             title={`${n} ${label}`}
                           >
                             {label[0]}
@@ -698,6 +785,7 @@ export default function Home() {
                     <select
                       className="border text-xs"
                       value={pdfMeta[p.path]?.kind || ""}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) =>
                         updateKind(
                           p.path,
@@ -710,10 +798,20 @@ export default function Home() {
                       <option value="practica">P</option>
                     </select>
                     <div className="flex flex-col">
-                      <button onClick={() => movePdf(p.week, p.subject, p.path, -1)}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          movePdf(p.week, p.subject, p.path, -1)
+                        }}
+                      >
                         ↑
                       </button>
-                      <button onClick={() => movePdf(p.week, p.subject, p.path, 1)}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          movePdf(p.week, p.subject, p.path, 1)
+                        }}
+                      >
                         ↓
                       </button>
                     </div>
@@ -723,70 +821,57 @@ export default function Home() {
             </>
           )}
         </aside>
-        <section className="p-4">
+        <section className="p-4 flex flex-col">
           <h2 className="text-xl mb-2">Actual</h2>
           {currentPdf ? (
-            <div className="flex items-center gap-2">
-              <span>📄</span>
-              <span className="truncate" title={currentPdf.file.name}>
-                {currentPdf.file.name}
-              </span>
-            </div>
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                <button onClick={prevPdf} disabled={queueIndex <= 0}>←</button>
+                <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>→</button>
+                <span>📄</span>
+                <span className="truncate flex-1" title={currentPdf.file.name}>
+                  {currentPdf.file.name}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={!!completed[currentPdf.path]}
+                  onChange={toggleComplete}
+                />
+              </div>
+              <div className="flex-1 border cursor-pointer" onClick={openFull}>
+                <iframe
+                  title="Visor PDF avanzado"
+                  src={
+                    pdfUrl
+                      ? `/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                          currentPdf.file.name,
+                        )}&path=${encodeURIComponent(currentPdf.path)}&page=${
+                          pdfMeta[currentPdf.path]?.lastPage || 1
+                        }`
+                      : "/visor/index.html"
+                  }
+                  className="w-full h-full border-0 pointer-events-none"
+                />
+              </div>
+              {remaining !== null && (
+                <div
+                  className={`p-2 text-center ${
+                    remaining >= 3
+                      ? "text-green-500"
+                      : remaining === 2
+                      ? "text-yellow-500"
+                      : "text-red-500"
+                  }`}
+                >
+                  Días restantes: {remaining}
+                </div>
+              )}
+            </>
           ) : (
             <p>Sin selección</p>
           )}
         </section>
       </div>
-      {currentPdf && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-          <div className="flex items-center justify-between p-2 border-b">
-            <div className="flex items-center gap-2">
-              <span>📄</span>
-              <span className="max-w-[50vw] truncate" title={currentPdf.file.name}>
-                {currentPdf.file.name}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={prevPdf} disabled={queueIndex <= 0}>
-                ←
-              </button>
-              <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-                →
-              </button>
-              <input
-                type="checkbox"
-                checked={!!completed[currentPdf.path]}
-                onChange={toggleComplete}
-              />
-              <button onClick={() => setCurrentPdf(null)}>✕</button>
-            </div>
-          </div>
-          <iframe
-            title="Visor PDF avanzado"
-            src={
-              pdfUrl
-                ? `/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-                    currentPdf.file.name,
-                  )}`
-                : "/visor/index.html"
-            }
-            className="w-full flex-1 border-0"
-          />
-          {remaining !== null && (
-            <div
-              className={`p-2 text-center ${
-                remaining >= 3
-                  ? "text-green-500"
-                  : remaining === 2
-                  ? "text-yellow-500"
-                  : "text-red-500"
-              }`}
-            >
-              Días restantes: {remaining}
-            </div>
-          )}
-        </div>
-      )}
     </main>
   )
 }

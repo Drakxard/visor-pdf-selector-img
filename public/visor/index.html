@@ -506,6 +506,8 @@
       // Persistencia de notas
       let directoryHandle = null;
       let currentPdfName = null;
+      let currentPdfPath = null;
+      let pdfMeta = {};
       let saveTimeout = null;
       let db = null;
 
@@ -759,18 +761,25 @@
       }
 
       container.addEventListener('scroll', () => {
-        if (!currentPdfName) return;
+        if (!currentPdfPath) return;
         const p = getCurrentPage();
         if (p !== currentPage) {
           currentPage = p;
-          try { localStorage.setItem('pdfPage:' + currentPdfName, String(p)); } catch {}
+          try {
+            pdfMeta[currentPdfPath] = {
+              ...(pdfMeta[currentPdfPath] || {}),
+              lastPage: p,
+            };
+            localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta));
+            localStorage.setItem('lastOpened', currentPdfPath);
+          } catch {}
         }
       });
 
       // ========================================
       // CARGA DE PDF
       // ========================================
-      async function loadPdf(url, filename) {
+      async function loadPdf(url, filename, pdfPath, pageParam) {
         try {
           showOverlay('Cargando PDF…');
           clearContainer();
@@ -783,12 +792,21 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
+          currentPdfPath = pdfPath || filename;
+          try { pdfMeta = JSON.parse(localStorage.getItem('pdfMeta') || '{}'); } catch {}
+          localStorage.setItem('lastOpened', currentPdfPath);
 
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
           totalPages = pdfDoc.numPages;
-          const saved = parseInt(localStorage.getItem('pdfPage:' + filename) || '1');
-          currentPage = isNaN(saved) ? 1 : Math.min(Math.max(saved, 1), totalPages);
+          const saved = pdfMeta[currentPdfPath]?.lastPage || 1;
+          const startPage = pageParam || saved;
+          currentPage = Math.min(Math.max(startPage, 1), totalPages);
+          pdfMeta[currentPdfPath] = {
+            ...(pdfMeta[currentPdfPath] || {}),
+            lastPage: currentPage,
+          };
+          try { localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta)); } catch {}
 
           // Tamaño base
           try {
@@ -1072,7 +1090,7 @@
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
-            loadPdf(url, file.name);
+            loadPdf(url, file.name, file.name);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1085,7 +1103,7 @@
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
-            loadPdf(url, file.name);
+            loadPdf(url, file.name, file.name);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1156,7 +1174,7 @@
           const url = URL.createObjectURL(blob);
           currentObjectUrl = url;
           pendingAfterLoadGoTo = after;
-          await loadPdf(url, entry.name);
+          await loadPdf(url, entry.name, entry.name);
           currentPdfIndex = index;
           showNavIndicator(`PDF ${index + 1}/${pdfEntries.length}: ${entry.name}`);
         } catch (e) {
@@ -2099,8 +2117,10 @@
       const params = new URLSearchParams(window.location.search);
       const urlParam = params.get('url');
       const nameParam = params.get('name');
+      const pathParam = params.get('path');
+      const pageParam = parseInt(params.get('page') || '0');
       if (urlParam && nameParam) {
-        loadPdf(urlParam, nameParam);
+        loadPdf(urlParam, nameParam, pathParam, pageParam);
       }
 
       // ========================================
