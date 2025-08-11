@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { useTheme } from "next-themes"
 import * as XLSX from "xlsx"
 
@@ -41,7 +41,59 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [dayFilter, setDayFilter] = useState<string | null>(null)
-  const folderInputRef = useRef<HTMLInputElement>(null)
+
+  const readDir = async (
+    handle: any,
+    path = "",
+    acc: File[] = [],
+  ): Promise<File[]> => {
+    // @ts-ignore
+    for await (const [name, entry] of handle.entries()) {
+      if (entry.kind === "file") {
+        const file = await entry.getFile()
+        ;(file as any).webkitRelativePath = path + name
+        acc.push(file)
+      } else if (entry.kind === "directory") {
+        await readDir(entry, `${path}${name}/`, acc)
+      }
+    }
+    return acc
+  }
+
+  const saveNotesHandle = async (root: any) => {
+    try {
+      const system = await root.getDirectoryHandle("system", { create: true })
+      const notas = await system.getDirectoryHandle("notas", { create: true })
+      const db: IDBDatabase = await new Promise((resolve, reject) => {
+        const req = indexedDB.open("PDFViewerDB", 1)
+        req.onerror = () => reject(req.error)
+        req.onupgradeneeded = (e) => {
+          const db = (e.target as any).result
+          if (!db.objectStoreNames.contains("settings"))
+            db.createObjectStore("settings", { keyPath: "id" })
+        }
+        req.onsuccess = () => resolve(req.result)
+      })
+      const tx = db.transaction(["settings"], "readwrite")
+      tx.objectStore("settings").put({ id: "notesFolder", handle: notas })
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const selectDirectory = async () => {
+    try {
+      // @ts-ignore
+      const handle = await window.showDirectoryPicker()
+      const files = await readDir(handle)
+      setDirFiles(files)
+      await loadConfig(files)
+      await saveNotesHandle(handle)
+      if (!setupComplete) setStep(1)
+    } catch (e) {
+      console.error(e)
+    }
+  }
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -66,21 +118,6 @@ export default function Home() {
     const ok = await loadConfig(dirFiles)
     alert(ok ? "Configuración recargada" : "config.json no encontrado")
   }
-
-  const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    setDirFiles(files)
-    loadConfig(files)
-  }
-
-  const triggerReselect = () => folderInputRef.current?.click()
-
-  useEffect(() => {
-    if (localStorage.getItem("openSchedule")) {
-      setShowSchedule(true)
-      localStorage.removeItem("openSchedule")
-    }
-  }, [])
 
   useEffect(() => {
     if (step === 1) {
@@ -179,6 +216,14 @@ export default function Home() {
     setFileTree(tree)
   }, [dirFiles, orders])
 
+  useEffect(() => {
+    const subjects = new Set(names)
+    Object.values(fileTree).forEach((subs) => {
+      Object.keys(subs).forEach((s) => subjects.add(s))
+    })
+    if (subjects.size !== names.length) setNames(Array.from(subjects))
+  }, [fileTree])
+
   // compute queue ordered by urgency
   useEffect(() => {
     const dayMap: Record<string, number> = {
@@ -245,7 +290,7 @@ export default function Home() {
     const hour = new Date().getHours()
     const greeting = hour >= 19 || hour < 6 ? "Buenas noches" : "Buenos días"
     return (
-      <main className="min-h-screen flex items-center justify-center text-2xl">
+      <main className="min-h-screen flex items-center justify-center text-2xl bg-background text-foreground">
         <p>{greeting}. Presiona cualquier tecla para continuar.</p>
       </main>
     )
@@ -256,24 +301,18 @@ export default function Home() {
     switch (step) {
       case 0: {
         return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4 bg-background text-foreground">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
             <p>Paso 1: Selecciona la carpeta "gestor"</p>
-            <input
-              type="file"
-              // @ts-expect-error webkitdirectory es no estándar
-              webkitdirectory=""
-              onChange={(e) => {
-                setDirFiles(Array.from(e.target.files || []))
-                setStep(1)
-              }}
-            />
+            <button className="px-4 py-2 border rounded" onClick={selectDirectory}>
+              Elegir carpeta
+            </button>
           </main>
         )
       }
       case 1: {
         return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4 bg-background text-foreground">
             {configFound === null && <p>Buscando configuración previa...</p>}
             {configFound === true && (
               <>
@@ -322,7 +361,7 @@ export default function Home() {
           setStep(3)
         }
         return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4 bg-background text-foreground">
             <p>Paso 2: Sube tus cronogramas (excel)</p>
             <input
               type="file"
@@ -347,7 +386,7 @@ export default function Home() {
           setNames(next)
         }
         return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4 bg-background text-foreground">
             <p>Paso 3: Nombra tus cronogramas</p>
             {files.map((f, i) => (
               <label key={i} className="flex gap-2 items-center">
@@ -375,7 +414,7 @@ export default function Home() {
           setTheory({ ...theory, [subject]: day })
         }
         return (
-          <main className="min-h-screen flex flex-col items-center gap-4 p-4">
+          <main className="min-h-screen flex flex-col items-center gap-4 p-4 bg-background text-foreground">
             <p>Paso 4: Arrastra tus materias (teoría) a los días</p>
             <div className="flex gap-4">
               <div className="w-40 border p-2 min-h-40">
@@ -427,7 +466,7 @@ export default function Home() {
           setPractice({ ...practice, [subject]: day })
         }
         return (
-          <main className="min-h-screen flex flex-col items-center gap-4 p-4">
+          <main className="min-h-screen flex flex-col items-center gap-4 p-4 bg-background text-foreground">
             <p>Paso 5: Arrastra tus materias (práctica) a los días</p>
             <div className="flex gap-4">
               <div className="w-40 border p-2 min-h-40">
@@ -489,7 +528,7 @@ export default function Home() {
           setStarted(false)
         }
         return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4 bg-background text-foreground">
             <p>Paso final: Guarda tu configuración</p>
             <button className="px-4 py-2 border rounded" onClick={finish}>
               Finalizar
@@ -598,8 +637,32 @@ export default function Home() {
 
   if (showSchedule) {
     const displayedDays = dayFilter ? [dayFilter] : days
+    const dayMap: Record<string, number> = {
+      Lunes: 1,
+      Martes: 2,
+      Miércoles: 3,
+      Jueves: 4,
+      Viernes: 5,
+    }
+    const today = new Date().getDay()
+    const summary = names.map((n) => {
+      const t = theory[n]
+      const p = practice[n]
+      const item: any = { subject: n }
+      if (t) {
+        let diff = dayMap[t] - today
+        if (diff <= 0) diff += 7
+        item.t = diff
+      }
+      if (p) {
+        let diff = dayMap[p] - today
+        if (diff <= 0) diff += 7
+        item.p = diff
+      }
+      return item
+    })
     return (
-      <div className="p-4 min-h-screen">
+      <div className="p-4 min-h-screen bg-background text-foreground">
         <button className="underline mb-4" onClick={() => setShowSchedule(false)}>
           Cerrar
         </button>
@@ -657,12 +720,14 @@ export default function Home() {
                 .map((n) => {
                   const count = pendingFor(d, n).length
                   return (
-                    <div
-                      key={n}
-                      className={`w-6 h-6 rounded-full ${colorMap[n]} mt-2 flex items-center justify-center text-white`}
-                      title={n}
-                    >
-                      {count}
+                    <div key={n} className="flex items-center gap-1 mt-2">
+                      <div
+                        className={`w-6 h-6 rounded-full ${colorMap[n]} flex items-center justify-center text-white`}
+                        title={n}
+                      >
+                        {count}
+                      </div>
+                      <span>{n}</span>
                     </div>
                   )
                 })}
@@ -701,6 +766,15 @@ export default function Home() {
             )}
           </div>
         )}
+        <div className="mt-4 text-sm">
+          {summary.map((s) => (
+            <div key={s.subject} className="mb-2">
+              <div className="font-semibold">{s.subject}</div>
+              {s.t !== undefined && <div>Próxima teoría en {s.t} días</div>}
+              {s.p !== undefined && <div>Próxima práctica en {s.p} días</div>}
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -709,17 +783,11 @@ export default function Home() {
   return (
     <>
       <div className="p-2">
-        <button
-          className="underline"
-          onClick={() => {
-            localStorage.setItem("openSchedule", "1")
-            window.location.reload()
-          }}
-        >
+        <button className="underline" onClick={() => setShowSchedule(true)}>
           Ver cronograma
         </button>
       </div>
-      <main className="grid grid-cols-2 min-h-screen">
+      <main className="grid grid-cols-2 min-h-screen bg-background text-foreground">
       <aside className="border-r p-4 space-y-2">
         {!viewWeek && (
           <>
@@ -836,27 +904,32 @@ export default function Home() {
             {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
           </div>
         </div>
-        <div className="p-4 text-sm text-gray-500">
-          {currentPdf
-            ? `Semana ${currentPdf.week} - ${currentPdf.subject}`
-            : "Selecciona un PDF"}
+        <div className="flex-1 overflow-hidden">
+          {pdfUrl ? (
+            <iframe
+              title="Visor PDF"
+              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                currentPdf ? currentPdf.file.name : "",
+              )}`}
+              className="w-full h-full border-0"
+            />
+          ) : (
+            <div className="p-4 text-sm text-gray-500">Selecciona un PDF</div>
+          )}
         </div>
+        {currentPdf && (
+          <div className="p-2 text-sm text-gray-500">
+            Semana {currentPdf.week} - {currentPdf.subject}
+          </div>
+        )}
       </section>
     </main>
     <div className="fixed top-2 right-2">
       <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
       {showSettings && (
-        <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
+        <div className="absolute right-0 mt-2 bg-background border p-2 space-y-2">
           <button onClick={reloadConfig}>Recargar config.json</button>
-          <button onClick={triggerReselect}>Reseleccionar carpeta</button>
-          <input
-            type="file"
-            ref={folderInputRef}
-            style={{ display: "none" }}
-            // @ts-expect-error webkitdirectory no estándar
-            webkitdirectory=""
-            onChange={handleReselect}
-          />
+          <button onClick={selectDirectory}>Reseleccionar carpeta</button>
         </div>
       )}
     </div>
