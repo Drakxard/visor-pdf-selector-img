@@ -1938,10 +1938,29 @@
         link.href = URL.createObjectURL(pdfData.file);
         link.download = pdfData.file.name;
         link.draggable = true;
+        const createPdfFile = () => new File([pdfData.blob], pdfData.file.name, { type: 'application/pdf' });
         link.addEventListener('dragstart', (ev) => {
-          ev.dataTransfer?.items.add(pdfData.file);
+          const file = createPdfFile();
+          ev.dataTransfer?.items.add(file);
         });
+
+        const hiddenInput = document.createElement('input');
+        hiddenInput.type = 'file';
+        hiddenInput.style.display = 'none';
+
+        const dt = new DataTransfer();
+        dt.items.add(createPdfFile());
+        hiddenInput.files = dt.files;
+
+        link.addEventListener('click', () => {
+          const dt = new DataTransfer();
+          dt.items.add(createPdfFile());
+          hiddenInput.files = dt.files;
+          hiddenInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+
         area.appendChild(link);
+        area.appendChild(hiddenInput);
       }
 
       async function generatePdfFromCategory(cat) {
@@ -1983,7 +2002,7 @@
         await writable.write(blob);
         await writable.close();
         const file = new File([blob], pdfName, { type: 'application/pdf' });
-        return { handle: fileHandle, file };
+        return { handle: fileHandle, file, blob };
       }
 
       // ========================================
