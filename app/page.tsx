@@ -14,7 +14,7 @@ type PdfFile = {
 }
 
 export default function Home() {
-  const { setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(1)
@@ -35,26 +35,16 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [orders, setOrders] = useState<Record<string, string[]>>({})
-  const [viewerOpen, setViewerOpen] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [showSchedule, setShowSchedule] = useState(false)
   const [filterSubject, setFilterSubject] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
 
-  // theme and setup flag
+  // theme by hour
   useEffect(() => {
     const hour = new Date().getHours()
-    if (hour >= 19 || hour < 6) {
-      setTheme("dark")
-    } else {
-      setTheme("light")
-    }
-    const stored = localStorage.getItem("setupComplete")
-    if (!stored) {
-      setSetupComplete(false)
-    } else {
-      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
-      setWeeks(storedWeeks)
-    }
+    if (hour >= 19 || hour < 6) setTheme("dark")
+    else setTheme("light")
   }, [setTheme])
 
   // greeting handler
@@ -66,32 +56,16 @@ export default function Home() {
     }
   }, [started])
 
-  // load completed from storage
+  // listen for messages from viewer
   useEffect(() => {
-    const stored = localStorage.getItem("completed")
-    if (stored) setCompleted(JSON.parse(stored))
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === "fullscreen") setIsFullscreen(!!e.data.value)
+    }
+    window.addEventListener("message", handler)
+    return () => window.removeEventListener("message", handler)
   }, [])
 
-  // persist completed
-  useEffect(() => {
-    localStorage.setItem("completed", JSON.stringify(completed))
-  }, [completed])
-
-  // load labels and orders
-  useEffect(() => {
-    const ls = localStorage.getItem("labels")
-    if (ls) setLabels(JSON.parse(ls))
-    const ord = localStorage.getItem("orders")
-    if (ord) setOrders(JSON.parse(ord))
-  }, [])
-
-  useEffect(() => {
-    localStorage.setItem("labels", JSON.stringify(labels))
-  }, [labels])
-
-  useEffect(() => {
-    localStorage.setItem("orders", JSON.stringify(orders))
-  }, [orders])
+  // TODO: persist configuration in /gestor/system/config.json
 
   // build tree from selected directory
   useEffect(() => {
@@ -194,9 +168,17 @@ export default function Home() {
     const hour = new Date().getHours()
     const greeting = hour >= 19 || hour < 6 ? "Buenas noches" : "Buenos días"
     return (
-      <main className="min-h-screen flex items-center justify-center text-2xl">
-        <p>{greeting}. Presiona cualquier tecla para continuar.</p>
-      </main>
+      <>
+        <button
+          className="fixed top-2 right-2 z-50 border rounded p-2"
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        >
+          {theme === "dark" ? "☀️" : "🌙"}
+        </button>
+        <main className="min-h-screen flex items-center justify-center text-2xl">
+          <p>{greeting}. Presiona cualquier tecla para continuar.</p>
+        </main>
+      </>
     )
   }
 
@@ -424,32 +406,29 @@ export default function Home() {
 
   const handleSelectPdf = (pdf: PdfFile) => {
     const idx = queue.findIndex((f) => f.path === pdf.path)
-    if (idx >= 0) {
-      setQueueIndex(idx)
-      setCurrentPdf(queue[idx])
-    } else {
-      setCurrentPdf(pdf)
-    }
-    setViewerOpen(true)
+  if (idx >= 0) {
+    setQueueIndex(idx)
+    setCurrentPdf(queue[idx])
+  } else {
+    setCurrentPdf(pdf)
   }
+}
 
-  const prevPdf = () => {
-    if (queueIndex > 0) {
-      const i = queueIndex - 1
-      setQueueIndex(i)
-      setCurrentPdf(queue[i])
-      setViewerOpen(true)
-    }
+const prevPdf = () => {
+  if (queueIndex > 0) {
+    const i = queueIndex - 1
+    setQueueIndex(i)
+    setCurrentPdf(queue[i])
   }
+}
 
-  const nextPdf = () => {
-    if (queueIndex < queue.length - 1) {
-      const i = queueIndex + 1
-      setQueueIndex(i)
-      setCurrentPdf(queue[i])
-      setViewerOpen(true)
-    }
+const nextPdf = () => {
+  if (queueIndex < queue.length - 1) {
+    const i = queueIndex + 1
+    setQueueIndex(i)
+    setCurrentPdf(queue[i])
   }
+}
 
   const toggleComplete = () => {
     if (!currentPdf) return
@@ -502,6 +481,12 @@ export default function Home() {
   // main interface
   return (
     <>
+      <button
+        className="fixed top-2 right-2 z-50 border rounded p-2"
+        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      >
+        {theme === "dark" ? "☀️" : "🌙"}
+      </button>
       <div className="p-2">
         <button className="underline" onClick={() => setShowSchedule(!showSchedule)}>
           {showSchedule ? "Ocultar cronograma" : "Ver cronograma"}
@@ -593,8 +578,8 @@ export default function Home() {
           )}
         </div>
       )}
-      <main className="grid grid-cols-2 min-h-screen">
-      <aside className="border-r p-4 space-y-2">
+      <main className="flex h-screen">
+      <aside className={`${isFullscreen ? "hidden" : "w-64 border-r p-4 space-y-2"}`}>
         {!viewWeek && (
           <>
             <h2 className="text-xl">Semanas</h2>
@@ -682,7 +667,7 @@ export default function Home() {
           </>
         )}
       </aside>
-      <section className="flex flex-col h-screen">
+      <section className="flex flex-col flex-1 h-screen">
         <div className="flex items-center justify-between p-2 border-b">
           <div className="flex items-center gap-2">
             <span>📄</span>
@@ -707,63 +692,38 @@ export default function Home() {
                 onChange={toggleComplete}
               />
             )}
-            {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
-          </div>
-        </div>
-        <div className="p-4 text-sm text-gray-500">
-          {currentPdf
-            ? `Semana ${currentPdf.week} - ${currentPdf.subject}`
-            : "Selecciona un PDF"}
-        </div>
-      </section>
-    </main>
-    {viewerOpen && currentPdf && pdfUrl && (
-      <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between p-2 border-b">
-          <div className="flex items-center gap-2 flex-1 truncate">
-            <span>📄</span>
-            <span className="truncate" title={currentPdf.file.name}>
-              {currentPdf.file.name}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            <input
-              type="checkbox"
-              checked={!!completed[currentPdf.path]}
-              onChange={toggleComplete}
-            />
-            <button onClick={() => setViewerOpen(false)}>✕</button>
           </div>
         </div>
         <div className="flex-1">
-          <iframe
-            title="Visor PDF"
-            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-              currentPdf.file.name,
-            )}`}
-            className="w-full h-full border-0"
-          />
+          {currentPdf && pdfUrl ? (
+            <iframe
+              key={`${currentPdf.path}-${theme}`}
+              title="Visor PDF"
+              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                currentPdf.file.name,
+              )}&theme=${theme}`}
+              className="w-full h-full border-0"
+            />
+          ) : (
+            <div className="p-4 text-sm text-gray-500">Selecciona un PDF</div>
+          )}
         </div>
-        {(() => {
-          const left = daysUntil(currentPdf)
-          const color =
-            left <= 1
-              ? "text-red-500"
-              : left <= 3
-              ? "text-yellow-500"
-              : "text-green-500"
-          return (
-            <div className={`p-2 border-t ${color}`}>Días restantes: {left}</div>
-          )
-        })()}
-      </div>
-    )}
+        {currentPdf && (
+          (() => {
+            const left = daysUntil(currentPdf)
+            const color =
+              left <= 1
+                ? "text-red-500"
+                : left <= 3
+                ? "text-yellow-500"
+                : "text-green-500"
+            return (
+              <div className={`p-2 border-t ${color}`}>Días restantes: {left}</div>
+            )
+          })()
+        )}
+      </section>
+    </main>
   </>
   )
 }

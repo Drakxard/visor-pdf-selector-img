@@ -324,7 +324,6 @@
         <button class="control-btn" id="folder-btn" title="Configurar carpeta">⚙️</button>
       </div>
 
-      <button class="control-btn" id="theme-toggle" title="Cambiar tema">🌙</button>
       <button class="control-btn" id="info-btn" title="Ayuda">ℹ️</button>
     </div>
   </header>
@@ -448,6 +447,9 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('theme') === 'light') document.body.classList.add('light-mode');
+      let isEmbedded = false;
       // ========================================
       // VARIABLES GLOBALES
       // ========================================
@@ -462,7 +464,6 @@
       const fullscreenBtn = document.getElementById('fullscreen-btn');
       const backBtn = document.getElementById('back-btn');
       let navIndicator = document.getElementById('nav-indicator');
-      const themeToggleBtn = document.getElementById('theme-toggle');
 
       // Overlay de carga
       let loadingOverlay = document.getElementById('loading-overlay');
@@ -472,6 +473,9 @@
         if (currentPdfName) {
           const p = getCurrentPage();
           localStorage.setItem('lastPage-' + currentPdfName, String(p));
+          try {
+            window.parent.postMessage({ type: 'page', page: p, name: currentPdfName }, '*');
+          } catch {}
         }
       });
 
@@ -504,11 +508,6 @@
       let activeIcon = null;
       let creatingNote = false;
       const MQ = MathQuill.getInterface(2);
-
-      themeToggleBtn.addEventListener('click', () => {
-        document.body.classList.toggle('light-mode');
-        themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
-      });
 
       // Persistencia de notas
       let directoryHandle = null;
@@ -768,7 +767,7 @@
       // ========================================
       // CARGA DE PDF
       // ========================================
-      async function loadPdf(url, filename) {
+      async function loadPdf(url, filename, initialPage = 0) {
         try {
           showOverlay('Cargando PDF…');
           clearContainer();
@@ -797,18 +796,20 @@
 
           buildPageSkeletons();
           prepareInitialReveal();
-          const saved = parseInt(
+          const saved = initialPage || parseInt(
             localStorage.getItem('lastPage-' + filename) || '1',
           );
           setTimeout(() => scrollToPage(saved), 0);
           pendingAfterLoadGoTo = null;
 
-          if (directoryHandle) {
-            setTimeout(loadNotesFromFile, 300);
-          } else if (supportsFileSystemAccess()) {
-            setTimeout(showPermissionModal, 1000);
-          } else {
-            updateFileStatus('error', 'No compatible');
+          if (!isEmbedded) {
+            if (directoryHandle) {
+              setTimeout(loadNotesFromFile, 300);
+            } else if (supportsFileSystemAccess()) {
+              setTimeout(showPermissionModal, 1000);
+            } else {
+              updateFileStatus('error', 'No compatible');
+            }
           }
         } catch (error) {
           console.error('Error cargando PDF:', error);
@@ -1032,6 +1033,7 @@
         isFullscreen = !isFullscreen;
         if (isFullscreen) { document.body.classList.add('fullscreen'); fullscreenBtn.textContent = '⛷'; }
         else { document.body.classList.remove('fullscreen'); fullscreenBtn.textContent = '⛶'; }
+        try { window.parent.postMessage({ type: 'fullscreen', value: isFullscreen }, '*'); } catch {}
       }
 
       backBtn.addEventListener('click', () => {
@@ -2092,24 +2094,26 @@
       }
 
       // cargar pdf inicial si viene por query
-      const params = new URLSearchParams(window.location.search);
       const urlParam = params.get('url');
       const nameParam = params.get('name');
+      const pageParamStr = params.get('page');
+      const pageParam = pageParamStr ? parseInt(pageParamStr) : undefined;
       if (urlParam && nameParam) {
-        loadPdf(urlParam, nameParam);
+        isEmbedded = true;
+        loadPdf(urlParam, nameParam, pageParam);
+      } else {
+        // ========================================
+        // INICIALIZACIÓN
+        // ========================================
+        initDB().then(async () => {
+          loadDirectoryHandle();
+          await loadCategoryHandles();
+        }).catch(error => {
+          console.error('Error al inicializar IndexedDB:', error);
+          showToast('Error al inicializar la base de datos local.', 'error');
+          updateFileStatus('error', 'DB Error');
+        });
       }
-
-      // ========================================
-      // INICIALIZACIÓN
-      // ========================================
-      initDB().then(async () => {
-        loadDirectoryHandle();
-        await loadCategoryHandles();
-      }).catch(error => {
-        console.error('Error al inicializar IndexedDB:', error);
-        showToast('Error al inicializar la base de datos local.', 'error');
-        updateFileStatus('error', 'DB Error');
-      });
     });
   </script>
 </body>
