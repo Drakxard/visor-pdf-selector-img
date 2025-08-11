@@ -511,6 +511,21 @@
       let pdfMeta = {};
       let saveTimeout = null;
       let db = null;
+      let syncTimer = null;
+      function scheduleSync() {
+        if (syncTimer) clearTimeout(syncTimer);
+        syncTimer = setTimeout(() => {
+          try {
+            const pdfMetaStore = JSON.parse(localStorage.getItem('pdfMeta') || '{}');
+            const lastOpenedStore = localStorage.getItem('lastOpened') || null;
+            fetch('/api/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ pdfMeta: pdfMetaStore, lastOpened: lastOpenedStore }),
+            });
+          } catch {}
+        }, 500);
+      }
 
       // Carpeta de PDFs + navegación entre PDFs
       const pdfFolderBtn = document.getElementById('pdf-folder-btn');
@@ -773,6 +788,7 @@
             };
             localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta));
             localStorage.setItem('lastOpened', currentPdfPath);
+            scheduleSync();
           } catch {}
         }
       });
@@ -795,7 +811,6 @@
           currentPdfName = filename;
           currentPdfPath = pdfPath || filename;
           try { pdfMeta = JSON.parse(localStorage.getItem('pdfMeta') || '{}'); } catch {}
-          localStorage.setItem('lastOpened', currentPdfPath);
 
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
@@ -807,7 +822,11 @@
             ...(pdfMeta[currentPdfPath] || {}),
             lastPage: currentPage,
           };
-          try { localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta)); } catch {}
+          try {
+            localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta));
+            localStorage.setItem('lastOpened', currentPdfPath);
+            scheduleSync();
+          } catch {}
 
           // Tamaño base
           try {

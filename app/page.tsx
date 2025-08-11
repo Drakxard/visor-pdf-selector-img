@@ -116,14 +116,18 @@ export default function Home() {
     fetch("/api/config")
       .then((r) => r.json())
       .then((cfg) => {
-        if (cfg.subjectColors) setSubjectColors(cfg.subjectColors)
-        if (cfg.theory) setTheory(cfg.theory)
-        if (cfg.practice) setPractice(cfg.practice)
-        if (cfg.pdfMeta) setPdfMeta(cfg.pdfMeta)
-        if (cfg.completed) setCompleted(cfg.completed)
-        if (cfg.lastOpened) setLastOpened(cfg.lastOpened)
-        if (cfg.names) setNames(cfg.names)
-        if (cfg.weeks) setWeeks(cfg.weeks)
+        if (cfg.subjectColors)
+          setSubjectColors((prev) => ({ ...cfg.subjectColors, ...prev }))
+        if (cfg.theory) setTheory((prev) => ({ ...cfg.theory, ...prev }))
+        if (cfg.practice) setPractice((prev) => ({ ...cfg.practice, ...prev }))
+        if (cfg.pdfMeta) setPdfMeta((prev) => ({ ...cfg.pdfMeta, ...prev }))
+        if (cfg.completed) setCompleted((prev) => ({ ...cfg.completed, ...prev }))
+        if (cfg.lastOpened)
+          setLastOpened((prev) => prev || cfg.lastOpened)
+        if (cfg.names)
+          setNames((prev) => (prev.length ? prev : cfg.names))
+        if (cfg.weeks)
+          setWeeks((prev) => (prev ? prev : cfg.weeks))
         if (cfg.setupComplete !== undefined) setSetupComplete(cfg.setupComplete)
       })
       .catch(() => {})
@@ -157,7 +161,11 @@ export default function Home() {
       weeks,
       setupComplete,
     }
-    fetch("/api/config", { method: "POST", body: JSON.stringify(body) })
+      fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
   }, [pdfMeta, completed, subjectColors, theory, practice, lastOpened, names, weeks, setupComplete])
 
   // load file tree from server
@@ -543,10 +551,11 @@ export default function Home() {
   }
 
   const openFull = () => {
-    if (!currentPdf || !pdfUrl) return
+    if (!currentPdf) return
+    const url = `/api/pdf?path=${encodeURIComponent(currentPdf.path)}`
     const page = pdfMeta[currentPdf.path]?.lastPage || 1
     const params = new URLSearchParams({
-      url: pdfUrl,
+      url,
       name: currentPdf.name,
       path: currentPdf.path,
       page: String(page),
