@@ -114,6 +114,7 @@
     }
     .fullscreen #app-header { display: none; }
     .fullscreen #pdf-container { top: 0 !important; }
+    .fullscreen .nav-indicator { display: none; }
 
     .nav-indicator {
       position: absolute; top: 20px; right: 20px;
@@ -506,6 +507,8 @@
       // Persistencia de notas
       let directoryHandle = null;
       let currentPdfName = null;
+      let currentPdfPath = null;
+      let pdfMeta = {};
       let saveTimeout = null;
       let db = null;
 
@@ -758,10 +761,26 @@
         }
       }
 
+      container.addEventListener('scroll', () => {
+        if (!currentPdfPath) return;
+        const p = getCurrentPage();
+        if (p !== currentPage) {
+          currentPage = p;
+          try {
+            pdfMeta[currentPdfPath] = {
+              ...(pdfMeta[currentPdfPath] || {}),
+              lastPage: p,
+            };
+            localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta));
+            localStorage.setItem('lastOpened', currentPdfPath);
+          } catch {}
+        }
+      });
+
       // ========================================
       // CARGA DE PDF
       // ========================================
-      async function loadPdf(url, filename) {
+      async function loadPdf(url, filename, pdfPath, pageParam) {
         try {
           showOverlay('Cargando PDF…');
           clearContainer();
@@ -774,11 +793,21 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
+          currentPdfPath = pdfPath || filename;
+          try { pdfMeta = JSON.parse(localStorage.getItem('pdfMeta') || '{}'); } catch {}
+          localStorage.setItem('lastOpened', currentPdfPath);
 
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
           totalPages = pdfDoc.numPages;
-          currentPage = 1;
+          const saved = pdfMeta[currentPdfPath]?.lastPage || 1;
+          const startPage = pageParam || saved;
+          currentPage = Math.min(Math.max(startPage, 1), totalPages);
+          pdfMeta[currentPdfPath] = {
+            ...(pdfMeta[currentPdfPath] || {}),
+            lastPage: currentPage,
+          };
+          try { localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta)); } catch {}
 
           // Tamaño base
           try {
@@ -791,11 +820,10 @@
           buildPageSkeletons();
           prepareInitialReveal();
 
-          if (pendingAfterLoadGoTo === 'last') {
-            setTimeout(() => scrollToPage(totalPages), 0);
-          } else {
-            setTimeout(() => scrollToPage(1), 0);
-          }
+          let initial = currentPage;
+          if (pendingAfterLoadGoTo === 'last') initial = totalPages;
+          else if (pendingAfterLoadGoTo === 'first') initial = 1;
+          setTimeout(() => scrollToPage(initial), 0);
           pendingAfterLoadGoTo = null;
 
           if (directoryHandle) {
@@ -1023,6 +1051,9 @@
       }
 
       fullscreenBtn.addEventListener('click', toggleFullscreen);
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'f') toggleFullscreen();
+      });
       function toggleFullscreen() {
         isFullscreen = !isFullscreen;
         if (isFullscreen) { document.body.classList.add('fullscreen'); fullscreenBtn.textContent = '⛷'; }
@@ -1063,7 +1094,7 @@
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
-            loadPdf(url, file.name);
+            loadPdf(url, file.name, file.name);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1076,7 +1107,7 @@
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
-            loadPdf(url, file.name);
+            loadPdf(url, file.name, file.name);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1147,7 +1178,7 @@
           const url = URL.createObjectURL(blob);
           currentObjectUrl = url;
           pendingAfterLoadGoTo = after;
-          await loadPdf(url, entry.name);
+          await loadPdf(url, entry.name, entry.name);
           currentPdfIndex = index;
           showNavIndicator(`PDF ${index + 1}/${pdfEntries.length}: ${entry.name}`);
         } catch (e) {
@@ -2084,6 +2115,16 @@
         await writable.close();
         const file = new File([blob], pdfName, { type: 'application/pdf' });
         return { handle: fileHandle, file, blob };
+      }
+
+      // cargar pdf inicial si viene por query
+      const params = new URLSearchParams(window.location.search);
+      const urlParam = params.get('url');
+      const nameParam = params.get('name');
+      const pathParam = params.get('path');
+      const pageParam = parseInt(params.get('page') || '0');
+      if (urlParam && nameParam) {
+        loadPdf(urlParam, nameParam, pathParam, pageParam);
       }
 
       // ========================================

@@ -1,359 +1,954 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { Separator } from "@/components/ui/separator"
-import { FolderOpen, Play, ArrowRight, ArrowLeft, Files, Info, RefreshCw } from 'lucide-react'
+import { useEffect, useState, useRef } from "react"
+import { useTheme } from "next-themes"
+import * as XLSX from "xlsx"
+import { PDFDocument } from "pdf-lib"
 
-// Tipos para manejar entradas de PDF de carpeta o como fallback (webkitdirectory)
-type PDFEntry = {
-  name: string
-  handle?: FileSystemFileHandle
-  file?: File
+const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+const dayMap: Record<string, number> = {
+  Lunes: 1,
+  Martes: 2,
+  Miércoles: 3,
+  Jueves: 4,
+  Viernes: 5,
 }
 
-// Natural sort por nombre de archivo para ordenar 01, 02, 10 correctamente
-function naturalCompare(a: string, b: string) {
-  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
-}
-
-function isPDF(name: string) {
-  return name.toLowerCase().endsWith(".pdf")
+type PdfFile = {
+  file: File
+  path: string
+  week: number
+  subject: string
+  pages?: number
+  kind?: "teoria" | "practica" | null
 }
 
 export default function Home() {
-  const [entries, setEntries] = useState<PDFEntry[]>([])
-  const [currentIndex, setCurrentIndex] = useState<number | null>(null)
-  const [currentPage, setCurrentPage] = useState<number>(1)
-  const [totalPages, setTotalPages] = useState<number>(0)
-  const [loadingDoc, setLoadingDoc] = useState(false)
-  const [loadingPage, setLoadingPage] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { setTheme } = useTheme()
+  const [started, setStarted] = useState(false)
+  const [setupComplete, setSetupComplete] = useState(true)
+  const [step, setStep] = useState(1)
+  const [files, setFiles] = useState<File[]>([])
+  const [names, setNames] = useState<string[]>([])
+  const [theory, setTheory] = useState<Record<string, string>>({})
+  const [practice, setPractice] = useState<Record<string, string>>({})
+  const [folderReady, setFolderReady] = useState(false)
+  const [weeks, setWeeks] = useState(1)
+  const [dirFiles, setDirFiles] = useState<File[]>([])
+  const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
+  const [completed, setCompleted] = useState<Record<string, boolean>>({})
+  const [pdfMeta, setPdfMeta] = useState<
+    Record<
+      string,
+      { kind?: "teoria" | "practica" | null; order: number; pages?: number; lastPage?: number }
+    >
+  >({})
+  const [subjectColors, setSubjectColors] = useState<Record<string, string>>({})
+  const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
+  const [queue, setQueue] = useState<PdfFile[]>([])
+  const [queueIndex, setQueueIndex] = useState(0)
+  const [viewWeek, setViewWeek] = useState<number | null>(null)
+  const [viewSubject, setViewSubject] = useState<string | null>(null)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [showSchedule, setShowSchedule] = useState(false)
+  const [scheduleFilter, setScheduleFilter] = useState<string>("all")
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [kindFilter, setKindFilter] = useState<'all' | 'teoria' | 'practica'>('all')
+  const [lastOpened, setLastOpened] = useState<string | null>(null)
+  const colorPickers = useRef<Record<string, HTMLInputElement | null>>({})
 
-  // refs para PDF.js y canvas
-  const pdfLibRef = useRef<any>(null)
-  const pdfDocRef = useRef<any>(null)
-  const cancelRenderRef = useRef<(() => void) | null>(null)
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const inputDirRef = useRef<HTMLInputElement | null>(null)
-
-  // Preparar input webkitdirectory como alternativa si showDirectoryPicker no está disponible
+  // theme and setup flag
   useEffect(() => {
-    if (inputDirRef.current) {
-      // Algunos navegadores necesitan este atributo para permitir seleccionar carpetas
-      inputDirRef.current.setAttribute("webkitdirectory", "")
-      inputDirRef.current.setAttribute("directory", "")
+    const hour = new Date().getHours()
+    if (hour >= 19 || hour < 6) {
+      setTheme("dark")
+    } else {
+      setTheme("light")
     }
+    const stored = localStorage.getItem("setupComplete")
+    if (!stored) {
+      setSetupComplete(false)
+    } else {
+      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
+      setWeeks(storedWeeks)
+      const storedNames = localStorage.getItem("names")
+      if (storedNames) setNames(JSON.parse(storedNames))
+    }
+  }, [setTheme])
+
+  // greeting handler
+  useEffect(() => {
+    const handler = () => setStarted(true)
+    if (!started) {
+      window.addEventListener("keydown", handler)
+      return () => window.removeEventListener("keydown", handler)
+    }
+  }, [started])
+
+  // load completed from storage
+  useEffect(() => {
+    const stored = localStorage.getItem("completed")
+    if (stored) setCompleted(JSON.parse(stored))
   }, [])
 
-  // Cargar PDF.js de forma dinámica para evitar problemas de worker y SSR
+  // persist completed
   useEffect(() => {
-    let mounted = true
-    const load = async () => {
-      try {
-        const pdfjsLib = await import("pdfjs-dist/build/pdf")
-        // Ajusta la versión si lo prefieres (probada)
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-          "https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.worker.min.js"
-        if (mounted) {
-          pdfLibRef.current = pdfjsLib
+    localStorage.setItem("completed", JSON.stringify(completed))
+  }, [completed])
+
+  // load pdf meta
+  useEffect(() => {
+    const stored = localStorage.getItem("pdfMeta")
+    if (stored) setPdfMeta(JSON.parse(stored))
+  }, [])
+
+  // persist pdf meta
+  useEffect(() => {
+    localStorage.setItem("pdfMeta", JSON.stringify(pdfMeta))
+  }, [pdfMeta])
+
+  // load additional settings
+  useEffect(() => {
+    const s = localStorage.getItem("subjectColors")
+    if (s) setSubjectColors(JSON.parse(s))
+    const t = localStorage.getItem("theory")
+    if (t) setTheory(JSON.parse(t))
+    const p = localStorage.getItem("practice")
+    if (p) setPractice(JSON.parse(p))
+    const lo = localStorage.getItem("lastOpened")
+    if (lo) setLastOpened(lo)
+    fetch("/api/config")
+      .then((r) => r.json())
+      .then((cfg) => {
+        if (cfg.subjectColors) setSubjectColors(cfg.subjectColors)
+        if (cfg.theory) setTheory(cfg.theory)
+        if (cfg.practice) setPractice(cfg.practice)
+        if (cfg.pdfMeta) setPdfMeta(cfg.pdfMeta)
+        if (cfg.completed) setCompleted(cfg.completed)
+        if (cfg.lastOpened) setLastOpened(cfg.lastOpened)
+        if (cfg.names) {
+          setNames(cfg.names)
+          localStorage.setItem("names", JSON.stringify(cfg.names))
         }
-      } catch (e: any) {
-        console.error("Error cargando PDF.js:", e)
-        setError("No se pudo cargar el motor PDF")
-      }
-    }
-    load()
-    return () => {
-      mounted = false
-    }
-  }, [])
-
-  // Orden visible de archivos
-  const orderedEntries = useMemo(() => {
-    return [...entries].sort((a, b) => naturalCompare(a.name, b.name))
-  }, [entries])
-
-  const currentFileName = useMemo(() => {
-    if (currentIndex == null) return null
-    return orderedEntries[currentIndex]?.name ?? null
-  }, [currentIndex, orderedEntries])
-
-  const resetViewer = useCallback(async () => {
-    // Cancelar render en curso
-    if (cancelRenderRef.current) {
-      try {
-        cancelRenderRef.current()
-      } catch {}
-      cancelRenderRef.current = null
-    }
-    // Destruir doc actual
-    if (pdfDocRef.current) {
-      try {
-        await pdfDocRef.current.destroy()
-      } catch {}
-      pdfDocRef.current = null
-    }
-    setTotalPages(0)
-    setCurrentPage(1)
-  }, [])
-
-  const pickFolder = useCallback(async () => {
-    setError(null)
-    setEntries([])
-    setCurrentIndex(null)
-    try {
-      // @ts-expect-error: showDirectoryPicker puede no existir en TS pero sí en runtime
-      if (!window.showDirectoryPicker) {
-        // Fallback: disparar input webkitdirectory
-        inputDirRef.current?.click()
-        return
-      }
-
-      const dirHandle: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({
-        mode: "read"
+        if (cfg.weeks) {
+          setWeeks(cfg.weeks)
+          localStorage.setItem("weeks", String(cfg.weeks))
+        }
+        if (cfg.setupComplete) {
+          setSetupComplete(true)
+          localStorage.setItem("setupComplete", "1")
+        }
       })
-
-      const found: PDFEntry[] = []
-      // Recorrer solo el primer nivel de la carpeta
-      // @ts-ignore: TypeScript no conoce correctamente entries() asíncrono
-      for await (const [name, handle] of (dirHandle as any).entries()) {
-        if (handle.kind === "file" && isPDF(name)) {
-          found.push({ name, handle })
-        }
-      }
-
-      if (!found.length) {
-        setError("La carpeta no contiene archivos PDF.")
-        return
-      }
-
-      setEntries(found)
-    } catch (e: any) {
-      if (e?.name === "AbortError") return
-      console.error(e)
-      setError("No se pudo acceder a la carpeta.")
-    }
+      .catch(() => {})
   }, [])
 
-  const onFallbackFolder = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setError(null)
-    const files = Array.from(e.target.files ?? []).filter((f) => isPDF(f.name))
-    if (!files.length) {
-      setError("La carpeta seleccionada no contiene PDFs.")
-      return
+  useEffect(() => {
+    localStorage.setItem("subjectColors", JSON.stringify(subjectColors))
+  }, [subjectColors])
+  useEffect(() => {
+    localStorage.setItem("theory", JSON.stringify(theory))
+  }, [theory])
+  useEffect(() => {
+    localStorage.setItem("practice", JSON.stringify(practice))
+  }, [practice])
+  useEffect(() => {
+    if (lastOpened) localStorage.setItem("lastOpened", lastOpened)
+  }, [lastOpened])
+
+  useEffect(() => {
+    localStorage.setItem("names", JSON.stringify(names))
+  }, [names])
+
+  useEffect(() => {
+    localStorage.setItem("weeks", String(weeks))
+  }, [weeks])
+
+  useEffect(() => {
+    const body = {
+      pdfMeta,
+      completed,
+      subjectColors,
+      theory,
+      practice,
+      lastOpened,
+      names,
+      weeks,
+      setupComplete,
     }
-    const list: PDFEntry[] = files.map((f) => ({ name: f.name, file: f }))
-    setEntries(list)
-  }, [])
+    fetch("/api/config", { method: "POST", body: JSON.stringify(body) })
+  }, [
+    pdfMeta,
+    completed,
+    subjectColors,
+    theory,
+    practice,
+    lastOpened,
+    names,
+    weeks,
+    setupComplete,
+  ])
 
-  // Cargar un PDF por índice
-  const loadPdfByIndex = useCallback(
-    async (index: number) => {
-      if (index < 0 || index >= orderedEntries.length) return
-      if (!pdfLibRef.current) {
-        setError("PDF.js aún no está listo.")
-        return
-      }
-      setLoadingDoc(true)
-      setError(null)
-      await resetViewer()
-
-      try {
-        const entry = orderedEntries[index]
-        let arrayBuffer: ArrayBuffer
-        if (entry.handle) {
-          const file = await entry.handle.getFile()
-          arrayBuffer = await file.arrayBuffer()
-        } else if (entry.file) {
-          arrayBuffer = await entry.file.arrayBuffer()
-        } else {
-          throw new Error("Entrada de PDF inválida.")
+  // build tree from selected directory
+  useEffect(() => {
+    const build = async () => {
+      const tree: Record<number, Record<string, PdfFile[]>> = {}
+      const meta = { ...pdfMeta }
+      let auto = 0
+      for (const file of dirFiles) {
+        const parts = (file as any).webkitRelativePath?.split("/") || []
+        if (parts.length >= 4) {
+          const weekPart = parts[1]
+          const subject = parts[2]
+          if (!names.includes(subject)) continue
+          if (!file.name.toLowerCase().endsWith(".pdf")) continue
+          const week = parseInt(weekPart.replace(/\D/g, ""))
+          const path = parts.slice(1).join("/")
+          if (!tree[week]) tree[week] = {}
+          if (!tree[week][subject]) tree[week][subject] = []
+          const m = meta[path] || { order: auto++ }
+          if (m.pages === undefined) {
+            try {
+              const buf = await file.arrayBuffer()
+              const doc = await PDFDocument.load(buf)
+              m.pages = doc.getPageCount()
+            } catch {}
+          }
+          meta[path] = m
+          tree[week][subject].push({
+            file,
+            path,
+            week,
+            subject,
+            pages: m.pages,
+            kind: m.kind || null,
+          })
         }
-
-        const loadingTask = pdfLibRef.current.getDocument({ data: arrayBuffer })
-        const pdf = await loadingTask.promise
-        pdfDocRef.current = pdf
-        setCurrentIndex(index)
-        setTotalPages(pdf.numPages)
-        setCurrentPage(1)
-      } catch (e: any) {
-        console.error("Error cargando PDF:", e)
-        setError("No se pudo abrir el PDF.")
-      } finally {
-        setLoadingDoc(false)
       }
-    },
-    [orderedEntries, resetViewer]
-  )
-
-  // Renderizar una página actual cuando cambie el PDF, la página o el tamaño
-  const renderCurrentPage = useCallback(async () => {
-    if (!pdfDocRef.current || !canvasRef.current || !containerRef.current) return
-    if (!currentPage) return
-
-    setLoadingPage(true)
-    setError(null)
-
-    // Cancelación simple: cambiar flag local si llega una nueva renderización
-    let cancelled = false
-    cancelRenderRef.current = () => {
-      cancelled = true
+      for (const w in tree) {
+        for (const s in tree[w]) {
+          tree[w][s].sort(
+            (a, b) => (meta[a.path]?.order ?? 0) - (meta[b.path]?.order ?? 0),
+          )
+        }
+      }
+      setPdfMeta(meta)
+      setFileTree(tree)
     }
+    build()
+  }, [dirFiles, names])
 
-    try {
-      const page = await pdfDocRef.current.getPage(currentPage)
-      if (cancelled) return
+  // update tree when metadata changes (order or labels)
+  useEffect(() => {
+    setFileTree((prev) => {
+      const copy: Record<number, Record<string, PdfFile[]>> = {}
+      for (const w in prev) {
+        copy[w] = {}
+        for (const s in prev[w]) {
+          copy[w][s] = [...prev[w][s]].sort(
+            (a, b) => (pdfMeta[a.path]?.order ?? 0) - (pdfMeta[b.path]?.order ?? 0),
+          )
+          copy[w][s].forEach((p) => {
+            p.kind = pdfMeta[p.path]?.kind || null
+            p.pages = pdfMeta[p.path]?.pages
+          })
+        }
+      }
+      return copy
+    })
+  }, [pdfMeta])
 
-      const containerWidth = Math.max(320, containerRef.current.clientWidth)
-      const baseViewport = page.getViewport({ scale: 1 })
-      // Fit width
-      const scale = Math.max(0.5, Math.min(2.5, (containerWidth - 24) / baseViewport.width))
-      const viewport = page.getViewport({ scale })
-
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext("2d")
-      if (!ctx) throw new Error("Canvas no disponible")
-
-      const ratio = window.devicePixelRatio || 1
-      canvas.width = Math.floor(viewport.width * ratio)
-      canvas.height = Math.floor(viewport.height * ratio)
-      canvas.style.width = `${viewport.width}px`
-      canvas.style.height = `${viewport.height}px`
-
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-      const renderTask = page.render({
-        canvasContext: ctx,
-        viewport
+  // compute queue ordered by urgency
+  useEffect(() => {
+    const today = new Date().getDay()
+    const stats: {
+      subject: string
+      kind: 'teoria' | 'practica'
+      days: number
+      pdfs: PdfFile[]
+    }[] = []
+    Object.values(fileTree).forEach((subjects) => {
+      Object.entries(subjects).forEach(([subject, files]) => {
+        const groups: Record<'teoria' | 'practica', PdfFile[]> = {
+          teoria: [],
+          practica: [],
+        }
+        files.forEach((f) => {
+          if (completed[f.path]) return
+          const k = pdfMeta[f.path]?.kind
+          if (k === 'teoria' || k === 'practica') groups[k].push(f)
+        })
+        ;(['teoria', 'practica'] as const).forEach((k) => {
+          const pdfs = groups[k]
+          if (!pdfs.length) return
+          const sched = k === 'teoria' ? theory[subject] : practice[subject]
+          let days = 7
+          if (sched) {
+            let diff = dayMap[sched] - today
+            if (diff < 0) diff += 7
+            if (diff === 0) diff = 7
+            days = diff
+          }
+          stats.push({ subject, kind: k, days, pdfs })
+        })
       })
-      await renderTask.promise
-
-      if (!cancelled) {
-        // ok
-      }
-    } catch (e: any) {
-      if (!cancelled) {
-        console.error("Error renderizando página:", e)
-        setError("No se pudo renderizar la página.")
-      }
-    } finally {
-      if (!cancelled) setLoadingPage(false)
+    })
+    stats.sort((a, b) => {
+      if (a.days !== b.days) return a.days - b.days
+      return b.pdfs.length - a.pdfs.length
+    })
+    const q: PdfFile[] = []
+    stats.forEach((s) => {
+      q.push(
+        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
+      )
+    })
+    setQueue(q)
+    if (q.length) {
+      const current = currentPdf && q.find((f) => f.path === currentPdf.path)
+      const last = lastOpened ? q.find((f) => f.path === lastOpened) : null
+      const target = current || last || q[0]
+      setCurrentPdf(target)
+      setQueueIndex(q.findIndex((f) => f.path === target.path))
+    } else {
+      setCurrentPdf(null)
+      setQueueIndex(0)
     }
-  }, [currentPage])
+  }, [fileTree, completed, theory, practice, lastOpened, pdfMeta])
 
-  // Re-render cuando cambien dependencias clave
+  // object url for viewer
   useEffect(() => {
-    renderCurrentPage()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderCurrentPage, totalPages, currentIndex])
-
-  // Re-render al redimensionar
-  useEffect(() => {
-    const onResize = () => {
-      renderCurrentPage()
+    if (currentPdf) {
+      const url = URL.createObjectURL(currentPdf.file)
+      setPdfUrl(url)
+      return () => URL.revokeObjectURL(url)
     }
-    window.addEventListener("resize", onResize)
-    return () => window.removeEventListener("resize", onResize)
-  }, [renderCurrentPage])
+    setPdfUrl(null)
+  }, [currentPdf])
 
-  // Navegación entre páginas y PDFs
-  const canStart = entries.length > 0
-  const hasDoc = currentIndex != null && pdfDocRef.current
-  const canPrev =
-    hasDoc && (currentPage > 1 || (currentPage === 1 && (currentIndex ?? 0) > 0))
-  const canNext =
-    hasDoc &&
-    (currentPage < totalPages ||
-      (currentPage === totalPages && (currentIndex ?? 0) < orderedEntries.length - 1))
+  // greeting screen
+  if (!started) {
+    const hour = new Date().getHours()
+    const greeting = hour >= 19 || hour < 6 ? "Buenas noches" : "Buenos días"
+    return (
+      <main className="min-h-screen flex items-center justify-center text-2xl">
+        <p>{greeting}. Presiona cualquier tecla para continuar.</p>
+      </main>
+    )
+  }
 
-  const goStart = useCallback(() => {
-    if (!canStart) return
-    loadPdfByIndex(0)
-  }, [canStart, loadPdfByIndex])
-
-  const goPrev = useCallback(async () => {
-    if (!hasDoc) return
-    // Si no estamos en la primera página, retroceder página
-    if (currentPage > 1) {
-      setCurrentPage((p) => p - 1)
-      return
-    }
-    // Si estamos en la primera página, ir al PDF anterior y saltar a su última página
-    const prevIndex = (currentIndex as number) - 1
-    if (prevIndex >= 0) {
-      await loadPdfByIndex(prevIndex)
-      // Esperar a que se ajuste totalPages
-      setTimeout(() => {
-        setCurrentPage((_) => (pdfDocRef.current ? pdfDocRef.current.numPages : 1))
-      }, 0)
-    }
-  }, [hasDoc, currentPage, currentIndex, loadPdfByIndex])
-
-  const goNext = useCallback(async () => {
-    if (!hasDoc) return
-    // Si no estamos en la última página, avanzar página
-    if (currentPage < totalPages) {
-      setCurrentPage((p) => p + 1)
-      return
-    }
-    // Si estamos en la última página, ir al siguiente PDF y saltar a su primera página
-    const nextIndex = (currentIndex as number) + 1
-    if (nextIndex < orderedEntries.length) {
-      await loadPdfByIndex(nextIndex)
-      // Primera página por defecto
-    }
-  }, [hasDoc, currentPage, totalPages, currentIndex, orderedEntries.length, loadPdfByIndex])
-
-  // Atajos de teclado: ← y → cruzan PDFs según el estado
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowLeft") {
-        e.preventDefault()
-        if (canPrev) goPrev()
+  // configuration wizard
+  if (!setupComplete) {
+    switch (step) {
+      case 1: {
+        const handleConfirm = async () => {
+          let maxWeek = 1
+          for (const file of files) {
+            const buffer = await file.arrayBuffer()
+            const wb = XLSX.read(buffer)
+            const sheet = wb.Sheets[wb.SheetNames[0]]
+            const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet)
+            rows.forEach((r) => {
+              const w = parseInt(r["SEMANA"])
+              if (!isNaN(w) && w > maxWeek) maxWeek = w
+            })
+          }
+          setWeeks(maxWeek)
+          setNames(files.map(() => ""))
+          setStep(2)
+        }
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
+            <p>Paso 1: Sube tus cronogramas (excel)</p>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              multiple
+              onChange={(e) => setFiles(Array.from(e.target.files || []))}
+            />
+            <button
+              className="px-4 py-2 border rounded"
+              disabled={!files.length}
+              onClick={handleConfirm}
+            >
+              Confirmar
+            </button>
+          </main>
+        )
       }
-      if (e.key === "ArrowRight") {
-        e.preventDefault()
-        if (canNext) goNext()
+      case 2: {
+        const updateName = (idx: number, value: string) => {
+          const next = [...names]
+          next[idx] = value
+          setNames(next)
+        }
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            <p>Paso 2: Nombra tus cronogramas</p>
+            {files.map((f, i) => (
+              <label key={i} className="flex gap-2 items-center">
+                <span>{f.name} es de</span>
+                <input
+                  className="border p-1"
+                  value={names[i] || ""}
+                  onChange={(e) => updateName(i, e.target.value)}
+                />
+              </label>
+            ))}
+            <button
+              className="px-4 py-2 border rounded"
+              disabled={names.some((n) => !n)}
+              onClick={() => {
+                const palette = [
+                  "bg-red-500",
+                  "bg-green-500",
+                  "bg-blue-500",
+                  "bg-purple-500",
+                  "bg-pink-500",
+                  "bg-yellow-500",
+                ]
+                const colors: Record<string, string> = {}
+                names.forEach((n, i) => (colors[n] = palette[i % palette.length]))
+                setSubjectColors(colors)
+                setStep(3)
+              }}
+            >
+              Confirmar
+            </button>
+          </main>
+        )
+      }
+      case 3: {
+        const unassigned = names.filter((n) => !theory[n])
+        const handleDrop = (subject: string, day: string) => {
+          setTheory({ ...theory, [subject]: day })
+        }
+        return (
+          <main className="min-h-screen flex flex-col items-center gap-4 p-4">
+            <p>Paso 3: Arrastra tus materias (teoría) a los días</p>
+            <div className="flex gap-4">
+              <div className="w-40 border p-2 min-h-40">
+                {unassigned.map((s) => (
+                  <div
+                    key={s}
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData("text", s)}
+                    className="p-1 mb-2 bg-green-500 text-white cursor-move"
+                  >
+                    {s}
+                  </div>
+                ))}
+              </div>
+              {days.map((d) => (
+                <div
+                  key={d}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => handleDrop(e.dataTransfer.getData("text"), d)}
+                  className="border p-2 w-32 min-h-40"
+                >
+                  <div className="font-bold">{d}</div>
+                  {Object.entries(theory)
+                    .filter(([_, day]) => day === d)
+                    .map(([s]) => (
+                      <div key={s} className="p-1 mt-2 bg-green-200">
+                        {s}
+                      </div>
+                    ))}
+                </div>
+              ))}
+            </div>
+            {unassigned.length === 0 && (
+              <button
+                className="px-4 py-2 border rounded"
+                onClick={() => {
+                  setStep(4)
+                }}
+              >
+                Confirmar
+              </button>
+            )}
+          </main>
+        )
+      }
+      case 4: {
+        const unassigned = names.filter((n) => !practice[n])
+        const handleDrop = (subject: string, day: string) => {
+          setPractice({ ...practice, [subject]: day })
+        }
+        return (
+          <main className="min-h-screen flex flex-col items-center gap-4 p-4">
+            <p>Paso 3: Arrastra tus materias (práctica) a los días</p>
+            <div className="flex gap-4">
+              <div className="w-40 border p-2 min-h-40">
+                {unassigned.map((s) => (
+                  <div
+                    key={s}
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData("text", s)}
+                    className="p-1 mb-2 bg-blue-500 text-white cursor-move"
+                  >
+                    {s}
+                  </div>
+                ))}
+              </div>
+              {days.map((d) => (
+                <div
+                  key={d}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => handleDrop(e.dataTransfer.getData("text"), d)}
+                  className="border p-2 w-32 min-h-40"
+                >
+                  <div className="font-bold">{d}</div>
+                  {Object.entries(practice)
+                    .filter(([_, day]) => day === d)
+                    .map(([s]) => (
+                      <div key={s} className="p-1 mt-2 bg-blue-200">
+                        {s}
+                      </div>
+                    ))}
+                </div>
+              ))}
+            </div>
+            {unassigned.length === 0 && (
+              <button
+                className="px-4 py-2 border rounded"
+                onClick={() => setStep(5)}
+              >
+                Confirmar
+              </button>
+            )}
+          </main>
+        )
+      }
+      case 5: {
+        const finish = () => {
+          localStorage.setItem("setupComplete", "1")
+          localStorage.setItem("weeks", String(weeks))
+          setSetupComplete(true)
+          setStarted(false)
+        }
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            <p>Paso 4: Da acceso a la carpeta "gestor"</p>
+            <input
+              type="file"
+              // @ts-expect-error webkitdirectory es no estándar
+              webkitdirectory=""
+              onChange={(e) => {
+                setDirFiles(Array.from(e.target.files || []))
+                setFolderReady(true)
+              }}
+            />
+            <button
+              className="px-4 py-2 border rounded"
+              disabled={!folderReady}
+              onClick={finish}
+            >
+              Finalizar
+            </button>
+          </main>
+        )
       }
     }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [canPrev, canNext, goPrev, goNext])
+  }
 
-  const selectedCount = entries.length
-  const hintText =
-    "Usa ← y → para avanzar y retroceder. En la última página de un PDF saltas al siguiente; en la primera, al anterior."
+  const handleSelectPdf = (pdf: PdfFile) => {
+    const idx = queue.findIndex((f) => f.path === pdf.path)
+    if (idx >= 0) {
+      setQueueIndex(idx)
+      setCurrentPdf(queue[idx])
+    } else {
+      setCurrentPdf(pdf)
+    }
+    setLastOpened(pdf.path)
+  }
 
+  const prevPdf = () => {
+    if (queueIndex > 0) {
+      const i = queueIndex - 1
+      setQueueIndex(i)
+      setCurrentPdf(queue[i])
+      setLastOpened(queue[i].path)
+    }
+  }
+
+  const nextPdf = () => {
+    if (queueIndex < queue.length - 1) {
+      const i = queueIndex + 1
+      setQueueIndex(i)
+      setCurrentPdf(queue[i])
+      setLastOpened(queue[i].path)
+    }
+  }
+
+  const toggleComplete = () => {
+    if (!currentPdf) return
+    const key = currentPdf.path
+    setCompleted((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const updateKind = (path: string, kind: "teoria" | "practica") => {
+    setPdfMeta((prev) => ({
+      ...prev,
+      [path]: { ...(prev[path] || { order: Object.keys(prev).length }), kind },
+    }))
+  }
+
+  const movePdf = (week: number, subject: string, path: string, dir: number) => {
+    setPdfMeta((prev) => {
+      const next = { ...prev }
+      const files = fileTree[week]?.[subject] || []
+      const sorted = [...files].sort(
+        (a, b) => (prev[a.path]?.order ?? 0) - (prev[b.path]?.order ?? 0),
+      )
+      const idx = sorted.findIndex((p) => p.path === path)
+      const swap = sorted[idx + dir]
+      if (!swap) return prev
+      const curOrder = next[path]?.order ?? 0
+      const swapOrder = next[swap.path]?.order ?? 0
+      next[path] = { ...(next[path] || {}), order: swapOrder }
+      next[swap.path] = { ...(next[swap.path] || {}), order: curOrder }
+      return next
+    })
+  }
+
+  const openFull = () => {
+    if (!currentPdf || !pdfUrl) return
+    const page = pdfMeta[currentPdf.path]?.lastPage || 1
+    const params = new URLSearchParams({
+      url: pdfUrl,
+      name: currentPdf.file.name,
+      path: currentPdf.path,
+      page: String(page),
+    })
+    window.location.href = `/visor/index.html?${params.toString()}`
+  }
+
+  const computeRemaining = (pdf: PdfFile) => {
+    const meta = pdfMeta[pdf.path]
+    const schedule = meta?.kind === "practica" ? practice[pdf.subject] : theory[pdf.subject]
+    if (!schedule) return null
+    const today = new Date().getDay()
+    let diff = dayMap[schedule] - today
+    if (diff <= 0) diff += 7
+    return diff
+  }
+
+  // main interface
+  const remaining = currentPdf ? computeRemaining(currentPdf) : null
   return (
-    <main className="min-h-screen">
-      <iframe
-        title="Visor PDF avanzado"
-        src="/visor/index.html"
-        className="w-full h-screen border-0"
-      />
+    <main className="min-h-screen relative">
+      <div className="p-4">
+        <button
+          className="underline"
+          onClick={() => {
+            setShowSchedule((s) => !s)
+            setSelectedDay(null)
+          }}
+        >
+          {showSchedule ? "Ocultar cronograma" : "Ver cronograma"}
+        </button>
+        {showSchedule && (
+          <div className="mt-4 space-y-4">
+            <div className="flex gap-2 items-center">
+              <div key="all">
+                <button
+                  className={`w-6 h-6 rounded-full border ${
+                    scheduleFilter === 'all' ? 'ring-2 ring-black' : ''
+                  }`}
+                  style={{ backgroundColor: '#9ca3af' }}
+                  onClick={() => {
+                    setScheduleFilter('all')
+                    setSelectedDay(null)
+                  }}
+                />
+              </div>
+              {names.map((n) => (
+                <div key={n} className="relative">
+                  <button
+                    className={`w-6 h-6 rounded-full border ${
+                      scheduleFilter === n ? "ring-2 ring-black" : ""
+                    }`}
+                    style={{ backgroundColor: subjectColors[n] || "#9ca3af" }}
+                    onClick={() => {
+                      setScheduleFilter(scheduleFilter === n ? "all" : n)
+                      setSelectedDay(null)
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      colorPickers.current[n]?.click()
+                    }}
+                  />
+                  <input
+                    type="color"
+                    ref={(el) => (colorPickers.current[n] = el)}
+                    className="hidden"
+                    value={subjectColors[n] || "#9ca3af"}
+                    onChange={(e) =>
+                      setSubjectColors((prev) => ({ ...prev, [n]: e.target.value }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-4">
+              {days.map((d) => (
+                <div
+                  key={d}
+                  className="flex-1 border p-2 cursor-pointer"
+                  onClick={() => setSelectedDay(d)}
+                >
+                  <div className="font-bold mb-2">{d}</div>
+                  <div className="flex flex-wrap gap-1">
+                    {names
+                      .filter((n) => scheduleFilter === "all" || scheduleFilter === n)
+                      .map((n) => {
+                        const isT = theory[n] === d
+                        const isP = practice[n] === d
+                        if (!isT && !isP) return null
+                        const color = subjectColors[n] || "#9ca3af"
+                        const label = isT && isP ? "T/P" : isT ? "T" : "P"
+                        return (
+                          <div
+                            key={n}
+                            className="w-6 h-6 rounded-full text-white text-xs flex items-center justify-center"
+                            style={{ backgroundColor: color }}
+                            title={`${n} ${label}`}
+                          >
+                            {label[0]}
+                          </div>
+                        )
+                      })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {selectedDay && (
+              <div className="mt-2">
+                {(scheduleFilter === "all" ? names : [scheduleFilter]).map((subj) => {
+                  const list: PdfFile[] = []
+                  Object.values(fileTree).forEach((weeks) => {
+                    const files = weeks[subj] || []
+                    files.forEach((p) => {
+                      const meta = pdfMeta[p.path]
+                      const sched =
+                        (meta?.kind === "practica" ? practice[subj] : theory[subj]) || null
+                      if (sched === selectedDay && !completed[p.path]) {
+                        list.push(p)
+                      }
+                    })
+                  })
+                  if (!list.length) return null
+                  return (
+                    <div key={subj} className="mb-2">
+                      <div className="font-semibold">{subj}</div>
+                      <ul className="list-disc ml-4">
+                        {list.map((p) => (
+                          <li
+                            key={p.path}
+                            className="cursor-pointer underline"
+                            onClick={() => handleSelectPdf(p)}
+                          >
+                            {p.file.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-2 min-h-screen">
+        <aside className="border-r p-4 space-y-2">
+          {!viewWeek && (
+            <>
+              <h2 className="text-xl">Semanas</h2>
+              <ul className="space-y-1">
+                {Array.from({ length: weeks }, (_, i) => {
+                  const wk = i + 1
+                  const locked = wk > 1
+                  return (
+                    <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
+                      {locked ? (
+                        <>Semana {wk} 🔒</>
+                      ) : (
+                        <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+          {viewWeek && !viewSubject && (
+            <>
+              <button className="mb-2 underline" onClick={() => setViewWeek(null)}>
+                ← Volver
+              </button>
+              <h2 className="text-xl">Semana {viewWeek}</h2>
+              <ul className="space-y-1">
+                {Object.keys(fileTree[viewWeek] || {}).map((s) => {
+                  const theoryFiles = (fileTree[viewWeek]?.[s] || []).filter(
+                    (p) => pdfMeta[p.path]?.kind === "teoria",
+                  )
+                  const total = theoryFiles.reduce(
+                    (sum, p) => sum + (pdfMeta[p.path]?.pages || 0),
+                    0,
+                  )
+                  const done = theoryFiles
+                    .filter((p) => completed[p.path])
+                    .reduce((sum, p) => sum + (pdfMeta[p.path]?.pages || 0), 0)
+                  const pct = total ? Math.round((done / total) * 100) : 0
+                  return (
+                    <li key={s} className="flex justify-between items-center">
+                      <button onClick={() => setViewSubject(s)}>{s}</button>
+                      <span className="text-sm text-gray-500">{pct}% teoría</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+          {viewWeek && viewSubject && (
+            <>
+              <button className="mb-2 underline" onClick={() => setViewSubject(null)}>
+                ← Volver
+              </button>
+              <h2 className="text-xl">{viewSubject}</h2>
+              <div className="flex gap-2 mb-2">
+                <button
+                  className={kindFilter === 'all' ? 'underline' : ''}
+                  onClick={() => setKindFilter('all')}
+                >
+                  Todos
+                </button>
+                <button
+                  className={kindFilter === 'teoria' ? 'underline' : ''}
+                  onClick={() => setKindFilter('teoria')}
+                >
+                  Teoría
+                </button>
+                <button
+                  className={kindFilter === 'practica' ? 'underline' : ''}
+                  onClick={() => setKindFilter('practica')}
+                >
+                  Práctica
+                </button>
+              </div>
+              <ul className="space-y-1">
+                {(fileTree[viewWeek]?.[viewSubject] || [])
+                  .filter(
+                    (p) =>
+                      kindFilter === 'all' || pdfMeta[p.path]?.kind === kindFilter,
+                  )
+                  .map((p) => (
+                  <li
+                    key={p.path}
+                    className={`flex items-center gap-2 ${
+                      completed[p.path] ? "line-through text-gray-400" : ""
+                    }`}
+                  >
+                    <span
+                      className="flex-1 cursor-pointer"
+                      onClick={() => handleSelectPdf(p)}
+                      title={p.file.name}
+                    >
+                      {p.file.name}
+                    </span>
+                    <select
+                      className="border text-xs"
+                      value={pdfMeta[p.path]?.kind || ""}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) =>
+                        updateKind(
+                          p.path,
+                          e.target.value as "teoria" | "practica",
+                        )
+                      }
+                    >
+                      <option value="">-</option>
+                      <option value="teoria">T</option>
+                      <option value="practica">P</option>
+                    </select>
+                    <div className="flex flex-col">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          movePdf(p.week, p.subject, p.path, -1)
+                        }}
+                      >
+                        ↑
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          movePdf(p.week, p.subject, p.path, 1)
+                        }}
+                      >
+                        ↓
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </aside>
+        <section className="p-4 flex flex-col">
+          <h2 className="text-xl mb-2">Actual</h2>
+          {currentPdf ? (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                <button onClick={prevPdf} disabled={queueIndex <= 0}>←</button>
+                <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>→</button>
+                <span>📄</span>
+                <span className="truncate flex-1" title={currentPdf.file.name}>
+                  {currentPdf.file.name}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={!!completed[currentPdf.path]}
+                  onChange={toggleComplete}
+                />
+              </div>
+              <div className="flex-1 border cursor-pointer" onClick={openFull}>
+                <iframe
+                  title="Visor PDF avanzado"
+                  src={
+                    pdfUrl
+                      ? `/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                          currentPdf.file.name,
+                        )}&path=${encodeURIComponent(currentPdf.path)}&page=${
+                          pdfMeta[currentPdf.path]?.lastPage || 1
+                        }`
+                      : "/visor/index.html"
+                  }
+                  className="w-full h-full border-0 pointer-events-none"
+                />
+              </div>
+              {remaining !== null && (
+                <div
+                  className={`p-2 text-center ${
+                    remaining >= 3
+                      ? "text-green-500"
+                      : remaining === 2
+                      ? "text-yellow-500"
+                      : "text-red-500"
+                  }`}
+                >
+                  Días restantes: {remaining}
+                </div>
+              )}
+            </>
+          ) : (
+            <p>Sin selección</p>
+          )}
+        </section>
+      </div>
     </main>
   )
 }
 
-/**
- * Pequeño helper para disparar efectos imperativos cuando un "when" cambia,
- * sin forzar re-render del componente principal.
- */
-function RenderEffect({
-  when,
-  onEffect
-}: {
-  when: string | number | boolean
-  onEffect: () => void
-}) {
-  const prev = useRef<string | number | boolean | null>(null)
-  useEffect(() => {
-    if (prev.current !== when) {
-      prev.current = when
-      onEffect()
-    }
-  }, [when, onEffect])
-  return null
-}
