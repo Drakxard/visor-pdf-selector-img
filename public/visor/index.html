@@ -758,6 +758,15 @@
         }
       }
 
+      container.addEventListener('scroll', () => {
+        if (!currentPdfName) return;
+        const p = getCurrentPage();
+        if (p !== currentPage) {
+          currentPage = p;
+          try { localStorage.setItem('pdfPage:' + currentPdfName, String(p)); } catch {}
+        }
+      });
+
       // ========================================
       // CARGA DE PDF
       // ========================================
@@ -778,7 +787,8 @@
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
           totalPages = pdfDoc.numPages;
-          currentPage = 1;
+          const saved = parseInt(localStorage.getItem('pdfPage:' + filename) || '1');
+          currentPage = isNaN(saved) ? 1 : Math.min(Math.max(saved, 1), totalPages);
 
           // Tamaño base
           try {
@@ -791,11 +801,10 @@
           buildPageSkeletons();
           prepareInitialReveal();
 
-          if (pendingAfterLoadGoTo === 'last') {
-            setTimeout(() => scrollToPage(totalPages), 0);
-          } else {
-            setTimeout(() => scrollToPage(1), 0);
-          }
+          let initial = currentPage;
+          if (pendingAfterLoadGoTo === 'last') initial = totalPages;
+          else if (pendingAfterLoadGoTo === 'first') initial = 1;
+          setTimeout(() => scrollToPage(initial), 0);
           pendingAfterLoadGoTo = null;
 
           if (directoryHandle) {
@@ -2084,6 +2093,14 @@
         await writable.close();
         const file = new File([blob], pdfName, { type: 'application/pdf' });
         return { handle: fileHandle, file, blob };
+      }
+
+      // cargar pdf inicial si viene por query
+      const params = new URLSearchParams(window.location.search);
+      const urlParam = params.get('url');
+      const nameParam = params.get('name');
+      if (urlParam && nameParam) {
+        loadPdf(urlParam, nameParam);
       }
 
       // ========================================

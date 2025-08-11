@@ -48,6 +48,7 @@
     "lucide-react": "^0.454.0",
     "next": "15.2.4",
     "next-themes": "latest",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "latest",
     "react": "^19",
     "react-day-picker": "9.8.0",
@@ -59,6 +60,7 @@
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.9",
+    "xlsx": "0.18.5",
     "zod": "3.25.67"
   },
   "devDependencies": {
