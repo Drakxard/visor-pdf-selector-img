@@ -26,7 +26,8 @@ export default function Home() {
   const { setTheme } = useTheme()
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
-  const [step, setStep] = useState(1)
+  const [step, setStep] = useState(0)
+  const [gestorDir, setGestorDir] = useState<FileSystemDirectoryHandle | null>(null)
   const [files, setFiles] = useState<File[]>([])
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
@@ -309,6 +310,51 @@ export default function Home() {
   // configuration wizard
   if (!setupComplete) {
     switch (step) {
+      case 0: {
+        const pickGestor = async () => {
+          try {
+            const dir = await (window as any).showDirectoryPicker()
+            setGestorDir(dir)
+            try {
+              const system = await dir.getDirectoryHandle('system').catch(() => null)
+              const notas = await system?.getDirectoryHandle('notas').catch(() => null)
+              const cfgHandle = await notas?.getFileHandle('config.json').catch(() => null)
+              if (cfgHandle) {
+                const file = await cfgHandle.getFile()
+                const text = await file.text()
+                const cfg = JSON.parse(text)
+                if (cfg.subjectColors) setSubjectColors(cfg.subjectColors)
+                if (cfg.theory) setTheory(cfg.theory)
+                if (cfg.practice) setPractice(cfg.practice)
+                if (cfg.pdfMeta) setPdfMeta(cfg.pdfMeta)
+                if (cfg.completed) setCompleted(cfg.completed)
+                if (cfg.lastOpened) setLastOpened(cfg.lastOpened)
+                if (cfg.names) setNames(cfg.names)
+                if (cfg.weeks) setWeeks(cfg.weeks)
+                if (cfg.viewWeek !== undefined) setViewWeek(cfg.viewWeek)
+                if (cfg.viewSubject !== undefined) setViewSubject(cfg.viewSubject)
+                if (cfg.setupComplete) {
+                  localStorage.setItem('setupComplete', '1')
+                  setSetupComplete(true)
+                  setStarted(false)
+                  localStorage.removeItem('started')
+                  return
+                }
+              }
+            } catch {}
+            setStep(1)
+          } catch {}
+        }
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
+            <p>Paso 0: Selecciona la carpeta "gestor"</p>
+            <button className="px-4 py-2 border rounded" onClick={pickGestor}>
+              Elegir carpeta
+            </button>
+          </main>
+        )
+      }
       case 1: {
         const handleConfirm = async () => {
           let maxWeek = 1
@@ -447,7 +493,7 @@ export default function Home() {
         }
         return (
           <main className="min-h-screen flex flex-col items-center gap-4 p-4">
-            <p>Paso 3: Arrastra tus materias (práctica) a los días</p>
+            <p>Paso 4: Arrastra tus materias (práctica) a los días</p>
             <div className="flex gap-4">
               <div className="w-40 border p-2 min-h-40">
                 {unassigned.map((s) => (
@@ -500,8 +546,7 @@ export default function Home() {
         }
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <p>Paso 4: Da acceso a la carpeta "gestor"</p>
-            <p>Se utilizará la carpeta preconfigurada.</p>
+            <p>Paso 5: Configuración completa</p>
             <button className="px-4 py-2 border rounded" onClick={finish}>
               Finalizar
             </button>
