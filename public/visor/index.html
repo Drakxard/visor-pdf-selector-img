@@ -2086,6 +2086,14 @@
         return { handle: fileHandle, file, blob };
       }
 
+      // cargar pdf inicial si viene por query
+      const params = new URLSearchParams(window.location.search);
+      const urlParam = params.get('url');
+      const nameParam = params.get('name');
+      if (urlParam && nameParam) {
+        loadPdf(urlParam, nameParam);
+      }
+
       // ========================================
       // INICIALIZACIÓN
       // ========================================
