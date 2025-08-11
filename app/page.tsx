@@ -33,6 +33,12 @@ export default function Home() {
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [labels, setLabels] = useState<Record<string, string>>({})
+  const [orders, setOrders] = useState<Record<string, string[]>>({})
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [showSchedule, setShowSchedule] = useState(false)
+  const [filterSubject, setFilterSubject] = useState<string | null>(null)
+  const [selectedDay, setSelectedDay] = useState<string | null>(null)
 
   // theme and setup flag
   useEffect(() => {
@@ -71,27 +77,56 @@ export default function Home() {
     localStorage.setItem("completed", JSON.stringify(completed))
   }, [completed])
 
+  // load labels and orders
+  useEffect(() => {
+    const ls = localStorage.getItem("labels")
+    if (ls) setLabels(JSON.parse(ls))
+    const ord = localStorage.getItem("orders")
+    if (ord) setOrders(JSON.parse(ord))
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem("labels", JSON.stringify(labels))
+  }, [labels])
+
+  useEffect(() => {
+    localStorage.setItem("orders", JSON.stringify(orders))
+  }, [orders])
+
   // build tree from selected directory
   useEffect(() => {
     const tree: Record<number, Record<string, PdfFile[]>> = {}
     for (const file of dirFiles) {
+      if (!file.name.toLowerCase().endsWith(".pdf")) continue
       const parts = (file as any).webkitRelativePath?.split("/") || []
       if (parts.length >= 4) {
-        const subject = parts[1]
-        const sem = parts[2]
-        const week = parseInt(sem.replace(/\D/g, ""))
+        const weekPart = parts[1]
+        const subject = parts[2]
+        const week = parseInt(weekPart.replace(/\D/g, ""))
         if (!tree[week]) tree[week] = {}
         if (!tree[week][subject]) tree[week][subject] = []
-        tree[week][subject].push({ file, path: parts.slice(1).join("/"), week, subject })
+        tree[week][subject].push({
+          file,
+          path: parts.slice(1).join("/"),
+          week,
+          subject,
+        })
       }
     }
     for (const w in tree) {
       for (const s in tree[w]) {
-        tree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
+        const key = `${w}-${s}`
+        if (orders[key]) {
+          tree[w][s].sort(
+            (a, b) => orders[key].indexOf(a.path) - orders[key].indexOf(b.path),
+          )
+        } else {
+          tree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
+        }
       }
     }
     setFileTree(tree)
-  }, [dirFiles])
+  }, [dirFiles, orders])
 
   // compute queue ordered by urgency
   useEffect(() => {
@@ -109,21 +144,16 @@ export default function Home() {
         const remaining = files.filter((f) => !completed[f.path])
         if (!remaining.length) return
         let days = 7
-        const t = theory[subject]
-        const p = practice[subject]
-        const candidates = [t, p]
-          .filter((d): d is string => !!d)
-          .map((d) => dayMap[d])
-        if (candidates.length) {
-          days = Math.min(
-            ...candidates.map((d) => {
-              let diff = d - today
-              if (diff < 0) diff += 7
-              if (diff === 0) diff = 7
-              return diff
-            }),
-          )
-        }
+        remaining.forEach((f) => {
+          const dayName =
+            labels[f.path] === "practice" ? practice[subject] : theory[subject]
+          if (!dayName) return
+          const d = dayMap[dayName]
+          let diff = d - today
+          if (diff < 0) diff += 7
+          if (diff === 0) diff = 7
+          if (diff < days) days = diff
+        })
         stats.push({ subject, days, pdfs: remaining })
       })
     })
@@ -373,6 +403,25 @@ export default function Home() {
     }
   }
 
+  const daysUntil = (pdf: PdfFile) => {
+    const dayMap: Record<string, number> = {
+      Lunes: 1,
+      Martes: 2,
+      Miércoles: 3,
+      Jueves: 4,
+      Viernes: 5,
+    }
+    const today = new Date().getDay()
+    const dayName =
+      labels[pdf.path] === "practice" ? practice[pdf.subject] : theory[pdf.subject]
+    if (!dayName) return 0
+    const target = dayMap[dayName]
+    let diff = target - today
+    if (diff < 0) diff += 7
+    if (diff === 0) diff = 7
+    return diff
+  }
+
   const handleSelectPdf = (pdf: PdfFile) => {
     const idx = queue.findIndex((f) => f.path === pdf.path)
     if (idx >= 0) {
@@ -381,6 +430,7 @@ export default function Home() {
     } else {
       setCurrentPdf(pdf)
     }
+    setViewerOpen(true)
   }
 
   const prevPdf = () => {
@@ -388,6 +438,7 @@ export default function Home() {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      setViewerOpen(true)
     }
   }
 
@@ -396,6 +447,7 @@ export default function Home() {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      setViewerOpen(true)
     }
   }
 
@@ -405,9 +457,143 @@ export default function Home() {
     setCompleted((prev) => ({ ...prev, [key]: !prev[key] }))
   }
 
+  const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
+    const arr = [...(fileTree[week]?.[subject] || [])]
+    const target = index + delta
+    if (target < 0 || target >= arr.length) return
+    ;[arr[index], arr[target]] = [arr[target], arr[index]]
+    setFileTree({ ...fileTree, [week]: { ...fileTree[week], [subject]: arr } })
+    const key = `${week}-${subject}`
+    setOrders({ ...orders, [key]: arr.map((p) => p.path) })
+  }
+
+  const updateLabel = (path: string, value: string) => {
+    setLabels((prev) => ({ ...prev, [path]: value }))
+  }
+
+  const pendingFor = (day: string, subject?: string) => {
+    const list: PdfFile[] = []
+    Object.values(fileTree).forEach((subjects) => {
+      Object.entries(subjects).forEach(([s, files]) => {
+        if (subject && s !== subject) return
+        files.forEach((f) => {
+          const type = labels[f.path]
+          const dayName = type === "practice" ? practice[s] : theory[s]
+          if (dayName === day && !completed[f.path]) list.push(f)
+        })
+      })
+    })
+    list.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name))
+    return list
+  }
+
+  const colorMap = names.reduce<Record<string, string>>((acc, n, i) => {
+    const palette = [
+      "bg-red-500",
+      "bg-green-500",
+      "bg-blue-500",
+      "bg-yellow-500",
+      "bg-purple-500",
+    ]
+    acc[n] = palette[i % palette.length]
+    return acc
+  }, {})
+
   // main interface
   return (
-    <main className="grid grid-cols-2 min-h-screen">
+    <>
+      <div className="p-2">
+        <button className="underline" onClick={() => setShowSchedule(!showSchedule)}>
+          {showSchedule ? "Ocultar cronograma" : "Ver cronograma"}
+        </button>
+      </div>
+      {showSchedule && (
+        <div className="p-4 border-b">
+          <div className="flex gap-2 mb-2">
+            <button
+              className={!filterSubject ? "font-bold" : ""}
+              onClick={() => setFilterSubject(null)}
+            >
+              Todas
+            </button>
+            {names.map((n) => (
+              <button
+                key={n}
+                className={filterSubject === n ? "font-bold" : ""}
+                onClick={() => setFilterSubject(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-4">
+            {days.map((d) => (
+              <div
+                key={d}
+                className="flex-1 border p-2 cursor-pointer"
+                onClick={() => setSelectedDay(d)}
+              >
+                <div className="font-bold">{d}</div>
+                {names
+                  .filter((n) => !filterSubject || n === filterSubject)
+                  .flatMap((n) => {
+                    const arr: any[] = []
+                    if (theory[n] === d)
+                      arr.push(
+                        <div
+                          key={n + "t"}
+                          className={`w-6 h-6 rounded-full ${colorMap[n]} mt-2`}
+                          title={`${n} Teoría`}
+                        />,
+                      )
+                    if (practice[n] === d)
+                      arr.push(
+                        <div
+                          key={n + "p"}
+                          className={`w-6 h-6 rounded-full ${colorMap[n]} mt-2 border`}
+                          title={`${n} Práctica`}
+                        />,
+                      )
+                    return arr
+                  })}
+              </div>
+            ))}
+          </div>
+          {selectedDay && (
+            <div className="mt-4 text-sm">
+              {filterSubject ? (
+                pendingFor(selectedDay, filterSubject).length ? (
+                  <ul>
+                    {pendingFor(selectedDay, filterSubject).map((f) => (
+                      <li key={f.path} className="truncate" title={f.file.name}>
+                        {f.file.name}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null
+              ) : (
+                names.map((n) => {
+                  const list = pendingFor(selectedDay, n)
+                  if (!list.length) return null
+                  return (
+                    <div key={n} className="mb-2">
+                      <div className="font-semibold">{n}</div>
+                      <ul className="ml-4">
+                        {list.map((f) => (
+                          <li key={f.path} className="truncate" title={f.file.name}>
+                            {f.file.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      <main className="grid grid-cols-2 min-h-screen">
       <aside className="border-r p-4 space-y-2">
         {!viewWeek && (
           <>
@@ -436,11 +622,21 @@ export default function Home() {
             </button>
             <h2 className="text-xl">Semana {viewWeek}</h2>
             <ul className="space-y-1">
-              {Object.keys(fileTree[viewWeek] || {}).map((s) => (
-                <li key={s}>
-                  <button onClick={() => setViewSubject(s)}>{s}</button>
-                </li>
-              ))}
+              {Object.keys(fileTree[viewWeek] || {}).map((s) => {
+                const files = (fileTree[viewWeek] || {})[s] || []
+                const theoryFiles = files.filter((f) => labels[f.path] === "theory")
+                const done = theoryFiles.filter((f) => completed[f.path]).length
+                const pct = theoryFiles.length
+                  ? Math.round((done / theoryFiles.length) * 100)
+                  : 0
+                return (
+                  <li key={s}>
+                    <button onClick={() => setViewSubject(s)}>
+                      {s} ({pct}% teoría)
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
           </>
         )}
@@ -451,15 +647,35 @@ export default function Home() {
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
             <ul className="space-y-1">
-              {(fileTree[viewWeek]?.[viewSubject] || []).map((p) => (
+              {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
                 <li
                   key={p.path}
-                  className={`cursor-pointer ${
+                  className={`flex items-center gap-2 ${
                     completed[p.path] ? "line-through text-gray-400" : ""
                   }`}
-                  onClick={() => handleSelectPdf(p)}
                 >
-                  {p.file.name}
+                  <span
+                    className="flex-1 truncate cursor-pointer"
+                    title={p.file.name}
+                    onClick={() => handleSelectPdf(p)}
+                  >
+                    {p.file.name}
+                  </span>
+                  <select
+                    className="text-xs border"
+                    value={labels[p.path] || ""}
+                    onChange={(e) => updateLabel(p.path, e.target.value)}
+                  >
+                    <option value="">-</option>
+                    <option value="theory">T</option>
+                    <option value="practice">P</option>
+                  </select>
+                  <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
+                    ↑
+                  </button>
+                  <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
+                    ↓
+                  </button>
                 </li>
               ))}
             </ul>
@@ -470,7 +686,12 @@ export default function Home() {
         <div className="flex items-center justify-between p-2 border-b">
           <div className="flex items-center gap-2">
             <span>📄</span>
-            <span>{currentPdf ? currentPdf.file.name : "Sin selección"}</span>
+            <span
+              className="truncate"
+              title={currentPdf ? currentPdf.file.name : "Sin selección"}
+            >
+              {currentPdf ? currentPdf.file.name : "Sin selección"}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={prevPdf} disabled={queueIndex <= 0}>
@@ -486,23 +707,64 @@ export default function Home() {
                 onChange={toggleComplete}
               />
             )}
+            {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
+          </div>
+        </div>
+        <div className="p-4 text-sm text-gray-500">
+          {currentPdf
+            ? `Semana ${currentPdf.week} - ${currentPdf.subject}`
+            : "Selecciona un PDF"}
+        </div>
+      </section>
+    </main>
+    {viewerOpen && currentPdf && pdfUrl && (
+      <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
+        <div className="flex items-center justify-between p-2 border-b">
+          <div className="flex items-center gap-2 flex-1 truncate">
+            <span>📄</span>
+            <span className="truncate" title={currentPdf.file.name}>
+              {currentPdf.file.name}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={prevPdf} disabled={queueIndex <= 0}>
+              ←
+            </button>
+            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
+              →
+            </button>
+            <input
+              type="checkbox"
+              checked={!!completed[currentPdf.path]}
+              onChange={toggleComplete}
+            />
+            <button onClick={() => setViewerOpen(false)}>✕</button>
           </div>
         </div>
         <div className="flex-1">
           <iframe
-            title="Visor PDF avanzado"
-            src={
-              currentPdf && pdfUrl
-                ? `/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-                    currentPdf.file.name,
-                  )}`
-                : "/visor/index.html"
-            }
+            title="Visor PDF"
+            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+              currentPdf.file.name,
+            )}`}
             className="w-full h-full border-0"
           />
         </div>
-      </section>
-    </main>
+        {(() => {
+          const left = daysUntil(currentPdf)
+          const color =
+            left <= 1
+              ? "text-red-500"
+              : left <= 3
+              ? "text-yellow-500"
+              : "text-green-500"
+          return (
+            <div className={`p-2 border-t ${color}`}>Días restantes: {left}</div>
+          )
+        })()}
+      </div>
+    )}
+  </>
   )
 }
 
