@@ -1167,6 +1167,18 @@
       }
 
       // ========================================
+      // CARGA INICIAL DESDE QUERY
+      // ========================================
+      const params = new URLSearchParams(window.location.search)
+      const fileParam = params.get('file')
+      const nameParam = params.get('name')
+      if (fileParam) {
+        const url = decodeURIComponent(fileParam)
+        const name = nameParam ? decodeURIComponent(nameParam) : url.split('/').pop()
+        loadPdf(url, name)
+      }
+
+      // ========================================
       // KEYBOARD / SCROLL
       // ========================================
       document.addEventListener('keydown', async function(e) {
