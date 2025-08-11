@@ -7,11 +7,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  try {
-    const data = await req.json()
-    await writeConfig(data)
-    return NextResponse.json({ ok: true })
-  } catch {
-    return NextResponse.json({ ok: false }, { status: 500 })
-  }
+  const data = await req
+    .json()
+    .catch(() => ({}))
+  const ok = await writeConfig(data)
+  return NextResponse.json({ ok }, { status: ok ? 200 : 500 })
 }
