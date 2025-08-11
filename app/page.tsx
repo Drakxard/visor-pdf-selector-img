@@ -14,7 +14,7 @@ type PdfFile = {
 }
 
 export default function Home() {
-  const { setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(1)
@@ -35,10 +35,13 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [orders, setOrders] = useState<Record<string, string[]>>({})
-  const [viewerOpen, setViewerOpen] = useState(false)
   const [showSchedule, setShowSchedule] = useState(false)
   const [filterSubject, setFilterSubject] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+
+  const toggleTheme = () => {
+    setTheme(theme === "dark" ? "light" : "dark")
+  }
 
   // theme and setup flag
   useEffect(() => {
@@ -430,7 +433,6 @@ export default function Home() {
     } else {
       setCurrentPdf(pdf)
     }
-    setViewerOpen(true)
   }
 
   const prevPdf = () => {
@@ -438,7 +440,6 @@ export default function Home() {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(true)
     }
   }
 
@@ -447,7 +448,6 @@ export default function Home() {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(true)
     }
   }
 
@@ -707,50 +707,26 @@ export default function Home() {
                 onChange={toggleComplete}
               />
             )}
-            {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
-          </div>
-        </div>
-        <div className="p-4 text-sm text-gray-500">
-          {currentPdf
-            ? `Semana ${currentPdf.week} - ${currentPdf.subject}`
-            : "Selecciona un PDF"}
-        </div>
-      </section>
-    </main>
-    {viewerOpen && currentPdf && pdfUrl && (
-      <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between p-2 border-b">
-          <div className="flex items-center gap-2 flex-1 truncate">
-            <span>📄</span>
-            <span className="truncate" title={currentPdf.file.name}>
-              {currentPdf.file.name}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            <input
-              type="checkbox"
-              checked={!!completed[currentPdf.path]}
-              onChange={toggleComplete}
-            />
-            <button onClick={() => setViewerOpen(false)}>✕</button>
           </div>
         </div>
         <div className="flex-1">
-          <iframe
-            title="Visor PDF"
-            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-              currentPdf.file.name,
-            )}`}
-            className="w-full h-full border-0"
-          />
+          {currentPdf && pdfUrl ? (
+            <iframe
+              title="Visor PDF"
+              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                currentPdf.file.name,
+              )}`}
+              className="w-full h-full border-0"
+            />
+          ) : (
+            <div className="p-4 text-sm text-gray-500">
+              {currentPdf
+                ? `Semana ${currentPdf.week} - ${currentPdf.subject}`
+                : "Selecciona un PDF"}
+            </div>
+          )}
         </div>
-        {(() => {
+        {currentPdf && (() => {
           const left = daysUntil(currentPdf)
           const color =
             left <= 1
@@ -762,8 +738,14 @@ export default function Home() {
             <div className={`p-2 border-t ${color}`}>Días restantes: {left}</div>
           )
         })()}
-      </div>
-    )}
+      </section>
+    </main>
+    <button
+      className="fixed top-2 right-2 p-2 border rounded"
+      onClick={toggleTheme}
+    >
+      {theme === "dark" ? "🌞" : "🌙"}
+    </button>
   </>
   )
 }
