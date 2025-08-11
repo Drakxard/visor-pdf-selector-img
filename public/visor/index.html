@@ -13,6 +13,7 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1/mathquill.min.css" />
+  <link rel="stylesheet" href="/visor/pdf_viewer.css" />
 
   <style>
     * { box-sizing: border-box; }
@@ -672,6 +673,8 @@
 
           state.wrapper.style.width = viewport.width + 'px';
           state.wrapper.style.height = viewport.height + 'px';
+          state.textLayer.style.width = viewport.width + 'px';
+          state.textLayer.style.height = viewport.height + 'px';
           state.layer.style.width = viewport.width + 'px';
           state.layer.style.height = viewport.height + 'px';
 
@@ -685,6 +688,15 @@
           ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
           await page.render({ canvasContext: ctx, viewport }).promise;
+
+          state.textLayer.innerHTML = '';
+          const textContent = await page.getTextContent();
+          await pdfjsLib.renderTextLayer({
+            textContent,
+            container: state.textLayer,
+            viewport,
+            textDivs: []
+          }).promise;
 
           state.renderedScale = scale;
           repositionNotesForLayer(state.layer);
@@ -712,6 +724,7 @@
           if (far && state.canvas.width > 0) {
             state.canvas.width = 0;
             state.canvas.height = 0;
+            state.textLayer.innerHTML = '';
             state.renderedScale = 0;
           }
         }
@@ -823,6 +836,12 @@
           canvas.width = 0; canvas.height = 0;
           wrapper.appendChild(canvas);
 
+          const textLayer = document.createElement('div');
+          textLayer.className = 'textLayer';
+          textLayer.style.width = w + 'px';
+          textLayer.style.height = h + 'px';
+          wrapper.appendChild(textLayer);
+
           const layer = document.createElement('div');
           layer.className = 'anno-layer';
           layer.style.width = w + 'px';
@@ -880,7 +899,7 @@
 
           container.appendChild(wrapper);
 
-          const state = { wrapper, canvas, layer, renderedScale: 0, rendering: false, width: w, height: h };
+          const state = { wrapper, canvas, textLayer, layer, renderedScale: 0, rendering: false, width: w, height: h };
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
