@@ -282,6 +282,8 @@
       margin-top: 12px;
     }
     .prompt-actions .category-btn { width: 100%; max-width: 300px; }
+    .prompt-item { display: flex; align-items: center; gap: 8px; justify-content: center; width: 100%; }
+    .edit-prompt { background: none; border: none; cursor: pointer; font-size: 18px; }
     .pdf-draggable {
       margin-top: 16px;
       padding: 10px 14px;
@@ -534,12 +536,38 @@
       let theoryHandle = null;
       let practiceHandle = null;
 
+      const PROMPT_FILE = 'prompts.json';
       const USER_PROMPTS = {
-        resumen: localStorage.getItem('prompt_resumen') || 'Resumen del contenido',
-        vf: localStorage.getItem('prompt_vf') || 'Genera preguntas de verdadero/falso del contenido',
-        reciprocos: localStorage.getItem('prompt_reciprocos') || 'Enumera recíprocos del contenido',
-        practica: localStorage.getItem('prompt_practica') || 'Extraer {"tema","enunciado","ejercicio"}'
+        resumen: '',
+        vf: '',
+        reciprocos: '',
+        practica: ''
       };
+
+      async function loadPromptConfig() {
+        if (!directoryHandle || !supportsFileSystemAccess()) return;
+        try {
+          const fileHandle = await directoryHandle.getFileHandle(PROMPT_FILE);
+          const file = await fileHandle.getFile();
+          const data = JSON.parse(await file.text());
+          Object.assign(USER_PROMPTS, data);
+        } catch {
+          await savePromptConfig();
+        }
+      }
+
+      async function savePromptConfig() {
+        if (!directoryHandle || !supportsFileSystemAccess()) return;
+        try {
+          const fileHandle = await directoryHandle.getFileHandle(PROMPT_FILE, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(JSON.stringify(USER_PROMPTS, null, 2));
+          await writable.close();
+        } catch (e) {
+          console.error('Error guardando prompts:', e);
+          showToast('No se pudo guardar prompts', 'error');
+        }
+      }
 
       // ========================================
       // UTILIDADES UI
@@ -1542,6 +1570,7 @@
               if (permissionStatus === 'granted') {
                 directoryHandle = handle;
                 updateFileStatus('saved', 'Acceso concedido');
+                await loadPromptConfig();
               } else {
                 updateFileStatus('no-access', 'Acceso denegado');
               }
@@ -1568,6 +1597,7 @@
             const store = transaction.objectStore('settings');
             await store.put({ id: 'notesFolder', handle: directoryHandle });
             updateFileStatus('saved', 'Acceso concedido');
+            await loadPromptConfig();
             showToast('Carpeta configurada correctamente', 'success');
             hidePermissionModal();
             if (currentPdfName) setTimeout(loadNotesFromFile, 500);
@@ -1894,6 +1924,8 @@
             pdfModalBody.innerHTML = '<p>No se generó PDF.</p>';
             return;
           }
+          await loadPromptConfig();
+          triggerDownload(pdfData.blob, pdfData.file.name);
           renderPromptOptions(cat, pdfData);
         } catch (e) {
           console.error('Error generando PDF:', e);
@@ -1902,17 +1934,30 @@
         }
       }
 
+      function triggerDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          a.remove();
+        }, 1000);
+      }
+
       function renderPromptOptions(cat, pdfData) {
         let html = '';
         if (cat === 'teo') {
           html += `<div class="prompt-actions">
-            <button class="category-btn teo" data-prompt="resumen">Resumen</button>
-            <button class="category-btn teo" data-prompt="vf">Verdaderos o falsos</button>
-            <button class="category-btn teo" data-prompt="reciprocos">Recíprocos</button>
+            <div class="prompt-item"><button class="category-btn teo" data-prompt="resumen">Resumen</button><button class="edit-prompt" data-edit="resumen">⚙️</button></div>
+            <div class="prompt-item"><button class="category-btn teo" data-prompt="vf">Verdaderos o falsos</button><button class="edit-prompt" data-edit="vf">⚙️</button></div>
+            <div class="prompt-item"><button class="category-btn teo" data-prompt="reciprocos">Recíprocos</button><button class="edit-prompt" data-edit="reciprocos">⚙️</button></div>
           </div>`;
         } else {
           html += `<div class="prompt-actions">
-            <button class="category-btn prac" data-prompt="practica">Extraer {&quot;tema&quot;,&quot;enunciado&quot;,&quot;ejercicio&quot;}</button>
+            <div class="prompt-item"><button class="category-btn prac" data-prompt="practica">Extraer {&quot;tema&quot;,&quot;enunciado&quot;,&quot;ejercicio&quot;}</button><button class="edit-prompt" data-edit="practica">⚙️</button></div>
           </div>`;
         }
         html += '<div id="pdf-drop-area"></div>';
@@ -1921,12 +1966,31 @@
         pdfModalBody.querySelectorAll('[data-prompt]').forEach(btn => {
           btn.addEventListener('click', async () => {
             const key = btn.getAttribute('data-prompt');
-            const text = USER_PROMPTS[key] || '';
+            let text = USER_PROMPTS[key] || '';
+            if (!text) {
+              const input = window.prompt('Ingresa prompt');
+              if (!input) { showToast('Prompt vacío', 'info'); return; }
+              USER_PROMPTS[key] = input;
+              await savePromptConfig();
+              text = input;
+            }
             try {
               await navigator.clipboard.writeText(text);
               showToast('Prompt copiado', 'success');
             } catch {
               showToast('No se pudo copiar', 'error');
+            }
+          });
+        });
+        pdfModalBody.querySelectorAll('.edit-prompt').forEach(icon => {
+          icon.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            const key = icon.getAttribute('data-edit');
+            const current = USER_PROMPTS[key] || '';
+            const input = window.prompt('Editar prompt', current);
+            if (input !== null) {
+              USER_PROMPTS[key] = input;
+              await savePromptConfig();
             }
           });
         });
