@@ -272,6 +272,26 @@
     .category-btn.teo { background: #0ea5a3; }
     .category-btn.prac { background: #16a34a; }
     .category-tip { color: #666; font-size: 13px; margin-top: 8px; text-align: center; }
+
+    /* Modal de prompts y PDF generado */
+    .prompt-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
+      margin-top: 12px;
+    }
+    .prompt-actions .category-btn { width: 100%; max-width: 300px; }
+    .pdf-draggable {
+      margin-top: 16px;
+      padding: 10px 14px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: #f8f9fa;
+      color: #333;
+      cursor: grab;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
@@ -400,10 +420,27 @@
     </div>
   </div>
 
+  <!-- Modal para generar PDF y copiar prompts -->
+  <div id="pdf-modal" class="info-modal hidden" role="dialog" aria-modal="true" aria-labelledby="pdf-modal-title">
+    <div class="info-content">
+      <div class="info-header">
+        <h3 id="pdf-modal-title">📑 Generar PDF</h3>
+        <button class="close-info" id="close-pdf-modal">×</button>
+      </div>
+      <div class="info-body" id="pdf-modal-body">
+        <div class="category-actions">
+          <button class="category-btn teo" id="pdf-choose-teo">Teoría</button>
+          <button class="category-btn prac" id="pdf-choose-prac">Práctica</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
   <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.worker.min.js';</script>
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1/mathquill.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
@@ -484,6 +521,10 @@
       const chooseTeoBtn = document.getElementById('choose-teo');
       const choosePracBtn = document.getElementById('choose-prac');
 
+      const pdfModal = document.getElementById('pdf-modal');
+      const closePdfModalBtn = document.getElementById('close-pdf-modal');
+      const pdfModalBody = document.getElementById('pdf-modal-body');
+
       let captureMode = false;
       let captureCategory = null; // 'teo' | 'practica'
       let pendingStart = null; // { pageNum, xp, yp, layer }
@@ -491,6 +532,13 @@
 
       let theoryHandle = null;
       let practiceHandle = null;
+
+      const USER_PROMPTS = {
+        resumen: localStorage.getItem('prompt_resumen') || 'Resumen del contenido',
+        vf: localStorage.getItem('prompt_vf') || 'Genera preguntas de verdadero/falso del contenido',
+        reciprocos: localStorage.getItem('prompt_reciprocos') || 'Enumera recíprocos del contenido',
+        practica: localStorage.getItem('prompt_practica') || 'Extraer {"tema","enunciado","ejercicio"}'
+      };
 
       // ========================================
       // UTILIDADES UI
@@ -1094,6 +1142,13 @@
           }
         }
 
+        // NUEVO: Modal prompts Ctrl+M
+        if (e.ctrlKey && e.key.toLowerCase() === 'm' && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          openPdfModal();
+          return;
+        }
+
         // NUEVO: Captura Ctrl+I
         if (e.ctrlKey && e.key.toLowerCase() === 'i' && !e.shiftKey && !e.altKey) {
           e.preventDefault();
@@ -1613,6 +1668,9 @@
       closeInfo.addEventListener('click', () => infoModal.classList.add('hidden'));
       infoModal.addEventListener('click', (e) => { if (e.target === infoModal) infoModal.classList.add('hidden'); });
 
+      closePdfModalBtn.addEventListener('click', () => pdfModal.classList.add('hidden'));
+      pdfModal.addEventListener('click', (e) => { if (e.target === pdfModal) pdfModal.classList.add('hidden'); });
+
       // ========================================
       // CAPTURAS: Teoría / Práctica
       // ========================================
@@ -1811,6 +1869,116 @@
           hideOverlay();
           clearAllSelections();
         }
+      }
+
+      // ========================================
+      // PDF desde capturas (Ctrl+M)
+      // ========================================
+      function openPdfModal() {
+        pdfModalBody.innerHTML = `
+          <div class="category-actions">
+            <button class="category-btn teo" id="pdf-choose-teo">Teoría</button>
+            <button class="category-btn prac" id="pdf-choose-prac">Práctica</button>
+          </div>`;
+        pdfModal.classList.remove('hidden');
+        pdfModal.querySelector('#pdf-choose-teo').addEventListener('click', () => handlePdfCategory('teo'));
+        pdfModal.querySelector('#pdf-choose-prac').addEventListener('click', () => handlePdfCategory('practica'));
+      }
+
+      async function handlePdfCategory(cat) {
+        pdfModalBody.innerHTML = '<p>Generando PDF…</p>';
+        try {
+          const result = await generatePdfFromCategory(cat);
+          if (!result) {
+            pdfModalBody.innerHTML = '<p>No se generó PDF.</p>';
+            return;
+          }
+          const { fileHandle, file } = result;
+          renderPromptOptions(cat, fileHandle, file);
+        } catch (e) {
+          console.error('Error generando PDF:', e);
+          showToast('Error generando PDF', 'error');
+          pdfModal.classList.add('hidden');
+        }
+      }
+
+      function renderPromptOptions(cat, pdfHandle, file) {
+        let html = '';
+        if (cat === 'teo') {
+          html += `<div class="prompt-actions">
+            <button class="category-btn teo" data-prompt="resumen">Resumen</button>
+            <button class="category-btn teo" data-prompt="vf">Verdaderos o falsos</button>
+            <button class="category-btn teo" data-prompt="reciprocos">Recíprocos</button>
+          </div>`;
+        } else {
+          html += `<div class="prompt-actions">
+            <button class="category-btn prac" data-prompt="practica">Extraer {&quot;tema&quot;,&quot;enunciado&quot;,&quot;ejercicio&quot;}</button>
+          </div>`;
+        }
+        html += '<div id="pdf-drop-area"></div>';
+        pdfModalBody.innerHTML = html;
+
+        pdfModalBody.querySelectorAll('[data-prompt]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const key = btn.getAttribute('data-prompt');
+            const text = USER_PROMPTS[key] || '';
+            try {
+              await navigator.clipboard.writeText(text);
+              showToast('Prompt copiado', 'success');
+            } catch {
+              showToast('No se pudo copiar', 'error');
+            }
+          });
+        });
+
+        const area = document.getElementById('pdf-drop-area');
+        const icon = document.createElement('div');
+        icon.className = 'pdf-draggable';
+        icon.textContent = file.name;
+        icon.draggable = true;
+        icon.addEventListener('dragstart', (ev) => {
+          if (ev.dataTransfer) {
+            ev.dataTransfer.effectAllowed = 'copy';
+            ev.dataTransfer.setData('application/pdf', file.name);
+            ev.dataTransfer.items.add(file);
+          }
+        });
+        area.appendChild(icon);
+      }
+
+      async function generatePdfFromCategory(cat) {
+        const handle = await ensureCategoryHandle(cat);
+        if (!handle) return null;
+        const files = [];
+        // @ts-ignore
+        for await (const [name, h] of handle.entries()) {
+          if (h.kind === 'file' && name.toLowerCase().endsWith('.png')) {
+            files.push({ name, handle: h });
+          }
+        }
+        if (!files.length) {
+          showToast('No hay capturas en la carpeta', 'info');
+          return null;
+        }
+        files.sort((a,b) => naturalCompare(a.name, b.name));
+        const pdfDoc = await PDFLib.PDFDocument.create();
+        for (const f of files) {
+          const imgFile = await f.handle.getFile();
+          const bytes = await imgFile.arrayBuffer();
+          const img = await pdfDoc.embedPng(bytes);
+          const w = img.imageWidth || img.width;
+          const h = img.imageHeight || img.height;
+          const page = pdfDoc.addPage([w, h]);
+          page.drawImage(img, { x: 0, y: 0, width: w, height: h });
+        }
+        const pdfBytes = await pdfDoc.save();
+        const pdfName = cat === 'teo' ? 'teoria.pdf' : 'practica.pdf';
+        const file = new File([pdfBytes], pdfName, { type: 'application/pdf' });
+        const fileHandle = await handle.getFileHandle(pdfName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(file);
+        await writable.close();
+        return { fileHandle, file };
       }
 
       // ========================================
