@@ -38,6 +38,20 @@ export default function Home() {
   const [showSchedule, setShowSchedule] = useState(false)
   const [filterSubject, setFilterSubject] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [dirHandle, setDirHandle] = useState<any>(null)
+  const [configHandle, setConfigHandle] = useState<any>(null)
+
+  const writeConfig = async (handle?: any) => {
+    try {
+      const fh = handle || configHandle
+      if (!fh) return
+      const writable = await fh.createWritable()
+      await writable.write(
+        JSON.stringify({ weeks, completed, labels, orders, theory, practice })
+      )
+      await writable.close()
+    } catch {}
+  }
 
   const toggleTheme = () => {
     setTheme(theme === "dark" ? "light" : "dark")
@@ -95,6 +109,35 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("orders", JSON.stringify(orders))
   }, [orders])
+
+  useEffect(() => {
+    if (!dirHandle) return
+    ;(async () => {
+      try {
+        const systemDir = await dirHandle.getDirectoryHandle("system", { create: true })
+        let fileHandle
+        try {
+          fileHandle = await systemDir.getFileHandle("config.json")
+          const file = await fileHandle.getFile()
+          const data = JSON.parse(await file.text())
+          setCompleted(data.completed || {})
+          setLabels(data.labels || {})
+          setOrders(data.orders || {})
+          setWeeks(data.weeks || 1)
+          setTheory(data.theory || {})
+          setPractice(data.practice || {})
+        } catch {
+          fileHandle = await systemDir.getFileHandle("config.json", { create: true })
+          await writeConfig(fileHandle)
+        }
+        setConfigHandle(fileHandle)
+      } catch {}
+    })()
+  }, [dirHandle])
+
+  useEffect(() => {
+    writeConfig()
+  }, [weeks, completed, labels, orders, theory, practice])
 
   // build tree from selected directory
   useEffect(() => {
@@ -375,6 +418,27 @@ export default function Home() {
         )
       }
       case 5: {
+        const pickFolder = async () => {
+          try {
+            const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" })
+            setDirHandle(handle)
+            const all: File[] = []
+            const walk = async (dir: any, path: string) => {
+              for await (const [name, entry] of dir.entries()) {
+                if (entry.kind === "file") {
+                  const f = await entry.getFile()
+                  ;(f as any).webkitRelativePath = path ? `${path}/${name}` : name
+                  all.push(f)
+                } else if (entry.kind === "directory") {
+                  await walk(entry, path ? `${path}/${name}` : name)
+                }
+              }
+            }
+            await walk(handle, "")
+            setDirFiles(all)
+            setFolderReady(true)
+          } catch {}
+        }
         const finish = () => {
           localStorage.setItem("setupComplete", "1")
           localStorage.setItem("weeks", String(weeks))
@@ -384,15 +448,9 @@ export default function Home() {
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <p>Paso 4: Da acceso a la carpeta "gestor"</p>
-            <input
-              type="file"
-              // @ts-expect-error webkitdirectory es no estándar
-              webkitdirectory=""
-              onChange={(e) => {
-                setDirFiles(Array.from(e.target.files || []))
-                setFolderReady(true)
-              }}
-            />
+            <button className="px-4 py-2 border rounded" onClick={pickFolder}>
+              Seleccionar carpeta
+            </button>
             <button
               className="px-4 py-2 border rounded"
               disabled={!folderReady}
