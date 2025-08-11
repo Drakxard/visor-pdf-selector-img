@@ -55,6 +55,7 @@ export default function Home() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [lastOpened, setLastOpened] = useState<string | null>(null)
   const colorPickers = useRef<Record<string, HTMLInputElement | null>>({})
+  const [loaded, setLoaded] = useState(false)
 
   // theme and setup flag
   useEffect(() => {
@@ -128,8 +129,9 @@ export default function Home() {
         if (cfg.names) setNames(cfg.names)
         if (cfg.weeks) setWeeks(cfg.weeks)
         if (cfg.setupComplete !== undefined) setSetupComplete(cfg.setupComplete)
+        setLoaded(true)
       })
-      .catch(() => {})
+      .catch(() => setLoaded(true))
   }, [])
 
   useEffect(() => {
@@ -149,6 +151,7 @@ export default function Home() {
   }, [names])
   
   useEffect(() => {
+    if (!loaded) return
     const body = {
       pdfMeta,
       completed,
@@ -161,7 +164,7 @@ export default function Home() {
       setupComplete,
     }
     fetch("/api/config", { method: "POST", body: JSON.stringify(body) })
-  }, [pdfMeta, completed, subjectColors, theory, practice, lastOpened, names, weeks, setupComplete])
+  }, [pdfMeta, completed, subjectColors, theory, practice, lastOpened, names, weeks, setupComplete, loaded])
 
   // build tree from selected directory
   useEffect(() => {

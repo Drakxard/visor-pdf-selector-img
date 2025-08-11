@@ -549,27 +549,21 @@
       };
 
       async function loadPromptConfig() {
-        if (!directoryHandle || !supportsFileSystemAccess()) return;
         try {
-          const fileHandle = await directoryHandle.getFileHandle(PROMPT_FILE);
-          const file = await fileHandle.getFile();
-          const data = JSON.parse(await file.text());
-          Object.assign(USER_PROMPTS, data);
-        } catch {
-          await savePromptConfig();
-        }
+          const resp = await fetch('/api/notes')
+          if (resp.ok) Object.assign(USER_PROMPTS, await resp.json())
+        } catch {}
       }
 
       async function savePromptConfig() {
-        if (!directoryHandle || !supportsFileSystemAccess()) return;
         try {
-          const fileHandle = await directoryHandle.getFileHandle(PROMPT_FILE, { create: true });
-          const writable = await fileHandle.createWritable();
-          await writable.write(JSON.stringify(USER_PROMPTS, null, 2));
-          await writable.close();
+          await fetch('/api/notes', {
+            method: 'POST',
+            body: JSON.stringify(USER_PROMPTS)
+          })
         } catch (e) {
-          console.error('Error guardando prompts:', e);
-          showToast('No se pudo guardar prompts', 'error');
+          console.error('Error guardando prompts:', e)
+          showToast('No se pudo guardar prompts', 'error')
         }
       }
 
@@ -826,13 +820,7 @@
           setTimeout(() => scrollToPage(initial), 0);
           pendingAfterLoadGoTo = null;
 
-          if (directoryHandle) {
-            setTimeout(loadNotesFromFile, 300);
-          } else if (supportsFileSystemAccess()) {
-            setTimeout(showPermissionModal, 1000);
-          } else {
-            updateFileStatus('error', 'No compatible');
-          }
+          setTimeout(loadNotesFromFile, 300);
         } catch (error) {
           console.error('Error cargando PDF:', error);
           showToast('Error cargando PDF: ' + (error?.message || ''), 'error');
@@ -1077,8 +1065,7 @@
         totalPages = 0;
         currentPdfName = null;
         hideOverlay();
-        if (directoryHandle) updateFileStatus('saved', 'Carpeta configurada');
-        else updateFileStatus('no-access', 'Sin acceso');
+        updateFileStatus('saved', 'Carpeta configurada');
       });
 
       // ========================================
@@ -1121,28 +1108,8 @@
       // ========================================
       function naturalCompare(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
       function isPdf(name) { return name.toLowerCase().endsWith('.pdf'); }
-      function supportsDirPicker() { return 'showDirectoryPicker' in window; }
-      function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
-
-      pdfFolderBtn.addEventListener('click', async () => {
-        try {
-          if (!supportsDirPicker()) { pdfFolderInput.click(); return; }
-          const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-          pdfDirectoryHandle = dirHandle;
-          const list = [];
-          // @ts-ignore
-          for await (const [name, handle] of dirHandle.entries()) {
-            if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
-          }
-          if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
-          list.sort((a,b) => naturalCompare(a.name,b.name));
-          pdfEntries = list; startBtn.disabled = false;
-          showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
-        } catch (e) {
-          if (e && e.name === 'AbortError') return;
-          showToast('No se pudo acceder a la carpeta de PDFs', 'error');
-        }
-      });
+      function supportsDirPicker() { return false; }
+      function supportsFileSystemAccess() { return false; }
 
       pdfFolderInput.addEventListener('change', (e) => {
         const files = Array.from(e.target.files || []).filter(f => isPdf(f.name));
@@ -1608,68 +1575,16 @@
         });
       }
       async function loadDirectoryHandle() {
-        if (!db || !supportsFileSystemAccess()) { updateFileStatus('no-access', 'Sin acceso'); return;
-        }
-        try {
-          const transaction = db.transaction(['settings'], 'readonly');
-          const store = transaction.objectStore('settings');
-          const request = store.get('notesFolder');
-          request.onsuccess = async () => {
-            const result = request.result;
-            if (result && result.handle) {
-              const handle = result.handle;
-              const permissionStatus = await handle.queryPermission({ mode: 'readwrite' });
-              if (permissionStatus === 'granted') {
-                directoryHandle = handle;
-                updateFileStatus('saved', 'Acceso concedido');
-                await loadPromptConfig();
-              } else {
-                updateFileStatus('no-access', 'Acceso denegado');
-              }
-            } else {
-              updateFileStatus('no-access', 'Sin acceso');
-            }
-          };
-          request.onerror = (e) => {
-            console.error('Error al cargar handle de carpeta:', e.target.error);
-            updateFileStatus('no-access', 'Error de carga');
-          };
-        } catch (error) {
-          console.error('Error al cargar handle de carpeta (catch):', error);
-          updateFileStatus('no-access', 'Error de carga');
-        }
+        updateFileStatus('saved', 'Carpeta predeterminada');
+        await loadPromptConfig();
       }
-      async function requestDirectoryAccess() {
-        try {
-          const newDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-          const permission = await newDirectoryHandle.requestPermission({ mode: 'readwrite' });
-          if (permission === 'granted') {
-            directoryHandle = newDirectoryHandle;
-            const transaction = db.transaction(['settings'], 'readwrite');
-            const store = transaction.objectStore('settings');
-            await store.put({ id: 'notesFolder', handle: directoryHandle });
-            updateFileStatus('saved', 'Acceso concedido');
-            await loadPromptConfig();
-            showToast('Carpeta configurada correctamente', 'success');
-            hidePermissionModal();
-            if (currentPdfName) setTimeout(loadNotesFromFile, 500);
-          } else {
-            throw new Error('Permisos denegados');
-          }
-        } catch (error) {
-          console.error('Error solicitando acceso:', error);
-          if (error.name !== 'AbortError') {
-            showToast('Error configurando carpeta', 'error');
-            updateFileStatus('error', 'Error de acceso');
-          }
-        }
-      }
+      async function requestDirectoryAccess() { return; }
       function getNotesFileName(pdfName) {
         const cleanName = pdfName.replace(/[^a-zA-Z0-9.-]/g, '_');
         return `${cleanName}_notas.json`;
       }
       async function saveNotesToFile() {
-        if (!directoryHandle || !currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
+        if (!currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
           try {
@@ -1677,10 +1592,10 @@
             const notes = collectAllNotes();
             const data = { pdfName: currentPdfName, timestamp: Date.now(), notes, totalPages, zoom: currentZoom, version: '2.2' };
             const fileName = getNotesFileName(currentPdfName);
-            const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(JSON.stringify(data, null, 2));
-            await writable.close();
+            await fetch(`/api/notes?file=${encodeURIComponent(fileName)}`, {
+              method: 'POST',
+              body: JSON.stringify(data)
+            });
             updateFileStatus('saved', `${notes.length} notas guardadas`);
           } catch (error) {
             console.error('Error guardando notas:', error);
@@ -1690,13 +1605,12 @@
         }, 600);
       }
       async function loadNotesFromFile() {
-        if (!directoryHandle || !currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
+        if (!currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
         try {
           const fileName = getNotesFileName(currentPdfName);
-          const fileHandle = await directoryHandle.getFileHandle(fileName);
-          const file = await fileHandle.getFile();
-          const text = await file.text();
-          const data = JSON.parse(text);
+          const res = await fetch(`/api/notes?file=${encodeURIComponent(fileName)}`);
+          if (!res.ok) { updateFileStatus('saved', 'Sin notas previas'); return; }
+          const data = await res.json();
           if (data.notes && Array.isArray(data.notes)) {
             document.querySelectorAll('.note-icon').forEach(icon => icon.remove());
             data.notes.forEach(note => {
@@ -1713,12 +1627,7 @@
             updateFileStatus('saved', 'Sin notas previas');
           }
         } catch (error) {
-          if (error.name === 'NotFoundError') {
-            updateFileStatus('saved', 'Sin notas previas');
-          } else {
-            console.error('Error cargando notas:', error);
-            updateFileStatus('error', 'Error cargando');
-          }
+          updateFileStatus('saved', 'Sin notas');
         }
       }
       function collectAllNotes() {
@@ -1735,9 +1644,9 @@
         });
         return notes;
       }
-      document.getElementById('folder-btn').addEventListener('click', () => { showPermissionModal(); });
-      document.getElementById('grant-access-btn').addEventListener('click', requestDirectoryAccess);
-      document.getElementById('skip-access-btn').addEventListener('click', () => {
+      document.getElementById('folder-btn')?.addEventListener('click', () => { showPermissionModal(); });
+      document.getElementById('grant-access-btn')?.addEventListener('click', requestDirectoryAccess);
+      document.getElementById('skip-access-btn')?.addEventListener('click', () => {
         hidePermissionModal(); updateFileStatus('no-access', 'Sin acceso'); showToast('Puedes configurar la carpeta más tarde', 'info');
       });
 
@@ -1801,75 +1710,9 @@
         selections = [];
       }
 
-      async function ensureCategoryHandle(cat) {
-        if (!db) await initDB();
-        await loadCategoryHandles(); // precarga si existen
-        let handle = (cat === 'teo') ? theoryHandle : practiceHandle;
-        if (handle) {
-          const perm = await handle.queryPermission({ mode: 'readwrite' });
-          if (perm === 'granted') return handle;
-        }
-        // Solicitar nueva carpeta
-        try {
-          const picked = await window.showDirectoryPicker({ mode: 'readwrite' });
-          const perm2 = await picked.requestPermission({ mode: 'readwrite' });
-          if (perm2 !== 'granted') throw new Error('Permiso denegado');
-          // Persistir
-          const tx = db.transaction(['settings'], 'readwrite');
-          const store = tx.objectStore('settings');
-          const id = (cat === 'teo') ? 'teoFolder' : 'practicaFolder';
-          await store.put({ id, handle: picked });
-          if (cat === 'teo') theoryHandle = picked; else practiceHandle = picked;
-          showToast('Carpeta guardada para ' + (cat === 'teo' ? 'Teoría' : 'Práctica'), 'success');
-          return picked;
-        } catch (e) {
-          console.error('Error seleccionando carpeta:', e);
-          showToast('No se seleccionó carpeta', 'error');
-          return null;
-        }
-      }
+      async function ensureCategoryHandle(cat) { return null; }
 
-      async function loadCategoryHandles() {
-        if (!db || !supportsFileSystemAccess()) return;
-        try {
-          await new Promise((resolve) => {
-            const tx = db.transaction(['settings'], 'readonly');
-            const store = tx.objectStore('settings');
-
-            const reqTeo = store.get('teoFolder');
-            const reqPra = store.get('practicaFolder');
-
-            let done = 0;
-            function checkDone() { if (++done === 2) resolve(); }
-
-            reqTeo.onsuccess = async () => {
-              const result = reqTeo.result;
-              if (result && result.handle) {
-                try {
-                  const status = await result.handle.queryPermission({ mode: 'readwrite' });
-                  if (status === 'granted') theoryHandle = result.handle;
-                } catch {}
-              }
-              checkDone();
-            };
-            reqTeo.onerror = checkDone;
-
-            reqPra.onsuccess = async () => {
-              const result = reqPra.result;
-              if (result && result.handle) {
-                try {
-                  const status = await result.handle.queryPermission({ mode: 'readwrite' });
-                  if (status === 'granted') practiceHandle = result.handle;
-                } catch {}
-              }
-              checkDone();
-            };
-            reqPra.onerror = checkDone;
-          });
-        } catch (e) {
-          console.warn('No se pudieron cargar carpetas de categorías');
-        }
-      }
+      async function loadCategoryHandles() { return; }
 
       function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
         const rect = document.createElement('div');
@@ -2132,9 +1975,8 @@
       // ========================================
       // INICIALIZACIÓN
       // ========================================
-      initDB().then(async () => {
+      initDB().then(() => {
         loadDirectoryHandle();
-        await loadCategoryHandles();
       }).catch(error => {
         console.error('Error al inicializar IndexedDB:', error);
         showToast('Error al inicializar la base de datos local.', 'error');
