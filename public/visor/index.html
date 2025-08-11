@@ -291,6 +291,7 @@
       color: #333;
       cursor: grab;
       text-align: center;
+      display: inline-block;
     }
   </style>
 </head>
@@ -1888,12 +1889,12 @@
       async function handlePdfCategory(cat) {
         pdfModalBody.innerHTML = '<p>Generando PDF…</p>';
         try {
-          const pdfHandle = await generatePdfFromCategory(cat);
-          if (!pdfHandle) {
+          const pdfData = await generatePdfFromCategory(cat);
+          if (!pdfData) {
             pdfModalBody.innerHTML = '<p>No se generó PDF.</p>';
             return;
           }
-          renderPromptOptions(cat, pdfHandle);
+          renderPromptOptions(cat, pdfData);
         } catch (e) {
           console.error('Error generando PDF:', e);
           showToast('Error generando PDF', 'error');
@@ -1901,7 +1902,7 @@
         }
       }
 
-      function renderPromptOptions(cat, pdfHandle) {
+      function renderPromptOptions(cat, pdfData) {
         let html = '';
         if (cat === 'teo') {
           html += `<div class="prompt-actions">
@@ -1931,15 +1932,16 @@
         });
 
         const area = document.getElementById('pdf-drop-area');
-        const icon = document.createElement('div');
-        icon.className = 'pdf-draggable';
-        icon.textContent = pdfHandle.name;
-        icon.draggable = true;
-        icon.addEventListener('dragstart', async (ev) => {
-          const file = await pdfHandle.getFile();
-          ev.dataTransfer?.items.add(file);
+        const link = document.createElement('a');
+        link.className = 'pdf-draggable';
+        link.textContent = pdfData.file.name;
+        link.href = URL.createObjectURL(pdfData.file);
+        link.download = pdfData.file.name;
+        link.draggable = true;
+        link.addEventListener('dragstart', (ev) => {
+          ev.dataTransfer?.items.add(pdfData.file);
         });
-        area.appendChild(icon);
+        area.appendChild(link);
       }
 
       async function generatePdfFromCategory(cat) {
@@ -1960,10 +1962,18 @@
         const pdfDoc = await PDFLib.PDFDocument.create();
         for (const f of files) {
           const file = await f.handle.getFile();
+          const url = URL.createObjectURL(file);
+          const dims = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => { resolve({ width: img.naturalWidth, height: img.naturalHeight }); };
+            img.onerror = reject;
+            img.src = url;
+          });
+          URL.revokeObjectURL(url);
           const bytes = await file.arrayBuffer();
           const img = await pdfDoc.embedPng(bytes);
-          const page = pdfDoc.addPage([img.width, img.height]);
-          page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+          const page = pdfDoc.addPage([dims.width, dims.height]);
+          page.drawImage(img, { x: 0, y: 0, width: dims.width, height: dims.height });
         }
         const pdfBytes = await pdfDoc.save();
         const blob = new Blob([pdfBytes], { type: 'application/pdf' });
@@ -1972,7 +1982,8 @@
         const writable = await fileHandle.createWritable();
         await writable.write(blob);
         await writable.close();
-        return fileHandle;
+        const file = new File([blob], pdfName, { type: 'application/pdf' });
+        return { handle: fileHandle, file };
       }
 
       // ========================================
