@@ -13,6 +13,7 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1/mathquill.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 
   <style>
     * { box-sizing: border-box; }
@@ -272,6 +273,14 @@
     .category-btn.teo { background: #0ea5a3; }
     .category-btn.prac { background: #16a34a; }
     .category-tip { color: #666; font-size: 13px; margin-top: 8px; text-align: center; }
+
+    /* Modal prompts / PDFs */
+    .prompt-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+    .prompt-btn { padding: 10px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; color: white; background: #3b82f6; }
+    .prompt-btn.teo { background: #0ea5a3; }
+    .prompt-btn.prac { background: #16a34a; }
+    .pdf-item { margin-top: 16px; padding: 8px 12px; border: 1px solid #5f6368; border-radius: 6px; background: #323639; cursor: grab; display: inline-block; }
+    body.light-mode .pdf-item { background: #f1f3f4; border-color: #dadce0; color: #202124; }
   </style>
 </head>
 <body>
@@ -366,6 +375,9 @@
         • <kbd>Ctrl</kbd> + <kbd>0</kbd> para resetear<br>
         • Rueda del mouse + <kbd>Ctrl</kbd><br><br>
 
+        <strong>📄 PDFs desde capturas:</strong><br>
+        • <kbd>Ctrl</kbd> + <kbd>M</kbd> para generar PDF y copiar prompts<br><br>
+
         <strong>💾 Guardado Automático:</strong><br>
         • Las notas se guardan automáticamente en archivos<br>
         • Se cargan automáticamente al abrir el mismo PDF<br>
@@ -396,6 +408,33 @@
           <button class="category-btn prac" id="choose-prac">Práctica</button>
         </div>
         <p class="category-tip">Se te pedirá seleccionar una carpeta por categoría la primera vez.<br>Luego se recordará automáticamente.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal generación PDF y prompts -->
+  <div id="prompt-modal" class="info-modal hidden" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
+    <div class="info-content">
+      <div class="info-header">
+        <h3 id="prompt-title">Generar PDF</h3>
+        <button class="close-info" id="close-prompt">×</button>
+      </div>
+      <div class="info-body">
+        <div id="prompt-step" class="prompt-actions">
+          <button class="prompt-btn teo" id="prompt-teo">Teoría</button>
+          <button class="prompt-btn prac" id="prompt-prac">Práctica</button>
+        </div>
+        <div id="prompt-options" class="hidden">
+          <div id="teo-options" class="prompt-actions hidden">
+            <button class="prompt-btn" data-key="resumen">Resumen</button>
+            <button class="prompt-btn" data-key="vf">Verdaderos o falsos</button>
+            <button class="prompt-btn" data-key="reciprocos">Recíprocos</button>
+          </div>
+          <div id="prac-options" class="prompt-actions hidden">
+            <button class="prompt-btn" data-key="practica">Extraer {“tema”,”enunciado”,”ejercicio”}</button>
+          </div>
+          <div id="pdf-drag"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -491,6 +530,26 @@
 
       let theoryHandle = null;
       let practiceHandle = null;
+
+      // Modal generación PDF y prompts
+      const promptModal = document.getElementById('prompt-modal');
+      const promptCloseBtn = document.getElementById('close-prompt');
+      const promptStep = document.getElementById('prompt-step');
+      const promptOptions = document.getElementById('prompt-options');
+      const promptTeoBtn = document.getElementById('prompt-teo');
+      const promptPracBtn = document.getElementById('prompt-prac');
+      const teoOptions = document.getElementById('teo-options');
+      const pracOptions = document.getElementById('prac-options');
+      const pdfDrag = document.getElementById('pdf-drag');
+      const promptTitle = document.getElementById('prompt-title');
+
+      promptCloseBtn.addEventListener('click', () => promptModal.classList.add('hidden'));
+      promptModal.addEventListener('click', (e) => { if (e.target === promptModal) promptModal.classList.add('hidden'); });
+      promptTeoBtn.addEventListener('click', () => handlePromptCategory('teo'));
+      promptPracBtn.addEventListener('click', () => handlePromptCategory('practica'));
+      document.querySelectorAll('#teo-options .prompt-btn, #prac-options .prompt-btn').forEach(btn => {
+        btn.addEventListener('click', () => copyPrompt(btn.dataset.key));
+      });
 
       // ========================================
       // UTILIDADES UI
@@ -1115,6 +1174,14 @@
               showToast('Error guardando capturas', 'error');
             }
           }
+          return;
+        }
+
+        // NUEVO: Ctrl+M para generar PDF y prompts
+        if (e.ctrlKey && e.key.toLowerCase() === 'm' && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          if (!pdfDoc) return;
+          openPromptModal();
           return;
         }
 
@@ -1811,6 +1878,125 @@
           hideOverlay();
           clearAllSelections();
         }
+      }
+
+      // ========================================
+      // PDF desde capturas y prompts
+      // ========================================
+      function openPromptModal() {
+        promptStep.classList.remove('hidden');
+        promptOptions.classList.add('hidden');
+        promptModal.classList.remove('hidden');
+      }
+
+      async function handlePromptCategory(cat) {
+        promptTitle.textContent = cat === 'teo' ? 'Teoría' : 'Práctica';
+        const pdfHandle = await createOrGetPdf(cat);
+        if (!pdfHandle) return;
+        showPromptOptions(cat, pdfHandle);
+      }
+
+      async function createOrGetPdf(cat) {
+        const dirHandle = cat === 'teo' ? theoryHandle : practiceHandle;
+        if (!dirHandle) {
+          showToast('Carpeta no configurada', 'error');
+          return null;
+        }
+        const handle = await generatePdfFromImages(dirHandle, 'capturas.pdf');
+        if (handle) return handle;
+        try {
+          return await dirHandle.getFileHandle('capturas.pdf');
+        } catch {
+          return null;
+        }
+      }
+
+      async function generatePdfFromImages(dirHandle, pdfName) {
+        const images = [];
+        for await (const entry of dirHandle.values()) {
+          if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.png')) {
+            const file = await entry.getFile();
+            images.push({ name: entry.name, file });
+          }
+        }
+        if (!images.length) {
+          showToast('No hay capturas en la carpeta', 'info');
+          return null;
+        }
+        images.sort((a, b) => a.name.localeCompare(b.name));
+        let pdf = null;
+        const { jsPDF } = window.jspdf;
+        for (let i = 0; i < images.length; i++) {
+          const dataUrl = await fileToDataURL(images[i].file);
+          const img = new Image();
+          await new Promise(res => { img.onload = res; img.src = dataUrl; });
+          const w = img.width, h = img.height;
+          if (i === 0) {
+            pdf = new jsPDF({ unit: 'px', format: [w, h] });
+          } else {
+            pdf.addPage([w, h]);
+            pdf.setPage(i + 1);
+          }
+          pdf.addImage(dataUrl, 'PNG', 0, 0, w, h);
+        }
+        const blob = pdf.output('blob');
+        const fileHandle = await dirHandle.getFileHandle(pdfName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return fileHandle;
+      }
+
+      function showPromptOptions(cat, pdfHandle) {
+        promptStep.classList.add('hidden');
+        promptOptions.classList.remove('hidden');
+        if (cat === 'teo') {
+          teoOptions.classList.remove('hidden');
+          pracOptions.classList.add('hidden');
+        } else {
+          pracOptions.classList.remove('hidden');
+          teoOptions.classList.add('hidden');
+        }
+        showPdfDrag(pdfHandle);
+      }
+
+      async function showPdfDrag(handle) {
+        pdfDrag.innerHTML = '';
+        const div = document.createElement('div');
+        div.className = 'pdf-item';
+        div.textContent = handle.name || 'capturas.pdf';
+        div.draggable = true;
+        div.addEventListener('dragstart', async (e) => {
+          const file = await handle.getFile();
+          e.dataTransfer.items.add(file);
+        });
+        pdfDrag.appendChild(div);
+      }
+
+      function copyPrompt(key) {
+        const storeKey = 'prompt_' + key;
+        let text = localStorage.getItem(storeKey);
+        if (!text) {
+          const defaults = {
+            resumen: 'Resumen de la teoría:',
+            vf: 'Genera verdaderos o falsos:',
+            reciprocos: 'Explica los recíprocos:',
+            practica: 'Extraer {"tema","enunciado","ejercicio"}'
+          };
+          text = prompt('Ingresa prompt para ' + key, defaults[key] || '');
+          if (!text) return;
+          localStorage.setItem(storeKey, text);
+        }
+        navigator.clipboard.writeText(text);
+        showToast('Prompt copiado', 'success');
+      }
+
+      function fileToDataURL(file) {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.readAsDataURL(file);
+        });
       }
 
       // ========================================
