@@ -222,20 +222,6 @@
     .status-indicator.error { color: #ea4335; background: rgba(234, 67, 53, 0.1); }
     .status-indicator.no-access { color: #9aa0a6; background: rgba(255,255,255,0.05); }
 
-    .permission-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 4000;
-      display: flex; align-items: center; justify-content: center;
-    }
-    .permission-modal.hidden { display: none; }
-    .permission-content { background: #fff; border-radius: 12px; max-width: 500px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); overflow: hidden; }
-    .permission-header { background: #4285f4; color: white; padding: 20px; text-align: center; }
-    .permission-header h3 { margin: 0; font-size: 20px; }
-    .permission-body { padding: 24px; color: #333; line-height: 1.6; text-align: center; }
-    .permission-buttons { display: flex; gap: 12px; justify-content: center; margin-top: 20px; }
-    .permission-btn { padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
-    .permission-btn.primary { background: #4285f4; color: white; }
-    .permission-btn.primary:hover { background: #3367d6; }
-    .permission-btn.secondary { background: #f8f9fa; color: #5f6368; border: 1px solid #dadce0; }
-    .permission-btn.secondary:hover { background: #e8f0fe; }
 
     .toast {
       position: fixed; bottom: 20px; right: 20px; background: #323639; color: #e8eaed; padding: 12px 20px; border-radius: 8px;
@@ -321,7 +307,6 @@
           <span>📁</span>
           <span id="status-text">Cargando acceso...</span>
         </div>
-        <button class="control-btn" id="folder-btn" title="Configurar carpeta">⚙️</button>
       </div>
 
       <button class="control-btn" id="theme-toggle" title="Cambiar tema">🌙</button>
@@ -348,22 +333,6 @@
     </div>
   </div>
 
-  <div id="permission-modal" class="permission-modal hidden">
-    <div class="permission-content">
-      <div class="permission-header">
-        <h3>🗂️ Acceso a Carpeta de Notas</h3>
-      </div>
-      <div class="permission-body">
-        <p><strong>Para guardar automáticamente tus notas</strong>, necesito acceso a una carpeta en tu computadora.</p>
-        <p>Las notas se guardarán como archivos JSON y se cargarán automáticamente cuando abras el mismo PDF.</p>
-        <p><small>⚠️ Solo funciona en navegadores modernos (Chrome, Edge, etc.)</small></p>
-        <div class="permission-buttons">
-          <button class="permission-btn primary" id="grant-access-btn">📁 Seleccionar Carpeta</button>
-          <button class="permission-btn secondary" id="skip-access-btn">Omitir</button>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <div id="info-modal" class="info-modal hidden">
     <div class="info-content">
@@ -806,7 +775,6 @@
           if (directoryHandle) {
             setTimeout(loadNotesFromFile, 300);
           } else if (supportsFileSystemAccess()) {
-            setTimeout(showPermissionModal, 1000);
           } else {
             updateFileStatus('error', 'No compatible');
           }
@@ -1557,85 +1525,39 @@
       // ========================================
       // PERSISTENCIA DE NOTAS
       // ========================================
-      function showPermissionModal() {
-        if (!supportsFileSystemAccess()) {
-          showToast('Tu navegador no soporta guardado automático de archivos', 'error');
-          updateFileStatus('error', 'No compatible');
-          return;
-        }
-        document.getElementById('permission-modal').classList.remove('hidden');
-      }
-      function hidePermissionModal() {
-        document.getElementById('permission-modal').classList.add('hidden');
-      }
-      async function initDB() {
-        return new Promise((resolve, reject) => {
-          const request = indexedDB.open('PDFViewerDB', 1);
-          request.onerror = () => reject(request.error);
-          request.onsuccess = () => { db = request.result; resolve(db); };
-          request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            if (!db.objectStoreNames.contains('settings')) db.createObjectStore('settings', { keyPath: 'id' });
-          };
-        });
-      }
-      async function loadDirectoryHandle() {
-        if (!db || !supportsFileSystemAccess()) { updateFileStatus('no-access', 'Sin acceso'); return;
-        }
-        try {
-          const transaction = db.transaction(['settings'], 'readonly');
-          const store = transaction.objectStore('settings');
-          const request = store.get('notesFolder');
-          request.onsuccess = async () => {
-            const result = request.result;
-            if (result && result.handle) {
-              const handle = result.handle;
-              const permissionStatus = await handle.queryPermission({ mode: 'readwrite' });
-              if (permissionStatus === 'granted') {
-                directoryHandle = handle;
-                updateFileStatus('saved', 'Acceso concedido');
-                await loadPromptConfig();
-              } else {
-                updateFileStatus('no-access', 'Acceso denegado');
-              }
-            } else {
-              updateFileStatus('no-access', 'Sin acceso');
+        async function setupNotesDirectory() {
+          try {
+            const root = await navigator.storage.getDirectory();
+            const params = new URLSearchParams(location.search);
+            const base = params.get("notes") || "system/notas";
+            const parts = base.split("/" );
+            let dir = root;
+            for (const part of parts) {
+              if (!part) continue;
+              dir = await dir.getDirectoryHandle(part, { create: true });
             }
-          };
-          request.onerror = (e) => {
-            console.error('Error al cargar handle de carpeta:', e.target.error);
-            updateFileStatus('no-access', 'Error de carga');
-          };
-        } catch (error) {
-          console.error('Error al cargar handle de carpeta (catch):', error);
-          updateFileStatus('no-access', 'Error de carga');
-        }
-      }
-      async function requestDirectoryAccess() {
-        try {
-          const newDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-          const permission = await newDirectoryHandle.requestPermission({ mode: 'readwrite' });
-          if (permission === 'granted') {
-            directoryHandle = newDirectoryHandle;
-            const transaction = db.transaction(['settings'], 'readwrite');
-            const store = transaction.objectStore('settings');
-            await store.put({ id: 'notesFolder', handle: directoryHandle });
-            updateFileStatus('saved', 'Acceso concedido');
+            directoryHandle = dir;
+            updateFileStatus("saved", "Acceso concedido");
             await loadPromptConfig();
-            showToast('Carpeta configurada correctamente', 'success');
-            hidePermissionModal();
-            if (currentPdfName) setTimeout(loadNotesFromFile, 500);
-          } else {
-            throw new Error('Permisos denegados');
+          } catch (error) {
+            console.error("Error configurando notas:", error);
+            updateFileStatus("error", "Error de acceso");
           }
-        } catch (error) {
-          console.error('Error solicitando acceso:', error);
-          if (error.name !== 'AbortError') {
-            showToast('Error configurando carpeta', 'error');
-            updateFileStatus('error', 'Error de acceso');
           }
+
+        async function initDB() {
+          return new Promise((resolve, reject) => {
+            const request = indexedDB.open("PDFViewerDB", 1);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => { db = request.result; resolve(db); };
+            request.onupgradeneeded = (event) => {
+              const db = event.target.result;
+              if (!db.objectStoreNames.contains("settings")) db.createObjectStore("settings", { keyPath: "id" });
+            };
+          });
         }
-      }
+
+
       function getNotesFileName(pdfName) {
         const cleanName = pdfName.replace(/[^a-zA-Z0-9.-]/g, '_');
         return `${cleanName}_notas.json`;
@@ -1707,11 +1629,6 @@
         });
         return notes;
       }
-      document.getElementById('folder-btn').addEventListener('click', () => { showPermissionModal(); });
-      document.getElementById('grant-access-btn').addEventListener('click', requestDirectoryAccess);
-      document.getElementById('skip-access-btn').addEventListener('click', () => {
-        hidePermissionModal(); updateFileStatus('no-access', 'Sin acceso'); showToast('Puedes configurar la carpeta más tarde', 'info');
-      });
 
       // ========================================
       // MODAL INFO
@@ -2102,10 +2019,10 @@
       // ========================================
       // INICIALIZACIÓN
       // ========================================
-      initDB().then(async () => {
-        loadDirectoryHandle();
-        await loadCategoryHandles();
-      }).catch(error => {
+        initDB().then(async () => {
+          await setupNotesDirectory();
+          await loadCategoryHandles();
+        }).catch(error => {
         console.error('Error al inicializar IndexedDB:', error);
         showToast('Error al inicializar la base de datos local.', 'error');
         updateFileStatus('error', 'DB Error');

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 import * as XLSX from "xlsx"
 
@@ -17,12 +17,11 @@ export default function Home() {
   const { setTheme } = useTheme()
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
-  const [step, setStep] = useState(1)
+  const [step, setStep] = useState(0)
   const [files, setFiles] = useState<File[]>([])
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [folderReady, setFolderReady] = useState(false)
   const [weeks, setWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
@@ -39,6 +38,51 @@ export default function Home() {
   const [showSchedule, setShowSchedule] = useState(false)
   const [filterSubject, setFilterSubject] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [configFound, setConfigFound] = useState<boolean | null>(null)
+  const [dayFilter, setDayFilter] = useState<string | null>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
+
+  const loadConfig = async (files: File[]) => {
+    const cfg = files.find((f) => f.name === "config.json")
+    if (cfg) {
+      const text = await cfg.text()
+      const data = JSON.parse(text)
+      setWeeks(data.weeks || 1)
+      setNames(data.names || [])
+      setTheory(data.theory || {})
+      setPractice(data.practice || {})
+      setLabels(data.labels || {})
+      setOrders(data.orders || {})
+      localStorage.setItem("weeks", String(data.weeks || 1))
+      localStorage.setItem("labels", JSON.stringify(data.labels || {}))
+      localStorage.setItem("orders", JSON.stringify(data.orders || {}))
+      return true
+    }
+    return false
+  }
+
+  const reloadConfig = async () => {
+    const ok = await loadConfig(dirFiles)
+    alert(ok ? "Configuración recargada" : "config.json no encontrado")
+  }
+
+  const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    setDirFiles(files)
+    loadConfig(files)
+  }
+
+  const triggerReselect = () => folderInputRef.current?.click()
+
+  useEffect(() => {
+    if (step === 1) {
+      ;(async () => {
+        const ok = await loadConfig(dirFiles)
+        setConfigFound(ok)
+      })()
+    }
+  }, [step, dirFiles])
 
   // theme and setup flag
   useEffect(() => {
@@ -96,12 +140,14 @@ export default function Home() {
   // build tree from selected directory
   useEffect(() => {
     const tree: Record<number, Record<string, PdfFile[]>> = {}
+    const subjects = new Set<string>()
     for (const file of dirFiles) {
       if (!file.name.toLowerCase().endsWith(".pdf")) continue
       const parts = (file as any).webkitRelativePath?.split("/") || []
       if (parts.length >= 4) {
         const weekPart = parts[1]
         const subject = parts[2]
+        subjects.add(subject)
         const week = parseInt(weekPart.replace(/\D/g, ""))
         if (!tree[week]) tree[week] = {}
         if (!tree[week][subject]) tree[week][subject] = []
@@ -126,7 +172,8 @@ export default function Home() {
       }
     }
     setFileTree(tree)
-  }, [dirFiles, orders])
+    if (!names.length) setNames(Array.from(subjects))
+  }, [dirFiles, orders, names])
 
   // compute queue ordered by urgency
   useEffect(() => {
@@ -203,7 +250,57 @@ export default function Home() {
   // configuration wizard
   if (!setupComplete) {
     switch (step) {
+      case 0: {
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
+            <p>Paso 1: Selecciona la carpeta "gestor"</p>
+            <input
+              type="file"
+              // @ts-expect-error webkitdirectory es no estándar
+              webkitdirectory=""
+              onChange={(e) => {
+                setDirFiles(Array.from(e.target.files || []))
+                setStep(1)
+              }}
+            />
+          </main>
+        )
+      }
       case 1: {
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            {configFound === null && <p>Buscando configuración previa...</p>}
+            {configFound === true && (
+              <>
+                <p>Configuración encontrada. Bienvenido.</p>
+                <button
+                  className="px-4 py-2 border rounded"
+                  onClick={() => {
+                    localStorage.setItem("setupComplete", "1")
+                    setSetupComplete(true)
+                    setStarted(false)
+                  }}
+                >
+                  Continuar
+                </button>
+              </>
+            )}
+            {configFound === false && (
+              <>
+                <p>No se encontró configuración previa.</p>
+                <button
+                  className="px-4 py-2 border rounded"
+                  onClick={() => setStep(2)}
+                >
+                  Continuar
+                </button>
+              </>
+            )}
+          </main>
+        )
+      }
+      case 2: {
         const handleConfirm = async () => {
           let maxWeek = 1
           for (const file of files) {
@@ -218,12 +315,11 @@ export default function Home() {
           }
           setWeeks(maxWeek)
           setNames(files.map(() => ""))
-          setStep(2)
+          setStep(3)
         }
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
-            <p>Paso 1: Sube tus cronogramas (excel)</p>
+            <p>Paso 2: Sube tus cronogramas (excel)</p>
             <input
               type="file"
               accept=".xlsx,.xls"
@@ -240,7 +336,7 @@ export default function Home() {
           </main>
         )
       }
-      case 2: {
+      case 3: {
         const updateName = (idx: number, value: string) => {
           const next = [...names]
           next[idx] = value
@@ -248,7 +344,7 @@ export default function Home() {
         }
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <p>Paso 2: Nombra tus cronogramas</p>
+            <p>Paso 3: Nombra tus cronogramas</p>
             {files.map((f, i) => (
               <label key={i} className="flex gap-2 items-center">
                 <span>{f.name} es de</span>
@@ -262,21 +358,21 @@ export default function Home() {
             <button
               className="px-4 py-2 border rounded"
               disabled={names.some((n) => !n)}
-              onClick={() => setStep(3)}
+              onClick={() => setStep(4)}
             >
               Confirmar
             </button>
           </main>
         )
       }
-      case 3: {
+      case 4: {
         const unassigned = names.filter((n) => !theory[n])
         const handleDrop = (subject: string, day: string) => {
           setTheory({ ...theory, [subject]: day })
         }
         return (
           <main className="min-h-screen flex flex-col items-center gap-4 p-4">
-            <p>Paso 3: Arrastra tus materias (teoría) a los días</p>
+            <p>Paso 4: Arrastra tus materias (teoría) a los días</p>
             <div className="flex gap-4">
               <div className="w-40 border p-2 min-h-40">
                 {unassigned.map((s) => (
@@ -312,7 +408,7 @@ export default function Home() {
               <button
                 className="px-4 py-2 border rounded"
                 onClick={() => {
-                  setStep(4)
+                  setStep(5)
                 }}
               >
                 Confirmar
@@ -321,14 +417,14 @@ export default function Home() {
           </main>
         )
       }
-      case 4: {
+      case 5: {
         const unassigned = names.filter((n) => !practice[n])
         const handleDrop = (subject: string, day: string) => {
           setPractice({ ...practice, [subject]: day })
         }
         return (
           <main className="min-h-screen flex flex-col items-center gap-4 p-4">
-            <p>Paso 3: Arrastra tus materias (práctica) a los días</p>
+            <p>Paso 5: Arrastra tus materias (práctica) a los días</p>
             <div className="flex gap-4">
               <div className="w-40 border p-2 min-h-40">
                 {unassigned.map((s) => (
@@ -363,7 +459,7 @@ export default function Home() {
             {unassigned.length === 0 && (
               <button
                 className="px-4 py-2 border rounded"
-                onClick={() => setStep(5)}
+                onClick={() => setStep(6)}
               >
                 Confirmar
               </button>
@@ -371,8 +467,18 @@ export default function Home() {
           </main>
         )
       }
-      case 5: {
+      case 6: {
         const finish = () => {
+          const data = { weeks, names, theory, practice, labels, orders }
+          const blob = new Blob([JSON.stringify(data)], {
+            type: "application/json",
+          })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement("a")
+          a.href = url
+          a.download = "config.json"
+          a.click()
+          URL.revokeObjectURL(url)
           localStorage.setItem("setupComplete", "1")
           localStorage.setItem("weeks", String(weeks))
           setSetupComplete(true)
@@ -380,21 +486,8 @@ export default function Home() {
         }
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <p>Paso 4: Da acceso a la carpeta "gestor"</p>
-            <input
-              type="file"
-              // @ts-expect-error webkitdirectory es no estándar
-              webkitdirectory=""
-              onChange={(e) => {
-                setDirFiles(Array.from(e.target.files || []))
-                setFolderReady(true)
-              }}
-            />
-            <button
-              className="px-4 py-2 border rounded"
-              disabled={!folderReady}
-              onClick={finish}
-            >
+            <p>Paso final: Guarda tu configuración</p>
+            <button className="px-4 py-2 border rounded" onClick={finish}>
               Finalizar
             </button>
           </main>
@@ -499,102 +592,125 @@ export default function Home() {
     return acc
   }, {})
 
+  if (showSchedule) {
+    const displayedDays = dayFilter ? [dayFilter] : days
+    return (
+      <div className="p-4 min-h-screen bg-white text-gray-900 dark:bg-gray-900 dark:text-white">
+        <button className="underline mb-4" onClick={() => setShowSchedule(false)}>
+          Cerrar
+        </button>
+        <div className="flex gap-2 mb-2">
+          <button
+            className={!filterSubject ? "font-bold" : ""}
+            onClick={() => setFilterSubject(null)}
+          >
+            Todas
+          </button>
+          {names.map((n) => (
+            <button
+              key={n}
+              className={filterSubject === n ? "font-bold" : ""}
+              onClick={() => setFilterSubject(n)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 mb-4">
+          <button
+            className={!dayFilter ? "font-bold" : ""}
+            onClick={() => {
+              setDayFilter(null)
+              setSelectedDay(null)
+            }}
+          >
+            Todos
+          </button>
+          {days.map((d) => (
+            <button
+              key={d}
+              className={dayFilter === d ? "font-bold" : ""}
+              onClick={() => {
+                setDayFilter(d)
+                setSelectedDay(d)
+              }}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-4">
+          {displayedDays.map((d) => (
+            <div
+              key={d}
+              className="flex-1 border p-2 cursor-pointer dark:border-gray-700"
+              onClick={() => setSelectedDay(d)}
+            >
+              <div className="font-bold">{d}</div>
+              {names
+                .filter((n) => !filterSubject || n === filterSubject)
+                .filter((n) => theory[n] === d || practice[n] === d)
+                .map((n) => {
+                  const count = pendingFor(d, n).length
+                  return (
+                    <div
+                      key={n}
+                      className={`w-6 h-6 rounded-full ${colorMap[n]} mt-2 flex items-center justify-center text-white`}
+                      title={n}
+                    >
+                      {count}
+                    </div>
+                  )
+                })}
+            </div>
+          ))}
+        </div>
+        {selectedDay && (
+          <div className="mt-4 text-sm">
+            {filterSubject ? (
+              pendingFor(selectedDay, filterSubject).length ? (
+                <ul>
+                  {pendingFor(selectedDay, filterSubject).map((f) => (
+                    <li key={f.path} className="truncate" title={f.file.name}>
+                      {f.file.name}
+                    </li>
+                  ))}
+                </ul>
+              ) : null
+            ) : (
+              names.map((n) => {
+                const list = pendingFor(selectedDay, n)
+                if (!list.length) return null
+                return (
+                  <div key={n} className="mb-2">
+                    <div className="font-semibold">{n}</div>
+                    <ul className="ml-4">
+                      {list.map((f) => (
+                        <li key={f.path} className="truncate" title={f.file.name}>
+                          {f.file.name}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // main interface
   return (
     <>
       <div className="p-2">
-        <button className="underline" onClick={() => setShowSchedule(!showSchedule)}>
-          {showSchedule ? "Ocultar cronograma" : "Ver cronograma"}
+        <button className="underline" onClick={() => setShowSchedule(true)}>
+          Ver cronograma
         </button>
       </div>
-      {showSchedule && (
-        <div className="p-4 border-b">
-          <div className="flex gap-2 mb-2">
-            <button
-              className={!filterSubject ? "font-bold" : ""}
-              onClick={() => setFilterSubject(null)}
-            >
-              Todas
-            </button>
-            {names.map((n) => (
-              <button
-                key={n}
-                className={filterSubject === n ? "font-bold" : ""}
-                onClick={() => setFilterSubject(n)}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-4">
-            {days.map((d) => (
-              <div
-                key={d}
-                className="flex-1 border p-2 cursor-pointer"
-                onClick={() => setSelectedDay(d)}
-              >
-                <div className="font-bold">{d}</div>
-                {names
-                  .filter((n) => !filterSubject || n === filterSubject)
-                  .flatMap((n) => {
-                    const arr: any[] = []
-                    if (theory[n] === d)
-                      arr.push(
-                        <div
-                          key={n + "t"}
-                          className={`w-6 h-6 rounded-full ${colorMap[n]} mt-2`}
-                          title={`${n} Teoría`}
-                        />,
-                      )
-                    if (practice[n] === d)
-                      arr.push(
-                        <div
-                          key={n + "p"}
-                          className={`w-6 h-6 rounded-full ${colorMap[n]} mt-2 border`}
-                          title={`${n} Práctica`}
-                        />,
-                      )
-                    return arr
-                  })}
-              </div>
-            ))}
-          </div>
-          {selectedDay && (
-            <div className="mt-4 text-sm">
-              {filterSubject ? (
-                pendingFor(selectedDay, filterSubject).length ? (
-                  <ul>
-                    {pendingFor(selectedDay, filterSubject).map((f) => (
-                      <li key={f.path} className="truncate" title={f.file.name}>
-                        {f.file.name}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null
-              ) : (
-                names.map((n) => {
-                  const list = pendingFor(selectedDay, n)
-                  if (!list.length) return null
-                  return (
-                    <div key={n} className="mb-2">
-                      <div className="font-semibold">{n}</div>
-                      <ul className="ml-4">
-                        {list.map((f) => (
-                          <li key={f.path} className="truncate" title={f.file.name}>
-                            {f.file.name}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      <main className="grid grid-cols-2 min-h-screen">
-      <aside className="border-r p-4 space-y-2">
+      <main className="grid grid-cols-2 min-h-screen bg-white text-gray-900 dark:bg-gray-900 dark:text-white">
+      <aside className="border-r p-4 space-y-2 dark:border-gray-700">
         {!viewWeek && (
           <>
             <h2 className="text-xl">Semanas</h2>
@@ -683,7 +799,7 @@ export default function Home() {
         )}
       </aside>
       <section className="flex flex-col h-screen">
-        <div className="flex items-center justify-between p-2 border-b">
+        <div className="flex items-center justify-between p-2 border-b dark:border-gray-700">
           <div className="flex items-center gap-2">
             <span>📄</span>
             <span
@@ -710,16 +826,43 @@ export default function Home() {
             {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
           </div>
         </div>
-        <div className="p-4 text-sm text-gray-500">
-          {currentPdf
-            ? `Semana ${currentPdf.week} - ${currentPdf.subject}`
-            : "Selecciona un PDF"}
+        <div className="flex-1">
+          {pdfUrl ? (
+            <iframe
+              title="Vista previa"
+              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                currentPdf!.file.name,
+              )}&notes=system/notas`}
+              className="w-full h-full border-0"
+            />
+          ) : (
+            <div className="p-4 text-sm text-gray-500 dark:text-gray-400">
+              Selecciona un PDF
+            </div>
+          )}
         </div>
       </section>
     </main>
+    <div className="fixed top-2 right-2">
+      <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
+      {showSettings && (
+        <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2 dark:bg-gray-800 dark:border-gray-700 dark:text-white">
+          <button onClick={reloadConfig}>Recargar config.json</button>
+          <button onClick={triggerReselect}>Reseleccionar carpeta</button>
+          <input
+            type="file"
+            ref={folderInputRef}
+            style={{ display: "none" }}
+            // @ts-expect-error webkitdirectory no estándar
+            webkitdirectory=""
+            onChange={handleReselect}
+          />
+        </div>
+      )}
+    </div>
     {viewerOpen && currentPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between p-2 border-b">
+        <div className="flex items-center justify-between p-2 border-b dark:border-gray-700">
           <div className="flex items-center gap-2 flex-1 truncate">
             <span>📄</span>
             <span className="truncate" title={currentPdf.file.name}>
@@ -746,7 +889,7 @@ export default function Home() {
             title="Visor PDF"
             src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
               currentPdf.file.name,
-            )}`}
+            )}&notes=system/notas`}
             className="w-full h-full border-0"
           />
         </div>
