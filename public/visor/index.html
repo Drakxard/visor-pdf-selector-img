@@ -114,6 +114,7 @@
     }
     .fullscreen #app-header { display: none; }
     .fullscreen #pdf-container { top: 0 !important; }
+    .fullscreen .nav-indicator { display: none; }
 
     .nav-indicator {
       position: absolute; top: 20px; right: 20px;
@@ -506,6 +507,8 @@
       // Persistencia de notas
       let directoryHandle = null;
       let currentPdfName = null;
+      let currentPdfPath = null;
+      let pdfMeta = {};
       let saveTimeout = null;
       let db = null;
 
@@ -758,10 +761,26 @@
         }
       }
 
+      container.addEventListener('scroll', () => {
+        if (!currentPdfPath) return;
+        const p = getCurrentPage();
+        if (p !== currentPage) {
+          currentPage = p;
+          try {
+            pdfMeta[currentPdfPath] = {
+              ...(pdfMeta[currentPdfPath] || {}),
+              lastPage: p,
+            };
+            localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta));
+            localStorage.setItem('lastOpened', currentPdfPath);
+          } catch {}
+        }
+      });
+
       // ========================================
       // CARGA DE PDF
       // ========================================
-      async function loadPdf(url, filename) {
+      async function loadPdf(url, filename, pdfPath, pageParam) {
         try {
           showOverlay('Cargando PDF…');
           clearContainer();
@@ -774,11 +793,21 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
+          currentPdfPath = pdfPath || filename;
+          try { pdfMeta = JSON.parse(localStorage.getItem('pdfMeta') || '{}'); } catch {}
+          localStorage.setItem('lastOpened', currentPdfPath);
 
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
           totalPages = pdfDoc.numPages;
-          currentPage = 1;
+          const saved = pdfMeta[currentPdfPath]?.lastPage || 1;
+          const startPage = pageParam || saved;
+          currentPage = Math.min(Math.max(startPage, 1), totalPages);
+          pdfMeta[currentPdfPath] = {
+            ...(pdfMeta[currentPdfPath] || {}),
+            lastPage: currentPage,
+          };
+          try { localStorage.setItem('pdfMeta', JSON.stringify(pdfMeta)); } catch {}
 
           // Tamaño base
           try {
@@ -791,11 +820,10 @@
           buildPageSkeletons();
           prepareInitialReveal();
 
-          if (pendingAfterLoadGoTo === 'last') {
-            setTimeout(() => scrollToPage(totalPages), 0);
-          } else {
-            setTimeout(() => scrollToPage(1), 0);
-          }
+          let initial = currentPage;
+          if (pendingAfterLoadGoTo === 'last') initial = totalPages;
+          else if (pendingAfterLoadGoTo === 'first') initial = 1;
+          setTimeout(() => scrollToPage(initial), 0);
           pendingAfterLoadGoTo = null;
 
           if (directoryHandle) {
@@ -1023,6 +1051,11 @@
       }
 
       fullscreenBtn.addEventListener('click', toggleFullscreen);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'f' || e.key === 'F') {
+          toggleFullscreen();
+        }
+      });
       function toggleFullscreen() {
         isFullscreen = !isFullscreen;
         if (isFullscreen) { document.body.classList.add('fullscreen'); fullscreenBtn.textContent = '⛷'; }
@@ -1030,22 +1063,7 @@
       }
 
       backBtn.addEventListener('click', () => {
-        dropZone.classList.remove('hidden');
-        clearContainer();
-        fileInfo.textContent = 'Visor PDF';
-        backBtn.disabled = true;
-        pdfDoc = null;
-        hidePopup();
-        creatingNote = false;
-        document.body.classList.remove('creating-note');
-        clearAllSelections();
-        exitCaptureMode(false);
-        currentPage = 1;
-        totalPages = 0;
-        currentPdfName = null;
-        hideOverlay();
-        if (directoryHandle) updateFileStatus('saved', 'Carpeta configurada');
-        else updateFileStatus('no-access', 'Sin acceso');
+        window.location.href = '/';
       });
 
       // ========================================
@@ -1063,7 +1081,7 @@
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
-            loadPdf(url, file.name);
+            loadPdf(url, file.name, file.name);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1076,7 +1094,7 @@
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
-            loadPdf(url, file.name);
+            loadPdf(url, file.name, file.name);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1088,28 +1106,10 @@
       // ========================================
       function naturalCompare(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
       function isPdf(name) { return name.toLowerCase().endsWith('.pdf'); }
-      function supportsDirPicker() { return 'showDirectoryPicker' in window; }
-      function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
+      function supportsDirPicker() { return false; }
+      function supportsFileSystemAccess() { return false; }
 
-      pdfFolderBtn.addEventListener('click', async () => {
-        try {
-          if (!supportsDirPicker()) { pdfFolderInput.click(); return; }
-          const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-          pdfDirectoryHandle = dirHandle;
-          const list = [];
-          // @ts-ignore
-          for await (const [name, handle] of dirHandle.entries()) {
-            if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
-          }
-          if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
-          list.sort((a,b) => naturalCompare(a.name,b.name));
-          pdfEntries = list; startBtn.disabled = false;
-          showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
-        } catch (e) {
-          if (e && e.name === 'AbortError') return;
-          showToast('No se pudo acceder a la carpeta de PDFs', 'error');
-        }
-      });
+      pdfFolderBtn.addEventListener('click', () => {});
 
       pdfFolderInput.addEventListener('change', (e) => {
         const files = Array.from(e.target.files || []).filter(f => isPdf(f.name));
@@ -1147,7 +1147,7 @@
           const url = URL.createObjectURL(blob);
           currentObjectUrl = url;
           pendingAfterLoadGoTo = after;
-          await loadPdf(url, entry.name);
+          await loadPdf(url, entry.name, entry.name);
           currentPdfIndex = index;
           showNavIndicator(`PDF ${index + 1}/${pdfEntries.length}: ${entry.name}`);
         } catch (e) {
@@ -1607,36 +1607,17 @@
         }
       }
       async function requestDirectoryAccess() {
-        try {
-          const newDirectoryHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-          const permission = await newDirectoryHandle.requestPermission({ mode: 'readwrite' });
-          if (permission === 'granted') {
-            directoryHandle = newDirectoryHandle;
-            const transaction = db.transaction(['settings'], 'readwrite');
-            const store = transaction.objectStore('settings');
-            await store.put({ id: 'notesFolder', handle: directoryHandle });
-            updateFileStatus('saved', 'Acceso concedido');
-            await loadPromptConfig();
-            showToast('Carpeta configurada correctamente', 'success');
-            hidePermissionModal();
-            if (currentPdfName) setTimeout(loadNotesFromFile, 500);
-          } else {
-            throw new Error('Permisos denegados');
-          }
-        } catch (error) {
-          console.error('Error solicitando acceso:', error);
-          if (error.name !== 'AbortError') {
-            showToast('Error configurando carpeta', 'error');
-            updateFileStatus('error', 'Error de acceso');
-          }
-        }
+        directoryHandle = true;
+        updateFileStatus('saved', 'Acceso concedido');
+        hidePermissionModal();
+        if (currentPdfName) setTimeout(loadNotesFromFile, 500);
       }
       function getNotesFileName(pdfName) {
         const cleanName = pdfName.replace(/[^a-zA-Z0-9.-]/g, '_');
         return `${cleanName}_notas.json`;
       }
       async function saveNotesToFile() {
-        if (!directoryHandle || !currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
+        if (!currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
           try {
@@ -1644,10 +1625,7 @@
             const notes = collectAllNotes();
             const data = { pdfName: currentPdfName, timestamp: Date.now(), notes, totalPages, zoom: currentZoom, version: '2.2' };
             const fileName = getNotesFileName(currentPdfName);
-            const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(JSON.stringify(data, null, 2));
-            await writable.close();
+            await fetch('/api/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: fileName, data }) });
             updateFileStatus('saved', `${notes.length} notas guardadas`);
           } catch (error) {
             console.error('Error guardando notas:', error);
@@ -1657,13 +1635,11 @@
         }, 600);
       }
       async function loadNotesFromFile() {
-        if (!directoryHandle || !currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
+        if (!currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
         try {
           const fileName = getNotesFileName(currentPdfName);
-          const fileHandle = await directoryHandle.getFileHandle(fileName);
-          const file = await fileHandle.getFile();
-          const text = await file.text();
-          const data = JSON.parse(text);
+          const res = await fetch(`/api/note?name=${encodeURIComponent(fileName)}`);
+          const data = await res.json();
           if (data.notes && Array.isArray(data.notes)) {
             document.querySelectorAll('.note-icon').forEach(icon => icon.remove());
             data.notes.forEach(note => {
@@ -1674,6 +1650,15 @@
                 const y = yp * layer.offsetHeight;
                 addNoteIcon(x, y, note.content, layer, xp, yp);
               }
+            });
+            updateFileStatus('saved', `${data.notes.length} notas cargadas`);
+          } else {
+            updateFileStatus('saved', 'Sin notas previas');
+          }
+        } catch (error) {
+          updateFileStatus('error', 'Error cargando');
+        }
+      }
             });
             updateFileStatus('saved', `${data.notes.length} notas cargadas`);
           } else {
@@ -1769,74 +1754,10 @@
       }
 
       async function ensureCategoryHandle(cat) {
-        if (!db) await initDB();
-        await loadCategoryHandles(); // precarga si existen
-        let handle = (cat === 'teo') ? theoryHandle : practiceHandle;
-        if (handle) {
-          const perm = await handle.queryPermission({ mode: 'readwrite' });
-          if (perm === 'granted') return handle;
-        }
-        // Solicitar nueva carpeta
-        try {
-          const picked = await window.showDirectoryPicker({ mode: 'readwrite' });
-          const perm2 = await picked.requestPermission({ mode: 'readwrite' });
-          if (perm2 !== 'granted') throw new Error('Permiso denegado');
-          // Persistir
-          const tx = db.transaction(['settings'], 'readwrite');
-          const store = tx.objectStore('settings');
-          const id = (cat === 'teo') ? 'teoFolder' : 'practicaFolder';
-          await store.put({ id, handle: picked });
-          if (cat === 'teo') theoryHandle = picked; else practiceHandle = picked;
-          showToast('Carpeta guardada para ' + (cat === 'teo' ? 'Teoría' : 'Práctica'), 'success');
-          return picked;
-        } catch (e) {
-          console.error('Error seleccionando carpeta:', e);
-          showToast('No se seleccionó carpeta', 'error');
-          return null;
-        }
+        return true;
       }
 
-      async function loadCategoryHandles() {
-        if (!db || !supportsFileSystemAccess()) return;
-        try {
-          await new Promise((resolve) => {
-            const tx = db.transaction(['settings'], 'readonly');
-            const store = tx.objectStore('settings');
-
-            const reqTeo = store.get('teoFolder');
-            const reqPra = store.get('practicaFolder');
-
-            let done = 0;
-            function checkDone() { if (++done === 2) resolve(); }
-
-            reqTeo.onsuccess = async () => {
-              const result = reqTeo.result;
-              if (result && result.handle) {
-                try {
-                  const status = await result.handle.queryPermission({ mode: 'readwrite' });
-                  if (status === 'granted') theoryHandle = result.handle;
-                } catch {}
-              }
-              checkDone();
-            };
-            reqTeo.onerror = checkDone;
-
-            reqPra.onsuccess = async () => {
-              const result = reqPra.result;
-              if (result && result.handle) {
-                try {
-                  const status = await result.handle.queryPermission({ mode: 'readwrite' });
-                  if (status === 'granted') practiceHandle = result.handle;
-                } catch {}
-              }
-              checkDone();
-            };
-            reqPra.onerror = checkDone;
-          });
-        } catch (e) {
-          console.warn('No se pudieron cargar carpetas de categorías');
-        }
-      }
+      async function loadCategoryHandles() {}
 
       function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
         const rect = document.createElement('div');
@@ -1874,32 +1795,25 @@
       }
 
       async function saveSelectionsToCategory() {
-        const handle = captureCategory === 'teo' ? theoryHandle : practiceHandle;
-        if (!handle) throw new Error('Carpeta no configurada');
-
         if (!currentPdfName) throw new Error('No hay PDF cargado');
 
         showOverlay('Guardando capturas…');
 
         try {
-          // Guardar secuencialmente
           const base = sanitizeName(currentPdfName.replace(/\.pdf$/i, ''));
           for (let i = 0; i < selections.length; i++) {
             const s = selections[i];
             const state = pageStates.get(s.pageNum);
             if (!state) continue;
-            // Render forzado si el canvas está liberado
             if (!state.canvas.width || !state.canvas.height) {
               await renderPage(s.pageNum, state);
             }
             const canvas = state.canvas;
-            // Coordenadas en píxeles del canvas
             const sx = Math.round(Math.min(s.xp1, s.xp2) * canvas.width);
             const sy = Math.round(Math.min(s.yp1, s.yp2) * canvas.height);
             const sw = Math.max(1, Math.round(Math.abs(s.xp2 - s.xp1) * canvas.width));
             const sh = Math.max(1, Math.round(Math.abs(s.yp2 - s.yp1) * canvas.height));
 
-            // Crear canvas offscreen
             const out = document.createElement('canvas');
             out.width = sw; out.height = sh;
             const octx = out.getContext('2d');
@@ -1907,10 +1821,10 @@
 
             const blob = await new Promise(resolve => out.toBlob(resolve, 'image/png', 0.92));
             const fileName = `${base}_p${s.pageNum}_${String(i + 1).padStart(2, '0')}.png`;
-            const fileHandle = await handle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(blob);
-            await writable.close();
+            const form = new FormData();
+            form.append('file', blob, fileName);
+            form.append('category', captureCategory);
+            await fetch('/api/capture', { method: 'POST', body: form });
 
             if (loadingText) loadingText.textContent = `Guardando… (${i + 1}/${selections.length})`;
           }
@@ -2084,6 +1998,16 @@
         await writable.close();
         const file = new File([blob], pdfName, { type: 'application/pdf' });
         return { handle: fileHandle, file, blob };
+      }
+
+      // cargar pdf inicial si viene por query
+      const params = new URLSearchParams(window.location.search);
+      const pathParam = params.get('path');
+      const nameParam = params.get('name');
+      const pageParam = parseInt(params.get('page') || '0');
+      if (pathParam && nameParam) {
+        const url = `/api/pdf?path=${encodeURIComponent(pathParam)}`;
+        loadPdf(url, nameParam, pathParam, pageParam);
       }
 
       // ========================================
