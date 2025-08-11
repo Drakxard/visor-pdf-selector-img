@@ -1,7 +1,13 @@
 import { promises as fs } from 'fs'
 import path from 'path'
 
-const CONFIG_PATH = path.join(process.cwd(), 'notas', 'config.json')
+const CONFIG_PATH = path.join(
+  process.cwd(),
+  'gestor',
+  'system',
+  'notas',
+  'config.json'
+)
 
 export async function readConfig() {
   try {

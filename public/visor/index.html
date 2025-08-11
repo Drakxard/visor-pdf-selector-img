@@ -114,6 +114,7 @@
     }
     .fullscreen #app-header { display: none; }
     .fullscreen #pdf-container { top: 0 !important; }
+    .fullscreen .nav-indicator { display: none; }
 
     .nav-indicator {
       position: absolute; top: 20px; right: 20px;
@@ -1050,6 +1051,11 @@
       }
 
       fullscreenBtn.addEventListener('click', toggleFullscreen);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'f' || e.key === 'F') {
+          toggleFullscreen();
+        }
+      });
       function toggleFullscreen() {
         isFullscreen = !isFullscreen;
         if (isFullscreen) { document.body.classList.add('fullscreen'); fullscreenBtn.textContent = '⛷'; }

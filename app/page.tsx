@@ -71,6 +71,8 @@ export default function Home() {
       const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
       setWeeks(storedWeeks)
     }
+    const storedNames = localStorage.getItem("names")
+    if (storedNames) setNames(JSON.parse(storedNames))
   }, [setTheme])
 
   // greeting handler
@@ -123,6 +125,9 @@ export default function Home() {
         if (cfg.pdfMeta) setPdfMeta(cfg.pdfMeta)
         if (cfg.completed) setCompleted(cfg.completed)
         if (cfg.lastOpened) setLastOpened(cfg.lastOpened)
+        if (cfg.names) setNames(cfg.names)
+        if (cfg.weeks) setWeeks(cfg.weeks)
+        if (cfg.setupComplete !== undefined) setSetupComplete(cfg.setupComplete)
       })
       .catch(() => {})
   }, [])
@@ -139,11 +144,24 @@ export default function Home() {
   useEffect(() => {
     if (lastOpened) localStorage.setItem("lastOpened", lastOpened)
   }, [lastOpened])
-
   useEffect(() => {
-    const body = { pdfMeta, completed, subjectColors, theory, practice, lastOpened }
+    localStorage.setItem("names", JSON.stringify(names))
+  }, [names])
+  
+  useEffect(() => {
+    const body = {
+      pdfMeta,
+      completed,
+      subjectColors,
+      theory,
+      practice,
+      lastOpened,
+      names,
+      weeks,
+      setupComplete,
+    }
     fetch("/api/config", { method: "POST", body: JSON.stringify(body) })
-  }, [pdfMeta, completed, subjectColors, theory, practice, lastOpened])
+  }, [pdfMeta, completed, subjectColors, theory, practice, lastOpened, names, weeks, setupComplete])
 
   // build tree from selected directory
   useEffect(() => {
