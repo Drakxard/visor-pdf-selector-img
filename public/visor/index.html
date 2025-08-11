@@ -316,14 +316,6 @@
       <button class="control-btn" id="zoom-in">+</button>
       <button class="control-btn" id="fullscreen-btn">⛶</button>
 
-      <div class="file-status">
-        <div class="status-indicator" id="file-status">
-          <span>📁</span>
-          <span id="status-text">Cargando acceso...</span>
-        </div>
-        <button class="control-btn" id="folder-btn" title="Configurar carpeta">⚙️</button>
-      </div>
-
       <button class="control-btn" id="theme-toggle" title="Cambiar tema">🌙</button>
       <button class="control-btn" id="info-btn" title="Ayuda">ℹ️</button>
     </div>
@@ -594,8 +586,8 @@
       function updateFileStatus(status, text) {
         const statusEl = document.getElementById('file-status');
         const textEl = document.getElementById('status-text');
-        statusEl.className = 'status-indicator ' + status;
-        textEl.textContent = text;
+        if (statusEl) statusEl.className = 'status-indicator ' + status;
+        if (textEl) textEl.textContent = text;
       }
       function showNavIndicator(text) {
         if (!navIndicator || !document.body.contains(navIndicator)) {
@@ -803,13 +795,7 @@
           setTimeout(() => scrollToPage(saved), 0);
           pendingAfterLoadGoTo = null;
 
-          if (directoryHandle) {
-            setTimeout(loadNotesFromFile, 300);
-          } else if (supportsFileSystemAccess()) {
-            setTimeout(showPermissionModal, 1000);
-          } else {
-            updateFileStatus('error', 'No compatible');
-          }
+          setTimeout(loadNotesFromFile, 300);
         } catch (error) {
           console.error('Error cargando PDF:', error);
           showToast('Error cargando PDF: ' + (error?.message || ''), 'error');
@@ -1641,18 +1627,21 @@
         return `${cleanName}_notas.json`;
       }
       async function saveNotesToFile() {
-        if (!directoryHandle || !currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
         if (saveTimeout) clearTimeout(saveTimeout);
         saveTimeout = setTimeout(async () => {
           try {
             updateFileStatus('saving', 'Guardando...');
             const notes = collectAllNotes();
             const data = { pdfName: currentPdfName, timestamp: Date.now(), notes, totalPages, zoom: currentZoom, version: '2.2' };
-            const fileName = getNotesFileName(currentPdfName);
-            const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
-            const writable = await fileHandle.createWritable();
-            await writable.write(JSON.stringify(data, null, 2));
-            await writable.close();
+            if (directoryHandle && currentPdfName && supportsFileSystemAccess()) {
+              const fileName = getNotesFileName(currentPdfName);
+              const fileHandle = await directoryHandle.getFileHandle(fileName, { create: true });
+              const writable = await fileHandle.createWritable();
+              await writable.write(JSON.stringify(data, null, 2));
+              await writable.close();
+            } else if (currentPdfName) {
+              localStorage.setItem('notes-' + currentPdfName, JSON.stringify(data));
+            }
             updateFileStatus('saved', `${notes.length} notas guardadas`);
           } catch (error) {
             console.error('Error guardando notas:', error);
@@ -1662,14 +1651,20 @@
         }, 600);
       }
       async function loadNotesFromFile() {
-        if (!directoryHandle || !currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
+        if (!currentPdfName) { updateFileStatus('no-access', 'Sin acceso'); return; }
         try {
-          const fileName = getNotesFileName(currentPdfName);
-          const fileHandle = await directoryHandle.getFileHandle(fileName);
-          const file = await fileHandle.getFile();
-          const text = await file.text();
-          const data = JSON.parse(text);
-          if (data.notes && Array.isArray(data.notes)) {
+          let data = null;
+          if (directoryHandle && supportsFileSystemAccess()) {
+            const fileName = getNotesFileName(currentPdfName);
+            const fileHandle = await directoryHandle.getFileHandle(fileName);
+            const file = await fileHandle.getFile();
+            const text = await file.text();
+            data = JSON.parse(text);
+          } else {
+            const text = localStorage.getItem('notes-' + currentPdfName);
+            if (text) data = JSON.parse(text);
+          }
+          if (data && data.notes && Array.isArray(data.notes)) {
             document.querySelectorAll('.note-icon').forEach(icon => icon.remove());
             data.notes.forEach(note => {
               const layer = document.querySelector(`[data-page="${note.pageNum}"]`);
@@ -1685,12 +1680,8 @@
             updateFileStatus('saved', 'Sin notas previas');
           }
         } catch (error) {
-          if (error.name === 'NotFoundError') {
-            updateFileStatus('saved', 'Sin notas previas');
-          } else {
-            console.error('Error cargando notas:', error);
-            updateFileStatus('error', 'Error cargando');
-          }
+          console.error('Error cargando notas:', error);
+          updateFileStatus('error', 'Error cargando');
         }
       }
       function collectAllNotes() {
@@ -1707,7 +1698,6 @@
         });
         return notes;
       }
-      document.getElementById('folder-btn').addEventListener('click', () => { showPermissionModal(); });
       document.getElementById('grant-access-btn').addEventListener('click', requestDirectoryAccess);
       document.getElementById('skip-access-btn').addEventListener('click', () => {
         hidePermissionModal(); updateFileStatus('no-access', 'Sin acceso'); showToast('Puedes configurar la carpeta más tarde', 'info');
