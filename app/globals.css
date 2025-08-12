@@ -74,6 +74,31 @@
   --sidebar-ring: oklch(0.439 0 0);
 }
 
+body[data-palette="blue"] {
+  --background: oklch(0.97 0.02 240);
+  --accent: oklch(0.7 0.1 240);
+}
+body.dark[data-palette="blue"] {
+  --background: oklch(0.15 0.02 240);
+  --accent: oklch(0.7 0.1 240);
+}
+body[data-palette="green"] {
+  --background: oklch(0.97 0.02 150);
+  --accent: oklch(0.7 0.1 150);
+}
+body.dark[data-palette="green"] {
+  --background: oklch(0.15 0.02 150);
+  --accent: oklch(0.7 0.1 150);
+}
+body[data-palette="purple"] {
+  --background: oklch(0.97 0.02 300);
+  --accent: oklch(0.7 0.1 300);
+}
+body.dark[data-palette="purple"] {
+  --background: oklch(0.15 0.02 300);
+  --accent: oklch(0.7 0.1 300);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

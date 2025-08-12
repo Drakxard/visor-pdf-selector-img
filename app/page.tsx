@@ -41,6 +41,15 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [dayFilter, setDayFilter] = useState<string | null>(null)
+  const [labelMode, setLabelMode] = useState<"" | "theory" | "practice">("")
+  const [palette, setPalette] = useState("default")
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const paletteOptions = [
+    { id: "default", class: "bg-gray-300" },
+    { id: "blue", class: "bg-blue-300" },
+    { id: "green", class: "bg-green-300" },
+    { id: "purple", class: "bg-purple-300" },
+  ]
   const folderInputRef = useRef<HTMLInputElement>(null)
 
   const loadConfig = async (files: File[]) => {
@@ -116,10 +125,39 @@ export default function Home() {
     if (stored) setCompleted(JSON.parse(stored))
   }, [])
 
+  // load subjects and palette from storage
+  useEffect(() => {
+    const storedNames = localStorage.getItem("names")
+    if (storedNames) setNames(JSON.parse(storedNames))
+    const storedTheory = localStorage.getItem("theory")
+    if (storedTheory) setTheory(JSON.parse(storedTheory))
+    const storedPractice = localStorage.getItem("practice")
+    if (storedPractice) setPractice(JSON.parse(storedPractice))
+    const storedPalette = localStorage.getItem("palette")
+    if (storedPalette) setPalette(storedPalette)
+  }, [])
+
   // persist completed
   useEffect(() => {
     localStorage.setItem("completed", JSON.stringify(completed))
   }, [completed])
+
+  useEffect(() => {
+    localStorage.setItem("names", JSON.stringify(names))
+  }, [names])
+
+  useEffect(() => {
+    localStorage.setItem("theory", JSON.stringify(theory))
+  }, [theory])
+
+  useEffect(() => {
+    localStorage.setItem("practice", JSON.stringify(practice))
+  }, [practice])
+
+  useEffect(() => {
+    document.body.setAttribute("data-palette", palette)
+    localStorage.setItem("palette", palette)
+  }, [palette])
 
   // load labels and orders
   useEffect(() => {
@@ -169,8 +207,14 @@ export default function Home() {
         }
       }
     }
+    for (let w = 1; w <= weeks; w++) {
+      if (!tree[w]) tree[w] = {}
+      names.forEach((n) => {
+        if (!tree[w][n]) tree[w][n] = []
+      })
+    }
     setFileTree(tree)
-  }, [dirFiles, orders])
+  }, [dirFiles, orders, weeks, names])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -586,25 +630,71 @@ export default function Home() {
     return list
   }
 
-  const colorMap = names.reduce<Record<string, string>>((acc, n, i) => {
-    const palette = [
+  const paletteColors: Record<string, string[]> = {
+    default: [
       "bg-red-500",
       "bg-green-500",
       "bg-blue-500",
       "bg-yellow-500",
       "bg-purple-500",
-    ]
-    acc[n] = palette[i % palette.length]
+    ],
+    blue: [
+      "bg-blue-500",
+      "bg-blue-400",
+      "bg-blue-600",
+      "bg-blue-300",
+      "bg-blue-700",
+    ],
+    green: [
+      "bg-green-500",
+      "bg-green-600",
+      "bg-green-400",
+      "bg-green-700",
+      "bg-green-300",
+    ],
+    purple: [
+      "bg-purple-500",
+      "bg-fuchsia-500",
+      "bg-violet-400",
+      "bg-purple-700",
+      "bg-pink-400",
+    ],
+  }
+  const colorMap = names.reduce<Record<string, string>>((acc, n, i) => {
+    const pal = paletteColors[palette] || paletteColors.default
+    acc[n] = pal[i % pal.length]
     return acc
   }, {})
 
   if (showSchedule) {
     const displayedDays = dayFilter ? [dayFilter] : days
+    const addSubject = () => {
+      const name = prompt("Nombre de la materia?")
+      if (!name || names.includes(name)) return
+      const theo = prompt("Día de teoría (Lunes a Viernes)") || ""
+      const prac = prompt("Día de práctica (Lunes a Viernes)") || ""
+      setNames([...names, name])
+      if (theo) setTheory({ ...theory, [name]: theo })
+      if (prac) setPractice({ ...practice, [name]: prac })
+      setFileTree((prev) => {
+        const next = { ...prev }
+        for (let w = 1; w <= weeks; w++) {
+          if (!next[w]) next[w] = {}
+          if (!next[w][name]) next[w][name] = []
+        }
+        return next
+      })
+    }
     return (
       <div className="p-4 min-h-screen">
-        <button className="underline mb-4" onClick={() => setShowSchedule(false)}>
-          Cerrar
-        </button>
+        <div className="flex justify-between mb-4">
+          <button className="underline" onClick={() => setShowSchedule(false)}>
+            Cerrar
+          </button>
+          <button className="underline" onClick={addSubject}>
+            Añadir materia
+          </button>
+        </div>
         <div className="flex gap-2 mb-2">
           <button
             className={!filterSubject ? "font-bold" : ""}
@@ -768,6 +858,27 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="mb-2 flex items-center gap-2">
+              <span>Etiquetar:</span>
+              <button
+                className={`px-2 py-1 border ${labelMode === "theory" ? "bg-green-200" : ""}`}
+                onClick={() => setLabelMode("theory")}
+              >
+                T
+              </button>
+              <button
+                className={`px-2 py-1 border ${labelMode === "practice" ? "bg-blue-200" : ""}`}
+                onClick={() => setLabelMode("practice")}
+              >
+                P
+              </button>
+              <button
+                className={`px-2 py-1 border ${labelMode === "" ? "bg-gray-200" : ""}`}
+                onClick={() => setLabelMode("")}
+              >
+                ✕
+              </button>
+            </div>
             <ul className="space-y-1">
               {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
                 <li
@@ -779,19 +890,19 @@ export default function Home() {
                   <span
                     className="flex-1 truncate cursor-pointer"
                     title={p.file.name}
-                    onClick={() => handleSelectPdf(p)}
+                    onClick={() =>
+                      labelMode ? updateLabel(p.path, labelMode) : handleSelectPdf(p)
+                    }
                   >
                     {p.file.name}
                   </span>
-                  <select
-                    className="text-xs border"
-                    value={labels[p.path] || ""}
-                    onChange={(e) => updateLabel(p.path, e.target.value)}
-                  >
-                    <option value="">-</option>
-                    <option value="theory">T</option>
-                    <option value="practice">P</option>
-                  </select>
+                  <span className="text-xs w-4 text-center">
+                    {labels[p.path] === "theory"
+                      ? "T"
+                      : labels[p.path] === "practice"
+                      ? "P"
+                      : ""}
+                  </span>
                   <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                     ↑
                   </button>
@@ -872,24 +983,13 @@ export default function Home() {
     {viewerOpen && currentPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
         <div className="flex items-center justify-between p-2 border-b">
-          <div className="flex items-center gap-2 flex-1 truncate">
-            <span>📄</span>
-            <span className="truncate" title={currentPdf.file.name}>
-              {currentPdf.file.name}
-            </span>
-          </div>
+          <span className="truncate" title={currentPdf.file.name}>
+            {currentPdf.file.name}
+          </span>
           <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            <input
-              type="checkbox"
-              checked={!!completed[currentPdf.path]}
-              onChange={toggleComplete}
-            />
+            <span>
+              Días restantes: {daysUntil(currentPdf)}
+            </span>
             <button onClick={() => setViewerOpen(false)}>✕</button>
           </div>
         </div>
@@ -902,20 +1002,32 @@ export default function Home() {
             className="w-full h-full border-0"
           />
         </div>
-        {(() => {
-          const left = daysUntil(currentPdf)
-          const color =
-            left <= 1
-              ? "text-red-500"
-              : left <= 3
-              ? "text-yellow-500"
-              : "text-green-500"
-          return (
-            <div className={`p-2 border-t ${color}`}>Días restantes: {left}</div>
-          )
-        })()}
       </div>
     )}
+    <div className="fixed bottom-2 left-2">
+      <button
+        className="w-8 h-8 rounded-full bg-gray-500"
+        onClick={() => setPaletteOpen(!paletteOpen)}
+      >
+        🎨
+      </button>
+      <div
+        className={`flex flex-col items-center transition-all ${
+          paletteOpen ? "max-h-40 mt-2" : "max-h-0 overflow-hidden"
+        }`}
+      >
+        {paletteOptions.map((p) => (
+          <button
+            key={p.id}
+            className={`w-6 h-6 rounded-full m-1 border ${p.class}`}
+            onClick={() => {
+              setPalette(p.id)
+              setPaletteOpen(false)
+            }}
+          ></button>
+        ))}
+      </div>
+    </div>
   </>
   )
 }
