@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 import * as XLSX from "xlsx"
+import { PaletteSelector } from "@/components/palette-selector"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -34,6 +35,7 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [orders, setOrders] = useState<Record<string, string[]>>({})
+  const [labelMode, setLabelMode] = useState<"theory" | "practice" | null>(null)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [showSchedule, setShowSchedule] = useState(false)
   const [filterSubject, setFilterSubject] = useState<string | null>(null)
@@ -570,6 +572,16 @@ export default function Home() {
     setLabels((prev) => ({ ...prev, [path]: value }))
   }
 
+  const addSubject = (week: number) => {
+    const name = prompt("Nombre de la materia")?.trim()
+    if (!name) return
+    setFileTree({
+      ...fileTree,
+      [week]: { ...fileTree[week], [name]: fileTree[week]?.[name] || [] },
+    })
+    if (!names.includes(name)) setNames([...names, name])
+  }
+
   const pendingFor = (day: string, subject?: string) => {
     const list: PdfFile[] = []
     Object.values(fileTree).forEach((subjects) => {
@@ -710,6 +722,7 @@ export default function Home() {
   // main interface
   return (
     <>
+      <PaletteSelector />
       <div className="p-2">
         <button className="underline" onClick={() => setShowSchedule(true)}>
           Ver cronograma
@@ -743,6 +756,12 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">Semana {viewWeek}</h2>
+            <button
+              className="underline mb-2"
+              onClick={() => addSubject(viewWeek!)}
+            >
+              + Agregar materia
+            </button>
             <ul className="space-y-1">
               {Object.keys(fileTree[viewWeek] || {}).map((s) => {
                 const files = (fileTree[viewWeek] || {})[s] || []
@@ -768,6 +787,29 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="mb-2 flex items-center gap-2 text-sm">
+              <span>Etiquetar:</span>
+              <button
+                className={`px-2 py-1 border rounded ${
+                  labelMode === "theory" ? "font-bold" : ""
+                }`}
+                onClick={() =>
+                  setLabelMode(labelMode === "theory" ? null : "theory")
+                }
+              >
+                Teoría
+              </button>
+              <button
+                className={`px-2 py-1 border rounded ${
+                  labelMode === "practice" ? "font-bold" : ""
+                }`}
+                onClick={() =>
+                  setLabelMode(labelMode === "practice" ? null : "practice")
+                }
+              >
+                Práctica
+              </button>
+            </div>
             <ul className="space-y-1">
               {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
                 <li
@@ -779,19 +821,19 @@ export default function Home() {
                   <span
                     className="flex-1 truncate cursor-pointer"
                     title={p.file.name}
-                    onClick={() => handleSelectPdf(p)}
+                    onClick={() =>
+                      labelMode ? updateLabel(p.path, labelMode) : handleSelectPdf(p)
+                    }
                   >
                     {p.file.name}
                   </span>
-                  <select
-                    className="text-xs border"
-                    value={labels[p.path] || ""}
-                    onChange={(e) => updateLabel(p.path, e.target.value)}
-                  >
-                    <option value="">-</option>
-                    <option value="theory">T</option>
-                    <option value="practice">P</option>
-                  </select>
+                  <span className="text-xs w-4 text-center">
+                    {labels[p.path] === "theory"
+                      ? "T"
+                      : labels[p.path] === "practice"
+                      ? "P"
+                      : ""}
+                  </span>
                   <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                     ↑
                   </button>

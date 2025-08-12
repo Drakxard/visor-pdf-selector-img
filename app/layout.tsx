@@ -27,7 +27,12 @@ html {
         `}</style>
       </head>
       <body>
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="light"
+          enableSystem
+          themes={["light", "dark", "blue", "green"]}
+        >
           {children}
         </ThemeProvider>
       </body>
