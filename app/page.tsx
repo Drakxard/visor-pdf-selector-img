@@ -870,38 +870,23 @@ export default function Home() {
       )}
     </div>
     {viewerOpen && currentPdf && pdfUrl && (
-      <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between p-2 border-b">
-          <div className="flex items-center gap-2 flex-1 truncate">
-            <span>📄</span>
-            <span className="truncate" title={currentPdf.file.name}>
-              {currentPdf.file.name}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            <input
-              type="checkbox"
-              checked={!!completed[currentPdf.path]}
-              onChange={toggleComplete}
-            />
-            <button onClick={() => setViewerOpen(false)}>✕</button>
-          </div>
+      <div className="fixed inset-0 z-50 bg-white dark:bg-gray-900">
+        <iframe
+          title="Visor PDF"
+          src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+            currentPdf.file.name,
+          )}`}
+          className="w-full h-full border-0"
+        />
+        <div className="absolute top-2 left-2 text-sm truncate pr-8">
+          {currentPdf.file.name}
         </div>
-        <div className="flex-1">
-          <iframe
-            title="Visor PDF"
-            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-              currentPdf.file.name,
-            )}`}
-            className="w-full h-full border-0"
-          />
-        </div>
+        <button
+          className="absolute top-2 right-2"
+          onClick={() => setViewerOpen(false)}
+        >
+          ✕
+        </button>
         {(() => {
           const left = daysUntil(currentPdf)
           const color =
@@ -911,7 +896,9 @@ export default function Home() {
               ? "text-yellow-500"
               : "text-green-500"
           return (
-            <div className={`p-2 border-t ${color}`}>Días restantes: {left}</div>
+            <div className={`absolute bottom-2 left-2 text-sm ${color}`}>
+              Días restantes: {left}
+            </div>
           )
         })()}
       </div>
