@@ -41,6 +41,10 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [dayFilter, setDayFilter] = useState<string | null>(null)
+  const [newWeek, setNewWeek] = useState(1)
+  const [newSubject, setNewSubject] = useState("")
+  const [labelMode, setLabelMode] = useState<string | null>(null)
+  const [fullscreen, setFullscreen] = useState(false)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
   const loadConfig = async (files: File[]) => {
@@ -74,6 +78,10 @@ export default function Home() {
   }
 
   const triggerReselect = () => folderInputRef.current?.click()
+
+  useEffect(() => {
+    if (!viewerOpen) setFullscreen(false)
+  }, [viewerOpen])
 
   useEffect(() => {
     if (step === 1) {
@@ -177,10 +185,10 @@ export default function Home() {
     Object.values(fileTree).forEach((subjects) => {
       Object.keys(subjects).forEach((s) => subs.add(s))
     })
-    if (subs.size && names.length === 0) {
-      setNames(Array.from(subs))
+    if (subs.size) {
+      setNames((prev) => Array.from(new Set([...prev, ...subs])))
     }
-  }, [fileTree, names.length])
+  }, [fileTree])
 
   // compute queue ordered by urgency
   useEffect(() => {
@@ -605,6 +613,44 @@ export default function Home() {
         <button className="underline mb-4" onClick={() => setShowSchedule(false)}>
           Cerrar
         </button>
+        <div className="flex items-center gap-2 mb-4">
+          <select
+            className="border p-1"
+            value={newWeek}
+            onChange={(e) => setNewWeek(parseInt(e.target.value))}
+          >
+            {Array.from({ length: weeks }, (_, i) => (
+              <option key={i} value={i + 1}>
+                Semana {i + 1}
+              </option>
+            ))}
+          </select>
+          <input
+            className="border p-1"
+            placeholder="Materia"
+            value={newSubject}
+            onChange={(e) => setNewSubject(e.target.value)}
+          />
+          <button
+            className="px-2 py-1 border rounded"
+            onClick={() => {
+              if (!newSubject.trim()) return
+              setFileTree((prev) => {
+                const weekTree = prev[newWeek] || {}
+                if (weekTree[newSubject]) return prev
+                return { ...prev, [newWeek]: { ...weekTree, [newSubject]: [] } }
+              })
+              setNames((prev) =>
+                prev.includes(newSubject.trim())
+                  ? prev
+                  : [...prev, newSubject.trim()],
+              )
+              setNewSubject("")
+            }}
+          >
+            Agregar materia
+          </button>
+        </div>
         <div className="flex gap-2 mb-2">
           <button
             className={!filterSubject ? "font-bold" : ""}
@@ -768,6 +814,21 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="flex items-center gap-2 mb-2 text-sm">
+              <span>Modo etiquetado:</span>
+              <button
+                className={labelMode === "theory" ? "font-bold" : ""}
+                onClick={() => setLabelMode(labelMode === "theory" ? null : "theory")}
+              >
+                T
+              </button>
+              <button
+                className={labelMode === "practice" ? "font-bold" : ""}
+                onClick={() => setLabelMode(labelMode === "practice" ? null : "practice")}
+              >
+                P
+              </button>
+            </div>
             <ul className="space-y-1">
               {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
                 <li
@@ -779,7 +840,10 @@ export default function Home() {
                   <span
                     className="flex-1 truncate cursor-pointer"
                     title={p.file.name}
-                    onClick={() => handleSelectPdf(p)}
+                    onClick={() => {
+                      handleSelectPdf(p)
+                      if (labelMode) updateLabel(p.path, labelMode)
+                    }}
                   >
                     {p.file.name}
                   </span>
@@ -871,27 +935,42 @@ export default function Home() {
     </div>
     {viewerOpen && currentPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between p-2 border-b">
-          <div className="flex items-center gap-2 flex-1 truncate">
-            <span>📄</span>
+        <div
+          className={`flex items-center p-2 border-b ${
+            fullscreen ? "justify-center" : "justify-between"
+          }`}
+        >
+          <div className="flex items-center gap-2 flex-1 truncate justify-center">
             <span className="truncate" title={currentPdf.file.name}>
               {currentPdf.file.name}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            <input
-              type="checkbox"
-              checked={!!completed[currentPdf.path]}
-              onChange={toggleComplete}
-            />
-            <button onClick={() => setViewerOpen(false)}>✕</button>
-          </div>
+          {fullscreen ? (
+            <button onClick={() => setFullscreen(false)}>✕</button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button onClick={prevPdf} disabled={queueIndex <= 0}>
+                ←
+              </button>
+              <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
+                →
+              </button>
+              <input
+                type="checkbox"
+                checked={!!completed[currentPdf.path]}
+                onChange={toggleComplete}
+              />
+              <button onClick={() => setFullscreen(true)}>⛶</button>
+              <button
+                onClick={() => {
+                  setViewerOpen(false)
+                  setFullscreen(false)
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex-1">
           <iframe
