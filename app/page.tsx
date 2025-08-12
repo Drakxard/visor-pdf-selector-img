@@ -41,6 +41,7 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [dayFilter, setDayFilter] = useState<string | null>(null)
+  const [autoLabel, setAutoLabel] = useState<string | null>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
 
   const loadConfig = async (files: File[]) => {
@@ -55,6 +56,7 @@ export default function Home() {
       setLabels(data.labels || {})
       setOrders(data.orders || {})
       localStorage.setItem("weeks", String(data.weeks || 1))
+      localStorage.setItem("names", JSON.stringify(data.names || []))
       localStorage.setItem("labels", JSON.stringify(data.labels || {}))
       localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
@@ -74,6 +76,10 @@ export default function Home() {
   }
 
   const triggerReselect = () => folderInputRef.current?.click()
+
+  useEffect(() => {
+    localStorage.setItem("names", JSON.stringify(names))
+  }, [names])
 
   useEffect(() => {
     if (step === 1) {
@@ -127,6 +133,8 @@ export default function Home() {
     if (ls) setLabels(JSON.parse(ls))
     const ord = localStorage.getItem("orders")
     if (ord) setOrders(JSON.parse(ord))
+    const ns = localStorage.getItem("names")
+    if (ns) setNames(JSON.parse(ns))
   }, [])
 
   useEffect(() => {
@@ -157,6 +165,12 @@ export default function Home() {
         })
       }
     }
+    for (let w = 1; w <= weeks; w++) {
+      if (!tree[w]) tree[w] = {}
+      names.forEach((n) => {
+        if (!tree[w][n]) tree[w][n] = []
+      })
+    }
     for (const w in tree) {
       for (const s in tree[w]) {
         const key = `${w}-${s}`
@@ -170,7 +184,7 @@ export default function Home() {
       }
     }
     setFileTree(tree)
-  }, [dirFiles, orders])
+  }, [dirFiles, orders, names, weeks])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -523,6 +537,7 @@ export default function Home() {
   }
 
   const handleSelectPdf = (pdf: PdfFile) => {
+    if (autoLabel) updateLabel(pdf.path, autoLabel)
     const idx = queue.findIndex((f) => f.path === pdf.path)
     if (idx >= 0) {
       setQueueIndex(idx)
@@ -568,6 +583,18 @@ export default function Home() {
 
   const updateLabel = (path: string, value: string) => {
     setLabels((prev) => ({ ...prev, [path]: value }))
+  }
+
+  const addSubjectToWeek = (week: number) => {
+    const name = prompt("Nombre de la materia")?.trim()
+    if (!name) return
+    setNames((prev) => (prev.includes(name) ? prev : [...prev, name]))
+    setFileTree((prev) => {
+      const next = { ...prev }
+      if (!next[week]) next[week] = {}
+      if (!next[week][name]) next[week][name] = []
+      return next
+    })
   }
 
   const pendingFor = (day: string, subject?: string) => {
@@ -743,6 +770,12 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">Semana {viewWeek}</h2>
+            <button
+              className="underline mb-2"
+              onClick={() => addSubjectToWeek(viewWeek!)}
+            >
+              Agregar materia
+            </button>
             <ul className="space-y-1">
               {Object.keys(fileTree[viewWeek] || {}).map((s) => {
                 const files = (fileTree[viewWeek] || {})[s] || []
@@ -768,6 +801,27 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="mb-2 flex items-center gap-2 text-sm">
+              <span>Etiquetar como:</span>
+              <button
+                className={autoLabel === "theory" ? "font-bold" : ""}
+                onClick={() => setAutoLabel("theory")}
+              >
+                Teoría
+              </button>
+              <button
+                className={autoLabel === "practice" ? "font-bold" : ""}
+                onClick={() => setAutoLabel("practice")}
+              >
+                Práctica
+              </button>
+              <button
+                className={!autoLabel ? "font-bold" : ""}
+                onClick={() => setAutoLabel(null)}
+              >
+                Manual
+              </button>
+            </div>
             <ul className="space-y-1">
               {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
                 <li
@@ -878,20 +932,7 @@ export default function Home() {
               {currentPdf.file.name}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            <input
-              type="checkbox"
-              checked={!!completed[currentPdf.path]}
-              onChange={toggleComplete}
-            />
-            <button onClick={() => setViewerOpen(false)}>✕</button>
-          </div>
+          <button onClick={() => setViewerOpen(false)}>✕</button>
         </div>
         <div className="flex-1">
           <iframe

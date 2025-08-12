@@ -116,7 +116,9 @@
     .fullscreen { position: fixed !important; top: 0 !important; left: 0 !important;
       width: 100vw !important; height: 100vh !important; z-index: 9999 !important; background: #525659 !important;
     }
-    .fullscreen #app-header { display: none; }
+    .fullscreen #app-header { display: flex; justify-content: center; }
+    .fullscreen #app-header .header-left,
+    .fullscreen #app-header .header-right { display: none; }
     .fullscreen #pdf-container { top: 0 !important; }
 
     .nav-indicator {
