@@ -31,6 +31,8 @@ export default function Home() {
   const [queueIndex, setQueueIndex] = useState(0)
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
+  const [tagMode, setTagMode] = useState<"theory" | "practice" | null>(null)
+  const [newSubject, setNewSubject] = useState("")
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [orders, setOrders] = useState<Record<string, string[]>>({})
@@ -530,6 +532,9 @@ export default function Home() {
     } else {
       setCurrentPdf(pdf)
     }
+    if (tagMode) {
+      updateLabel(pdf.path, tagMode)
+    }
   }
 
   const prevPdf = () => {
@@ -568,6 +573,19 @@ export default function Home() {
 
   const updateLabel = (path: string, value: string) => {
     setLabels((prev) => ({ ...prev, [path]: value }))
+  }
+
+  const addSubject = (week: number, subject: string) => {
+    const name = subject.trim()
+    if (!name) return
+    if (fileTree[week]?.[name]) return
+    setFileTree({
+      ...fileTree,
+      [week]: { ...(fileTree[week] || {}), [name]: [] },
+    })
+    if (!names.includes(name)) {
+      setNames([...names, name])
+    }
   }
 
   const pendingFor = (day: string, subject?: string) => {
@@ -760,6 +778,23 @@ export default function Home() {
                 )
               })}
             </ul>
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                className="border p-1 flex-1"
+                placeholder="Nueva materia"
+                value={newSubject}
+                onChange={(e) => setNewSubject(e.target.value)}
+              />
+              <button
+                onClick={() => {
+                  addSubject(viewWeek!, newSubject)
+                  setNewSubject("")
+                }}
+              >
+                Agregar
+              </button>
+            </div>
           </>
         )}
         {viewWeek && viewSubject && (
@@ -768,6 +803,26 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="mb-2 flex gap-2">
+              <button
+                className={`px-2 border ${tagMode === "theory" ? "bg-blue-200" : ""}`}
+                onClick={() =>
+                  setTagMode(tagMode === "theory" ? null : "theory")
+                }
+              >
+                Modo teoría
+              </button>
+              <button
+                className={`px-2 border ${
+                  tagMode === "practice" ? "bg-blue-200" : ""
+                }`}
+                onClick={() =>
+                  setTagMode(tagMode === "practice" ? null : "practice")
+                }
+              >
+                Modo práctica
+              </button>
+            </div>
             <ul className="space-y-1">
               {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
                 <li
@@ -878,20 +933,7 @@ export default function Home() {
               {currentPdf.file.name}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            <input
-              type="checkbox"
-              checked={!!completed[currentPdf.path]}
-              onChange={toggleComplete}
-            />
-            <button onClick={() => setViewerOpen(false)}>✕</button>
-          </div>
+          <button onClick={() => setViewerOpen(false)}>✕</button>
         </div>
         <div className="flex-1">
           <iframe
