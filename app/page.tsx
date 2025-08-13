@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 import * as XLSX from "xlsx"
+import { requestNext, postProgress } from "@/lib/tracking"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -51,6 +52,36 @@ export default function Home() {
     { id: "purple", class: "bg-purple-300" },
   ]
   const folderInputRef = useRef<HTMLInputElement>(null)
+
+  // tracking integration state
+  type Slot = "morning" | "afternoon" | "night"
+  const [slot, setSlot] = useState<Slot | null>(null)
+  const [slotMinutes, setSlotMinutes] = useState(0)
+  const [blockRemaining, setBlockRemaining] = useState(0)
+  const [currentTrackSlug, setCurrentTrackSlug] = useState<string | null>(null)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [lastReason, setLastReason] = useState<string | null>(null)
+
+  const startSlot = async (s: Slot) => {
+    const minutes = s === "morning" ? 120 : s === "afternoon" ? 240 : 120
+    setSlot(s)
+    setSlotMinutes(minutes)
+    setBlockRemaining(minutes)
+    try {
+      const res = await requestNext({ slotMinutes: minutes, forceSwitch: true })
+      if (res) {
+        setCurrentTrackSlug(res.trackSlug)
+        setCurrentIndex(res.nextIndex)
+        setLastReason(res.reason)
+      } else {
+        setCurrentTrackSlug(null)
+        setCurrentIndex(0)
+        setLastReason(null)
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -594,10 +625,27 @@ export default function Home() {
     }
   }
 
-  const toggleComplete = () => {
-    if (!currentPdf) return
+  const toggleComplete = async () => {
+    if (!currentPdf || !currentTrackSlug) return
     const key = currentPdf.path
     setCompleted((prev) => ({ ...prev, [key]: !prev[key] }))
+    try {
+      const res = await postProgress({
+        trackSlug: currentTrackSlug,
+        minutesSpent: 0,
+        nextIndex: currentIndex,
+      })
+      const spent = (res.updatedTrack?.avgMinPerAct as number) || 0
+      setBlockRemaining((b) => Math.max(0, b - spent))
+      if (typeof res.updatedTrack?.nextIndex === "number") {
+        setCurrentIndex(res.updatedTrack.nextIndex)
+      }
+      if (res.suggestedNext) {
+        setLastReason(res.suggestedNext.reason)
+      }
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
@@ -800,6 +848,21 @@ export default function Home() {
   // main interface
   return (
     <>
+      {lastReason && (
+        <div className="p-2 text-sm bg-yellow-100 text-gray-800">
+          {lastReason}
+        </div>
+      )}
+      {slot && (
+        <div className="p-2 text-sm">
+          Bloque {slot} · quedan {blockRemaining} min
+        </div>
+      )}
+      <div className="p-2 flex gap-2">
+        <button onClick={() => startSlot("morning")}>Mañana</button>
+        <button onClick={() => startSlot("afternoon")}>Tarde</button>
+        <button onClick={() => startSlot("night")}>Noche</button>
+      </div>
       <div className="p-2">
         <button className="underline" onClick={() => setShowSchedule(true)}>
           Ver cronograma
