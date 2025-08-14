@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { useMutation } from "@tanstack/react-query"
 import { useTheme } from "next-themes"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
@@ -36,6 +37,18 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const folderInputRef = useRef<HTMLInputElement>(null)
+
+  const markProgress = useMutation({
+    mutationFn: async (p: { subjectName: string; tableType: "theory" | "practice"; checked: boolean }) => {
+      const r = await fetch("/api/progress/mark", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(p),
+      })
+      if (!r.ok) throw new Error("mark failed")
+      return r.json()
+    },
+  })
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -387,23 +400,18 @@ useEffect(() => {
     }
   }
 
-  const toggleComplete = async () => {
+  const toggleComplete = (checked: boolean) => {
     if (!currentPdf) return
     const key = currentPdf.path
     const wasCompleted = !!completed[key]
-    setCompleted((prev) => ({ ...prev, [key]: !wasCompleted }))
-    try {
-      await fetch("/api/progress", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subject: currentPdf.subject,
-          tableType: currentPdf.tableType,
-          delta: wasCompleted ? -1 : 1,
-        }),
-      })
-    } catch (err) {
-      console.error("Failed to update progress", err)
+    setCompleted((prev) => ({ ...prev, [key]: checked }))
+    if (checked) {
+      markProgress.mutate(
+        { subjectName: currentPdf.subject, tableType: currentPdf.tableType, checked },
+        {
+          onError: () => setCompleted((prev) => ({ ...prev, [key]: wasCompleted })),
+        },
+      )
     }
   }
 
@@ -528,7 +536,8 @@ useEffect(() => {
               <input
                 type="checkbox"
                 checked={!!completed[currentPdf.path]}
-                onChange={toggleComplete}
+                onChange={(e) => toggleComplete(e.target.checked)}
+                disabled={markProgress.isPending}
               />
             )}
             {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
