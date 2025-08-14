@@ -51,6 +51,58 @@ export default function Home() {
     { id: "purple", class: "bg-purple-300" },
   ]
   const folderInputRef = useRef<HTMLInputElement>(null)
+  const [queueManagerOpen, setQueueManagerOpen] = useState(false)
+
+  const computeQueue = (): PdfFile[] => {
+    const dayMap: Record<string, number> = {
+      Lunes: 1,
+      Martes: 2,
+      Miércoles: 3,
+      Jueves: 4,
+      Viernes: 5,
+    }
+    const today = new Date().getDay()
+    const stats: { subject: string; days: number; pdfs: PdfFile[] }[] = []
+    Object.values(fileTree).forEach((subjects) => {
+      Object.entries(subjects).forEach(([subject, files]) => {
+        const remaining = files.filter((f) => !completed[f.path])
+        if (!remaining.length) return
+        let days = 7
+        remaining.forEach((f) => {
+          const dayName =
+            labels[f.path] === "practice" ? practice[subject] : theory[subject]
+          if (!dayName) return
+          const d = dayMap[dayName]
+          let diff = d - today
+          if (diff < 0) diff += 7
+          if (diff === 0) diff = 7
+          if (diff < days) days = diff
+        })
+        stats.push({ subject, days, pdfs: remaining })
+      })
+    })
+    stats.sort((a, b) => {
+      if (a.days !== b.days) return a.days - b.days
+      return b.pdfs.length - a.pdfs.length
+    })
+    const list: PdfFile[] = []
+    stats.forEach((s) => {
+      list.push(
+        ...s.pdfs.sort(
+          (a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name),
+        ),
+      )
+    })
+    return list
+  }
+
+  const refillQueue = () => {
+    const q = computeQueue().slice(0, 5)
+    setQueue(q)
+    setQueueIndex(0)
+    setCurrentPdf(q[0] || null)
+    return q
+  }
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -159,6 +211,17 @@ export default function Home() {
     localStorage.setItem("palette", palette)
   }, [palette])
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key.toLowerCase() === "q") {
+        e.preventDefault()
+        setQueueManagerOpen((p) => !p)
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [])
+
   // load labels and orders
   useEffect(() => {
     const ls = localStorage.getItem("labels")
@@ -228,53 +291,7 @@ export default function Home() {
 
   // compute queue ordered by urgency
   useEffect(() => {
-    const dayMap: Record<string, number> = {
-      Lunes: 1,
-      Martes: 2,
-      Miércoles: 3,
-      Jueves: 4,
-      Viernes: 5,
-    }
-    const today = new Date().getDay()
-    const stats: { subject: string; days: number; pdfs: PdfFile[] }[] = []
-    Object.values(fileTree).forEach((subjects) => {
-      Object.entries(subjects).forEach(([subject, files]) => {
-        const remaining = files.filter((f) => !completed[f.path])
-        if (!remaining.length) return
-        let days = 7
-        remaining.forEach((f) => {
-          const dayName =
-            labels[f.path] === "practice" ? practice[subject] : theory[subject]
-          if (!dayName) return
-          const d = dayMap[dayName]
-          let diff = d - today
-          if (diff < 0) diff += 7
-          if (diff === 0) diff = 7
-          if (diff < days) days = diff
-        })
-        stats.push({ subject, days, pdfs: remaining })
-      })
-    })
-    stats.sort((a, b) => {
-      if (a.days !== b.days) return a.days - b.days
-      return b.pdfs.length - a.pdfs.length
-    })
-    const q: PdfFile[] = []
-    stats.forEach((s) => {
-      q.push(
-        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
-      )
-    })
-    setQueue(q)
-    if (q.length) {
-      const current = currentPdf && q.find((f) => f.path === currentPdf.path)
-      const target = current || q[0]
-      setCurrentPdf(target)
-      setQueueIndex(q.findIndex((f) => f.path === target.path))
-    } else {
-      setCurrentPdf(null)
-      setQueueIndex(0)
-    }
+    refillQueue()
   }, [fileTree, completed, theory, practice])
 
   // object url for viewer
@@ -591,6 +608,9 @@ export default function Home() {
       setQueueIndex(i)
       setCurrentPdf(queue[i])
       setViewerOpen(true)
+    } else {
+      const q = refillQueue()
+      if (q.length) setViewerOpen(true)
     }
   }
 
@@ -612,6 +632,49 @@ export default function Home() {
 
   const updateLabel = (path: string, value: string) => {
     setLabels((prev) => ({ ...prev, [path]: value }))
+  }
+
+  const deleteSubject = (name: string) => {
+    if (!confirm(`Eliminar ${name}?`)) return
+    const paths: string[] = []
+    Object.values(fileTree).forEach((subjects) => {
+      const files = subjects[name]
+      if (files) files.forEach((f) => paths.push(f.path))
+    })
+    setNames(names.filter((n) => n !== name))
+    setTheory((prev) => {
+      const { [name]: _, ...rest } = prev
+      return rest
+    })
+    setPractice((prev) => {
+      const { [name]: _, ...rest } = prev
+      return rest
+    })
+    setFileTree((prev) => {
+      const next: typeof prev = {}
+      Object.entries(prev).forEach(([w, subjects]) => {
+        const { [name]: _, ...rest } = subjects
+        next[Number(w)] = rest
+      })
+      return next
+    })
+    setLabels((prev) => {
+      const next = { ...prev }
+      paths.forEach((p) => delete next[p])
+      return next
+    })
+    setCompleted((prev) => {
+      const next = { ...prev }
+      paths.forEach((p) => delete next[p])
+      return next
+    })
+    setOrders((prev) => {
+      const next = { ...prev }
+      Object.keys(prev).forEach((k) => {
+        if (k.endsWith(`-${name}`)) delete next[k]
+      })
+      return next
+    })
   }
 
   const pendingFor = (day: string, subject?: string) => {
@@ -668,6 +731,13 @@ export default function Home() {
 
   if (showSchedule) {
     const displayedDays = dayFilter ? [dayFilter] : days
+    const dayColors: Record<string, string> = {
+      Lunes: "bg-green-100",
+      Martes: "bg-blue-100",
+      Miércoles: "bg-orange-100",
+      Jueves: "bg-purple-100",
+      Viernes: "bg-pink-100",
+    }
     const addSubject = () => {
       const name = prompt("Nombre de la materia?")
       if (!name || names.includes(name)) return
@@ -703,13 +773,21 @@ export default function Home() {
             Todas
           </button>
           {names.map((n) => (
-            <button
-              key={n}
-              className={filterSubject === n ? "font-bold" : ""}
-              onClick={() => setFilterSubject(n)}
-            >
-              {n}
-            </button>
+            <div key={n} className="flex items-center gap-1">
+              <button
+                className={filterSubject === n ? "font-bold" : ""}
+                onClick={() => setFilterSubject(n)}
+              >
+                {n}
+              </button>
+              <button
+                className="text-red-500"
+                onClick={() => deleteSubject(n)}
+                title="Eliminar materia"
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
         <div className="flex gap-2 mb-4">
@@ -739,7 +817,7 @@ export default function Home() {
           {displayedDays.map((d) => (
             <div
               key={d}
-              className="flex-1 border p-2 cursor-pointer"
+              className={`flex-1 border p-2 cursor-pointer ${dayColors[d]}`}
               onClick={() => setSelectedDay(d)}
             >
               <div className="font-bold">{d}</div>
@@ -858,6 +936,12 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <button
+              className="mb-2 underline text-red-600"
+              onClick={() => deleteSubject(viewSubject!)}
+            >
+              Eliminar materia
+            </button>
             <div className="mb-2 flex items-center gap-2">
               <span>Etiquetar:</span>
               <button
@@ -1028,6 +1112,26 @@ export default function Home() {
         ))}
       </div>
     </div>
+    {queueManagerOpen && (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50">
+        <div className="bg-white dark:bg-gray-800 p-4 rounded shadow max-w-sm w-full">
+          <h2 className="text-lg mb-2">Próximos PDF</h2>
+          <ul className="space-y-1 max-h-60 overflow-auto">
+            {queue.map((f, i) => (
+              <li
+                key={f.path}
+                className={`truncate ${i === queueIndex ? "font-bold" : ""}`}
+              >
+                {f.file.name}
+              </li>
+            ))}
+          </ul>
+          <button className="mt-2 underline" onClick={() => setQueueManagerOpen(false)}>
+            Cerrar
+          </button>
+        </div>
+      </div>
+    )}
   </>
   )
 }
