@@ -118,6 +118,8 @@
     }
     .fullscreen #app-header { display: none; }
     .fullscreen #pdf-container { top: 0 !important; }
+    .fullscreen #pdf-container::-webkit-scrollbar { display: none; }
+    .fullscreen #pdf-container { -ms-overflow-style: none; scrollbar-width: none; }
 
     .nav-indicator {
       position: absolute; top: 20px; right: 20px;
@@ -958,8 +960,8 @@
       // ========================================
       // ZOOM
       // ========================================
-      zoomInBtn.addEventListener('click', () => { currentZoom = Math.min(currentZoom + 0.25, 3.0); updateZoom(); });
-      zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(currentZoom - 0.25, 0.25); updateZoom(); });
+      zoomInBtn.addEventListener('click', () => { currentZoom = Math.min(currentZoom + 0.05, 3.0); updateZoom(); });
+      zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(currentZoom - 0.05, 0.25); updateZoom(); });
 
       async function updateZoom() {
         if (!pdfDoc) return;
@@ -1244,6 +1246,13 @@
 
         if (!isEditing && pdfDoc) {
           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            const hasHScroll = container.scrollWidth > container.clientWidth;
+            if (hasHScroll) {
+              e.preventDefault();
+              const scrollAmount = 100;
+              container.scrollBy({ left: e.key === 'ArrowLeft' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
+              return;
+            }
             e.preventDefault();
             const targetPage = getCurrentPage();
             if (e.key === 'ArrowLeft') {
