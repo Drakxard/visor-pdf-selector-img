@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import './globals.css'
-import { ThemeProvider } from '@/components/theme-provider'
+import Providers from './providers'
 
 export const metadata: Metadata = {
   title: 'v0 App',
@@ -27,9 +27,7 @@ html {
         `}</style>
       </head>
       <body>
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
-          {children}
-        </ThemeProvider>
+        <Providers>{children}</Providers>
       </body>
     </html>
   )
