@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
-import * as XLSX from "xlsx"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -18,7 +17,6 @@ export default function Home() {
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
-  const [files, setFiles] = useState<File[]>([])
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
@@ -35,22 +33,15 @@ export default function Home() {
   const [labels, setLabels] = useState<Record<string, string>>({})
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
-  const [showSchedule, setShowSchedule] = useState(false)
-  const [filterSubject, setFilterSubject] = useState<string | null>(null)
-  const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
-  const [dayFilter, setDayFilter] = useState<string | null>(null)
   const [labelMode, setLabelMode] = useState<"" | "theory" | "practice">("")
-  const [palette, setPalette] = useState("default")
-  const [paletteOpen, setPaletteOpen] = useState(false)
-  const paletteOptions = [
-    { id: "default", class: "bg-gray-300" },
-    { id: "blue", class: "bg-blue-300" },
-    { id: "green", class: "bg-green-300" },
-    { id: "purple", class: "bg-purple-300" },
-  ]
   const folderInputRef = useRef<HTMLInputElement>(null)
+
+  const filterSystemFiles = (files: File[]) =>
+    files.filter(
+      (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
+    )
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -77,7 +68,7 @@ export default function Home() {
   }
 
   const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
+    const files = filterSystemFiles(Array.from(e.target.files || []))
     setDirFiles(files)
     loadConfig(files)
   }
@@ -125,7 +116,7 @@ export default function Home() {
     if (stored) setCompleted(JSON.parse(stored))
   }, [])
 
-  // load subjects and palette from storage
+  // load subjects from storage
   useEffect(() => {
     const storedNames = localStorage.getItem("names")
     if (storedNames) setNames(JSON.parse(storedNames))
@@ -133,8 +124,6 @@ export default function Home() {
     if (storedTheory) setTheory(JSON.parse(storedTheory))
     const storedPractice = localStorage.getItem("practice")
     if (storedPractice) setPractice(JSON.parse(storedPractice))
-    const storedPalette = localStorage.getItem("palette")
-    if (storedPalette) setPalette(storedPalette)
   }, [])
 
   // persist completed
@@ -154,10 +143,6 @@ export default function Home() {
     localStorage.setItem("practice", JSON.stringify(practice))
   }, [practice])
 
-  useEffect(() => {
-    document.body.setAttribute("data-palette", palette)
-    localStorage.setItem("palette", palette)
-  }, [palette])
 
   // load labels and orders
   useEffect(() => {
@@ -180,7 +165,9 @@ export default function Home() {
     const tree: Record<number, Record<string, PdfFile[]>> = {}
     for (const file of dirFiles) {
       if (!file.name.toLowerCase().endsWith(".pdf")) continue
-      const parts = (file as any).webkitRelativePath?.split("/") || []
+      const rel = (file as any).webkitRelativePath || ""
+      if (rel.split("/").includes("system")) continue
+      const parts = rel.split("/") || []
       if (parts.length >= 4) {
         const weekPart = parts[1]
         const subject = parts[2]
@@ -311,7 +298,8 @@ export default function Home() {
               // @ts-expect-error webkitdirectory es no estándar
               webkitdirectory=""
               onChange={(e) => {
-                setDirFiles(Array.from(e.target.files || []))
+                const files = filterSystemFiles(Array.from(e.target.files || []))
+                setDirFiles(files)
                 setStep(1)
               }}
             />
@@ -342,205 +330,15 @@ export default function Home() {
                 <p>No se encontró configuración previa.</p>
                 <button
                   className="px-4 py-2 border rounded"
-                  onClick={() => setStep(2)}
+                  onClick={() => {
+                    setSetupComplete(true)
+                    setStarted(false)
+                  }}
                 >
                   Continuar
                 </button>
               </>
             )}
-          </main>
-        )
-      }
-      case 2: {
-        const handleConfirm = async () => {
-          let maxWeek = 1
-          for (const file of files) {
-            const buffer = await file.arrayBuffer()
-            const wb = XLSX.read(buffer)
-            const sheet = wb.Sheets[wb.SheetNames[0]]
-            const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet)
-            rows.forEach((r) => {
-              const w = parseInt(r["SEMANA"])
-              if (!isNaN(w) && w > maxWeek) maxWeek = w
-            })
-          }
-          setWeeks(maxWeek)
-          setNames(files.map(() => ""))
-          setStep(3)
-        }
-        return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <p>Paso 2: Sube tus cronogramas (excel)</p>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              multiple
-              onChange={(e) => setFiles(Array.from(e.target.files || []))}
-            />
-            <button
-              className="px-4 py-2 border rounded"
-              disabled={!files.length}
-              onClick={handleConfirm}
-            >
-              Confirmar
-            </button>
-          </main>
-        )
-      }
-      case 3: {
-        const updateName = (idx: number, value: string) => {
-          const next = [...names]
-          next[idx] = value
-          setNames(next)
-        }
-        return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <p>Paso 3: Nombra tus cronogramas</p>
-            {files.map((f, i) => (
-              <label key={i} className="flex gap-2 items-center">
-                <span>{f.name} es de</span>
-                <input
-                  className="border p-1"
-                  value={names[i] || ""}
-                  onChange={(e) => updateName(i, e.target.value)}
-                />
-              </label>
-            ))}
-            <button
-              className="px-4 py-2 border rounded"
-              disabled={names.some((n) => !n)}
-              onClick={() => setStep(4)}
-            >
-              Confirmar
-            </button>
-          </main>
-        )
-      }
-      case 4: {
-        const unassigned = names.filter((n) => !theory[n])
-        const handleDrop = (subject: string, day: string) => {
-          setTheory({ ...theory, [subject]: day })
-        }
-        return (
-          <main className="min-h-screen flex flex-col items-center gap-4 p-4">
-            <p>Paso 4: Arrastra tus materias (teoría) a los días</p>
-            <div className="flex gap-4">
-              <div className="w-40 border p-2 min-h-40">
-                {unassigned.map((s) => (
-                  <div
-                    key={s}
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData("text", s)}
-                    className="p-1 mb-2 bg-green-500 text-white cursor-move"
-                  >
-                    {s}
-                  </div>
-                ))}
-              </div>
-              {days.map((d) => (
-                <div
-                  key={d}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => handleDrop(e.dataTransfer.getData("text"), d)}
-                  className="border p-2 w-32 min-h-40"
-                >
-                  <div className="font-bold">{d}</div>
-                  {Object.entries(theory)
-                    .filter(([_, day]) => day === d)
-                    .map(([s]) => (
-                      <div key={s} className="p-1 mt-2 bg-green-200">
-                        {s}
-                      </div>
-                    ))}
-                </div>
-              ))}
-            </div>
-            {unassigned.length === 0 && (
-              <button
-                className="px-4 py-2 border rounded"
-                onClick={() => {
-                  setStep(5)
-                }}
-              >
-                Confirmar
-              </button>
-            )}
-          </main>
-        )
-      }
-      case 5: {
-        const unassigned = names.filter((n) => !practice[n])
-        const handleDrop = (subject: string, day: string) => {
-          setPractice({ ...practice, [subject]: day })
-        }
-        return (
-          <main className="min-h-screen flex flex-col items-center gap-4 p-4">
-            <p>Paso 5: Arrastra tus materias (práctica) a los días</p>
-            <div className="flex gap-4">
-              <div className="w-40 border p-2 min-h-40">
-                {unassigned.map((s) => (
-                  <div
-                    key={s}
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData("text", s)}
-                    className="p-1 mb-2 bg-blue-500 text-white cursor-move"
-                  >
-                    {s}
-                  </div>
-                ))}
-              </div>
-              {days.map((d) => (
-                <div
-                  key={d}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => handleDrop(e.dataTransfer.getData("text"), d)}
-                  className="border p-2 w-32 min-h-40"
-                >
-                  <div className="font-bold">{d}</div>
-                  {Object.entries(practice)
-                    .filter(([_, day]) => day === d)
-                    .map(([s]) => (
-                      <div key={s} className="p-1 mt-2 bg-blue-200">
-                        {s}
-                      </div>
-                    ))}
-                </div>
-              ))}
-            </div>
-            {unassigned.length === 0 && (
-              <button
-                className="px-4 py-2 border rounded"
-                onClick={() => setStep(6)}
-              >
-                Confirmar
-              </button>
-            )}
-          </main>
-        )
-      }
-      case 6: {
-        const finish = () => {
-          const data = { weeks, names, theory, practice, labels, orders }
-          const blob = new Blob([JSON.stringify(data)], {
-            type: "application/json",
-          })
-          const url = URL.createObjectURL(blob)
-          const a = document.createElement("a")
-          a.href = url
-          a.download = "config.json"
-          a.click()
-          URL.revokeObjectURL(url)
-          localStorage.setItem("setupComplete", "1")
-          localStorage.setItem("weeks", String(weeks))
-          setSetupComplete(true)
-          setStarted(false)
-        }
-        return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <p>Paso final: Guarda tu configuración</p>
-            <button className="px-4 py-2 border rounded" onClick={finish}>
-              Finalizar
-            </button>
           </main>
         )
       }
@@ -614,197 +412,9 @@ export default function Home() {
     setLabels((prev) => ({ ...prev, [path]: value }))
   }
 
-  const pendingFor = (day: string, subject?: string) => {
-    const list: PdfFile[] = []
-    Object.values(fileTree).forEach((subjects) => {
-      Object.entries(subjects).forEach(([s, files]) => {
-        if (subject && s !== subject) return
-        files.forEach((f) => {
-          const type = labels[f.path]
-          const dayName = type === "practice" ? practice[s] : theory[s]
-          if (dayName === day && !completed[f.path]) list.push(f)
-        })
-      })
-    })
-    list.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name))
-    return list
-  }
-
-  const paletteColors: Record<string, string[]> = {
-    default: [
-      "bg-red-500",
-      "bg-green-500",
-      "bg-blue-500",
-      "bg-yellow-500",
-      "bg-purple-500",
-    ],
-    blue: [
-      "bg-blue-500",
-      "bg-blue-400",
-      "bg-blue-600",
-      "bg-blue-300",
-      "bg-blue-700",
-    ],
-    green: [
-      "bg-green-500",
-      "bg-green-600",
-      "bg-green-400",
-      "bg-green-700",
-      "bg-green-300",
-    ],
-    purple: [
-      "bg-purple-500",
-      "bg-fuchsia-500",
-      "bg-violet-400",
-      "bg-purple-700",
-      "bg-pink-400",
-    ],
-  }
-  const colorMap = names.reduce<Record<string, string>>((acc, n, i) => {
-    const pal = paletteColors[palette] || paletteColors.default
-    acc[n] = pal[i % pal.length]
-    return acc
-  }, {})
-
-  if (showSchedule) {
-    const displayedDays = dayFilter ? [dayFilter] : days
-    const addSubject = () => {
-      const name = prompt("Nombre de la materia?")
-      if (!name || names.includes(name)) return
-      const theo = prompt("Día de teoría (Lunes a Viernes)") || ""
-      const prac = prompt("Día de práctica (Lunes a Viernes)") || ""
-      setNames([...names, name])
-      if (theo) setTheory({ ...theory, [name]: theo })
-      if (prac) setPractice({ ...practice, [name]: prac })
-      setFileTree((prev) => {
-        const next = { ...prev }
-        for (let w = 1; w <= weeks; w++) {
-          if (!next[w]) next[w] = {}
-          if (!next[w][name]) next[w][name] = []
-        }
-        return next
-      })
-    }
-    return (
-      <div className="p-4 min-h-screen">
-        <div className="flex justify-between mb-4">
-          <button className="underline" onClick={() => setShowSchedule(false)}>
-            Cerrar
-          </button>
-          <button className="underline" onClick={addSubject}>
-            Añadir materia
-          </button>
-        </div>
-        <div className="flex gap-2 mb-2">
-          <button
-            className={!filterSubject ? "font-bold" : ""}
-            onClick={() => setFilterSubject(null)}
-          >
-            Todas
-          </button>
-          {names.map((n) => (
-            <button
-              key={n}
-              className={filterSubject === n ? "font-bold" : ""}
-              onClick={() => setFilterSubject(n)}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2 mb-4">
-          <button
-            className={!dayFilter ? "font-bold" : ""}
-            onClick={() => {
-              setDayFilter(null)
-              setSelectedDay(null)
-            }}
-          >
-            Todos
-          </button>
-          {days.map((d) => (
-            <button
-              key={d}
-              className={dayFilter === d ? "font-bold" : ""}
-              onClick={() => {
-                setDayFilter(d)
-                setSelectedDay(d)
-              }}
-            >
-              {d}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-4">
-          {displayedDays.map((d) => (
-            <div
-              key={d}
-              className="flex-1 border p-2 cursor-pointer"
-              onClick={() => setSelectedDay(d)}
-            >
-              <div className="font-bold">{d}</div>
-              {names
-                .filter((n) => !filterSubject || n === filterSubject)
-                .filter((n) => theory[n] === d || practice[n] === d)
-                .map((n) => {
-                  const count = pendingFor(d, n).length
-                  return (
-                    <div
-                      key={n}
-                      className={`w-6 h-6 rounded-full ${colorMap[n]} mt-2 flex items-center justify-center text-white`}
-                      title={n}
-                    >
-                      {count}
-                    </div>
-                  )
-                })}
-            </div>
-          ))}
-        </div>
-        {selectedDay && (
-          <div className="mt-4 text-sm">
-            {filterSubject ? (
-              pendingFor(selectedDay, filterSubject).length ? (
-                <ul>
-                  {pendingFor(selectedDay, filterSubject).map((f) => (
-                    <li key={f.path} className="truncate" title={f.file.name}>
-                      {f.file.name}
-                    </li>
-                  ))}
-                </ul>
-              ) : null
-            ) : (
-              names.map((n) => {
-                const list = pendingFor(selectedDay, n)
-                if (!list.length) return null
-                return (
-                  <div key={n} className="mb-2">
-                    <div className="font-semibold">{n}</div>
-                    <ul className="ml-4">
-                      {list.map((f) => (
-                        <li key={f.path} className="truncate" title={f.file.name}>
-                          {f.file.name}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )
-              })
-            )}
-          </div>
-        )}
-      </div>
-    )
-  }
-
   // main interface
   return (
     <>
-      <div className="p-2">
-        <button className="underline" onClick={() => setShowSchedule(true)}>
-          Ver cronograma
-        </button>
-      </div>
       <main className="grid grid-cols-2 min-h-screen">
       <aside className="border-r p-4 space-y-2">
         {!viewWeek && (
@@ -1004,30 +614,6 @@ export default function Home() {
         </div>
       </div>
     )}
-    <div className="fixed bottom-2 left-2">
-      <button
-        className="w-8 h-8 rounded-full bg-gray-500"
-        onClick={() => setPaletteOpen(!paletteOpen)}
-      >
-        🎨
-      </button>
-      <div
-        className={`flex flex-col items-center transition-all ${
-          paletteOpen ? "max-h-40 mt-2" : "max-h-0 overflow-hidden"
-        }`}
-      >
-        {paletteOptions.map((p) => (
-          <button
-            key={p.id}
-            className={`w-6 h-6 rounded-full m-1 border ${p.class}`}
-            onClick={() => {
-              setPalette(p.id)
-              setPaletteOpen(false)
-            }}
-          ></button>
-        ))}
-      </div>
-    </div>
   </>
   )
 }
