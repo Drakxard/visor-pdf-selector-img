@@ -10,6 +10,7 @@ type PdfFile = {
   path: string
   week: number
   subject: string
+  tableType: "theory" | "practice"
 }
 
 export default function Home() {
@@ -30,12 +31,10 @@ export default function Home() {
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
-  const [labels, setLabels] = useState<Record<string, string>>({})
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
-  const [labelMode, setLabelMode] = useState<"" | "theory" | "practice">("")
   const folderInputRef = useRef<HTMLInputElement>(null)
 
   const filterSystemFiles = (files: File[]) =>
@@ -52,10 +51,8 @@ export default function Home() {
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
-      setLabels(data.labels || {})
       setOrders(data.orders || {})
       localStorage.setItem("weeks", String(data.weeks || 1))
-      localStorage.setItem("labels", JSON.stringify(data.labels || {}))
       localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
     }
@@ -144,21 +141,15 @@ export default function Home() {
   }, [practice])
 
 
-  // load labels and orders
-  useEffect(() => {
-    const ls = localStorage.getItem("labels")
-    if (ls) setLabels(JSON.parse(ls))
-    const ord = localStorage.getItem("orders")
-    if (ord) setOrders(JSON.parse(ord))
-  }, [])
+// load orders
+useEffect(() => {
+  const ord = localStorage.getItem("orders")
+  if (ord) setOrders(JSON.parse(ord))
+}, [])
 
-  useEffect(() => {
-    localStorage.setItem("labels", JSON.stringify(labels))
-  }, [labels])
-
-  useEffect(() => {
-    localStorage.setItem("orders", JSON.stringify(orders))
-  }, [orders])
+useEffect(() => {
+  localStorage.setItem("orders", JSON.stringify(orders))
+}, [orders])
 
   // build tree from selected directory
   useEffect(() => {
@@ -168,9 +159,12 @@ export default function Home() {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 4) {
+      if (parts.length >= 5) {
         const weekPart = parts[1]
         const subject = parts[2]
+        const table = parts[3].toLowerCase().includes("pract")
+          ? "practice"
+          : "theory"
         const week = parseInt(weekPart.replace(/\D/g, ""))
         if (!tree[week]) tree[week] = {}
         if (!tree[week][subject]) tree[week][subject] = []
@@ -179,6 +173,7 @@ export default function Home() {
           path: parts.slice(1).join("/"),
           week,
           subject,
+          tableType: table,
         })
       }
     }
@@ -231,7 +226,7 @@ export default function Home() {
         let days = 7
         remaining.forEach((f) => {
           const dayName =
-            labels[f.path] === "practice" ? practice[subject] : theory[subject]
+            f.tableType === "practice" ? practice[subject] : theory[subject]
           if (!dayName) return
           const d = dayMap[dayName]
           let diff = d - today
@@ -355,7 +350,7 @@ export default function Home() {
     }
     const today = new Date().getDay()
     const dayName =
-      labels[pdf.path] === "practice" ? practice[pdf.subject] : theory[pdf.subject]
+      pdf.tableType === "practice" ? practice[pdf.subject] : theory[pdf.subject]
     if (!dayName) return 0
     const target = dayMap[dayName]
     let diff = target - today
@@ -392,10 +387,24 @@ export default function Home() {
     }
   }
 
-  const toggleComplete = () => {
+  const toggleComplete = async () => {
     if (!currentPdf) return
     const key = currentPdf.path
-    setCompleted((prev) => ({ ...prev, [key]: !prev[key] }))
+    const wasCompleted = !!completed[key]
+    setCompleted((prev) => ({ ...prev, [key]: !wasCompleted }))
+    try {
+      await fetch("/api/progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: currentPdf.subject,
+          tableType: currentPdf.tableType,
+          delta: wasCompleted ? -1 : 1,
+        }),
+      })
+    } catch (err) {
+      console.error("Failed to update progress", err)
+    }
   }
 
   const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
@@ -406,10 +415,6 @@ export default function Home() {
     setFileTree({ ...fileTree, [week]: { ...fileTree[week], [subject]: arr } })
     const key = `${week}-${subject}`
     setOrders({ ...orders, [key]: arr.map((p) => p.path) })
-  }
-
-  const updateLabel = (path: string, value: string) => {
-    setLabels((prev) => ({ ...prev, [path]: value }))
   }
 
   // main interface
@@ -446,15 +451,21 @@ export default function Home() {
             <ul className="space-y-1">
               {Object.keys(fileTree[viewWeek] || {}).map((s) => {
                 const files = (fileTree[viewWeek] || {})[s] || []
-                const theoryFiles = files.filter((f) => labels[f.path] === "theory")
-                const done = theoryFiles.filter((f) => completed[f.path]).length
-                const pct = theoryFiles.length
-                  ? Math.round((done / theoryFiles.length) * 100)
-                  : 0
+                const theoryFiles = files.filter((f) => f.tableType === "theory")
+                const practiceFiles = files.filter(
+                  (f) => f.tableType === "practice",
+                )
+                const doneTheory = theoryFiles.filter(
+                  (f) => completed[f.path],
+                ).length
+                const donePractice = practiceFiles.filter(
+                  (f) => completed[f.path],
+                ).length
                 return (
                   <li key={s}>
                     <button onClick={() => setViewSubject(s)}>
-                      {s} ({pct}% teoría)
+                      {s} (T {doneTheory}/{theoryFiles.length} - P {donePractice}/
+                      {practiceFiles.length})
                     </button>
                   </li>
                 )
@@ -468,27 +479,6 @@ export default function Home() {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
-            <div className="mb-2 flex items-center gap-2">
-              <span>Etiquetar:</span>
-              <button
-                className={`px-2 py-1 border ${labelMode === "theory" ? "bg-green-200" : ""}`}
-                onClick={() => setLabelMode("theory")}
-              >
-                T
-              </button>
-              <button
-                className={`px-2 py-1 border ${labelMode === "practice" ? "bg-blue-200" : ""}`}
-                onClick={() => setLabelMode("practice")}
-              >
-                P
-              </button>
-              <button
-                className={`px-2 py-1 border ${labelMode === "" ? "bg-gray-200" : ""}`}
-                onClick={() => setLabelMode("")}
-              >
-                ✕
-              </button>
-            </div>
             <ul className="space-y-1">
               {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
                 <li
@@ -500,18 +490,9 @@ export default function Home() {
                   <span
                     className="flex-1 truncate cursor-pointer"
                     title={p.file.name}
-                    onClick={() =>
-                      labelMode ? updateLabel(p.path, labelMode) : handleSelectPdf(p)
-                    }
+                    onClick={() => handleSelectPdf(p)}
                   >
                     {p.file.name}
-                  </span>
-                  <span className="text-xs w-4 text-center">
-                    {labels[p.path] === "theory"
-                      ? "T"
-                      : labels[p.path] === "practice"
-                      ? "P"
-                      : ""}
                   </span>
                   <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                     ↑
