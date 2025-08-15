@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Pool } from "pg";
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+import { query } from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +11,7 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json({ error: "Invalid body" }, { status: 400 });
     }
-    await pool.query(
+    await query(
       "UPDATE progress SET current_progress = LEAST(total_pdfs, GREATEST(0, current_progress + $1)) WHERE subject_name = $2 AND table_type = $3",
       [delta, subject, tableType]
     );
