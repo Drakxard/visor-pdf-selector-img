@@ -6,6 +6,14 @@
   <title>Visor PDF</title>
 
   <script>
+    // Defensive shim: some environments/extensions reference documentPictureInPicture without guards
+    // Ensure a global binding exists to avoid ReferenceError
+    if (typeof documentPictureInPicture === 'undefined') {
+      var documentPictureInPicture = null;
+    }
+  </script>
+
+  <script>
     window.MathJax = {
       tex: { inlineMath: [['$', '$'], ['\\$$', '\\$$']] },
       svg: { fontCache: 'global' }
