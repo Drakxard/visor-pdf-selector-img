@@ -817,13 +817,8 @@
           setTimeout(() => scrollToPage(saved), 0);
           pendingAfterLoadGoTo = null;
 
-          if (directoryHandle) {
-            setTimeout(loadNotesFromFile, 300);
-          } else if (supportsFileSystemAccess()) {
-            setTimeout(showPermissionModal, 1000);
-          } else {
-            updateFileStatus('error', 'No compatible');
-          }
+          // Cargar notas siempre desde localStorage
+          setTimeout(loadNotesFromFile, 300);
         } catch (error) {
           console.error('Error cargando PDF:', error);
           showToast('Error cargando PDF: ' + (error?.message || ''), 'error');
