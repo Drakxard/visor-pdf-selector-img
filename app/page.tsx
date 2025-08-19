@@ -34,6 +34,7 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerIsFullscreen, setViewerIsFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
@@ -336,6 +337,16 @@ useEffect(() => {
     setPdfUrl(null)
   }, [currentPdf])
 
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'viewer-fullscreen') {
+        setViewerIsFullscreen(!!e.data.isFullscreen)
+      }
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [])
+
   // greeting screen
   if (!mounted) return null
   if (!started) {
@@ -564,67 +575,91 @@ useEffect(() => {
             </ul>
           </>
         )}
-        {viewWeek && viewSubject && (
-          <>
-            <button className="mb-2 underline" onClick={() => setViewSubject(null)}>
-              ← Volver
-            </button>
-            <h2 className="text-xl">{viewSubject}</h2>
+        {viewWeek && viewSubject && (() => {
+          const files = fileTree[viewWeek]?.[viewSubject] || []
+          const theoryFiles = files.filter((f) => f.tableType === "theory")
+          const practiceFiles = files.filter((f) => f.tableType === "practice")
+          const renderList = (arr: PdfFile[]) => (
             <ul className="space-y-1">
-              {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
-                <li
-                  key={p.path}
-                  className={`flex items-center gap-2 ${
-                    completed[p.path] ? "line-through text-gray-400" : ""
-                  }`}
-                >
-                  <span
-                    className="flex-1 truncate cursor-pointer"
-                    title={p.file.name}
-                    onClick={() => handleSelectPdf(p)}
+              {arr.map((p) => {
+                const idx = files.indexOf(p)
+                return (
+                  <li
+                    key={p.path}
+                    className={`flex items-center gap-2 ${
+                      completed[p.path] ? "line-through text-gray-400" : ""
+                    }`}
                   >
-                    {p.file.name}
-                  </span>
-                  <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
-                    ↑
-                  </button>
-                  <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
-                    ↓
-                  </button>
-                </li>
-              ))}
+                    <span
+                      className="flex-1 truncate cursor-pointer"
+                      title={p.file.name}
+                      onClick={() => handleSelectPdf(p)}
+                    >
+                      {p.file.name}
+                    </span>
+                    <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
+                      ↑
+                    </button>
+                    <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
+                      ↓
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
-          </>
-        )}
+          )
+          return (
+            <>
+              <button className="mb-2 underline" onClick={() => setViewSubject(null)}>
+                ← Volver
+              </button>
+              <h2 className="text-xl">{viewSubject}</h2>
+              {theoryFiles.length > 0 && (
+                <>
+                  <h3 className="mt-2 font-semibold">Teoría:</h3>
+                  {renderList(theoryFiles)}
+                </>
+              )}
+              {practiceFiles.length > 0 && (
+                <>
+                  <h3 className="mt-4 font-semibold">Práctica:</h3>
+                  {renderList(practiceFiles)}
+                </>
+              )}
+            </>
+          )
+        })()}
       </aside>
       <section className="flex flex-col h-screen">
-        <div className="flex items-center justify-between p-2 border-b">
-          <div className="flex items-center gap-2">
-            <span>📄</span>
-            <span
-              className="truncate"
-              title={currentPdf ? currentPdf.file.name : "Sin selección"}
-            >
-              {currentPdf ? currentPdf.file.name : "Sin selección"}
-            </span>
+        {!viewerIsFullscreen && (
+          <div className="flex items-center justify-between p-2 border-b">
+            <div className="flex items-center gap-2">
+              <span>📄</span>
+              <span
+                className="truncate"
+                title={currentPdf ? currentPdf.file.name : "Sin selección"}
+              >
+                {currentPdf ? currentPdf.file.name : "Sin selección"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={prevPdf} disabled={queueIndex <= 0}>
+                ←
+              </button>
+              <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
+                →
+              </button>
+              {currentPdf && (
+                <input
+                  type="checkbox"
+                  checked={!!completed[currentPdf.path]}
+                  onChange={toggleComplete}
+                />
+              )}
+              {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
-              ←
-            </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-              →
-            </button>
-            {currentPdf && (
-              <input
-                type="checkbox"
-                checked={!!completed[currentPdf.path]}
-                onChange={toggleComplete}
-              />
-            )}
-            {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
-          </div>
-        </div>
+        )}
         <div className="flex-1">
           {currentPdf && pdfUrl ? (
             <iframe
@@ -640,9 +675,11 @@ useEffect(() => {
             </div>
           )}
         </div>
-        <div className="p-2 text-sm text-gray-500">
-          {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ""}
-        </div>
+        {!viewerIsFullscreen && (
+          <div className="p-2 text-sm text-gray-500">
+            {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ""}
+          </div>
+        )}
       </section>
     </main>
     {/* Toast banner */}
@@ -676,17 +713,19 @@ useEffect(() => {
     </div>
     {viewerOpen && currentPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between p-2 border-b">
-          <span className="truncate" title={currentPdf.file.name}>
-            {currentPdf.file.name}
-          </span>
-          <div className="flex items-center gap-2">
-            <span>
-              Días restantes: {daysUntil(currentPdf)}
+        {!viewerIsFullscreen && (
+          <div className="flex items-center justify-between p-2 border-b">
+            <span className="truncate" title={currentPdf.file.name}>
+              {currentPdf.file.name}
             </span>
-            <button onClick={() => setViewerOpen(false)}>✕</button>
+            <div className="flex items-center gap-2">
+              <span>
+                Días restantes: {daysUntil(currentPdf)}
+              </span>
+              <button onClick={() => { setViewerOpen(false); setViewerIsFullscreen(false); }}>✕</button>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex-1">
           <iframe
             title="Visor PDF"
