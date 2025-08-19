@@ -1450,8 +1450,16 @@
 
         const pageWidth = targetLayer.offsetWidth;
         const pageHeight = targetLayer.offsetHeight;
-        const xp = xpPercent != null ? xpPercent : (x / pageWidth);
-        const yp = ypPercent != null ? ypPercent : (y / pageHeight);
+
+        let localX = x;
+        let localY = y;
+        if (xpPercent == null && ypPercent == null && (localX === 0 && localY === 0)) {
+          localX = pageWidth / 2;
+          localY = pageHeight / 2;
+        }
+
+        const xp = xpPercent != null ? xpPercent : (localX / pageWidth);
+        const yp = ypPercent != null ? ypPercent : (localY / pageHeight);
 
         icon.dataset.xp = String(xp);
         icon.dataset.yp = String(yp);
@@ -1585,23 +1593,28 @@
         const cleanName = pdfName.replace(/[^a-zA-Z0-9.-]/g, '_');
         return `${cleanName}_notas.json`;
       }
-      async function saveNotesToFile() {
-        if (!currentPdfName) return;
-        if (saveTimeout) clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(() => {
-          try {
-            updateFileStatus('saving', 'Guardando...');
-            const notes = collectAllNotes();
-            const data = { pdfName: currentPdfName, timestamp: Date.now(), notes, totalPages, zoom: currentZoom, version: '2.2' };
-            const key = `/gestor/system/notas/${getNotesFileName(currentPdfName)}`;
-            localStorage.setItem(key, JSON.stringify(data));
-            updateFileStatus('saved', `${notes.length} notas guardadas`);
-          } catch (error) {
-            console.error('Error guardando notas:', error);
-            updateFileStatus('error', 'Error guardando');
-          }
-        }, 600);
-      }
+        async function saveNotesToFile() {
+          if (!currentPdfName) return;
+          if (saveTimeout) clearTimeout(saveTimeout);
+          saveTimeout = setTimeout(() => {
+            try {
+              updateFileStatus('saving', 'Guardando...');
+              const notes = collectAllNotes();
+              const key = `/gestor/system/notas/${getNotesFileName(currentPdfName)}`;
+              if (!notes.length) {
+                localStorage.removeItem(key);
+                updateFileStatus('saved', 'Sin notas guardadas');
+                return;
+              }
+              const data = { pdfName: currentPdfName, timestamp: Date.now(), notes, totalPages, zoom: currentZoom, version: '2.2' };
+              localStorage.setItem(key, JSON.stringify(data));
+              updateFileStatus('saved', `${notes.length} notas guardadas`);
+            } catch (error) {
+              console.error('Error guardando notas:', error);
+              updateFileStatus('error', 'Error guardando');
+            }
+          }, 600);
+        }
       async function loadNotesFromFile() {
         if (!currentPdfName) return;
         try {
