@@ -817,12 +817,13 @@
           setTimeout(() => scrollToPage(saved), 0);
           pendingAfterLoadGoTo = null;
 
-          if (directoryHandle) {
-            setTimeout(loadNotesFromFile, 300);
-          } else if (supportsFileSystemAccess()) {
-            setTimeout(showPermissionModal, 1000);
-          } else {
-            updateFileStatus('error', 'No compatible');
+          setTimeout(loadNotesFromFile, 300);
+          if (!directoryHandle) {
+            if (supportsFileSystemAccess()) {
+              setTimeout(showPermissionModal, 1000);
+            } else {
+              updateFileStatus('error', 'No compatible');
+            }
           }
         } catch (error) {
           console.error('Error cargando PDF:', error);
