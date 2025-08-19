@@ -65,41 +65,42 @@ export default function Home() {
     return false
   }
 
+  const restoreCheckHistory = async (rawFiles: File[]) => {
+    try {
+      const full = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history.json'))
+      if (full) {
+        const txt = await full.text()
+        const data = JSON.parse(txt || '{}')
+        if (data && typeof data === 'object' && data.completed) {
+          setCompleted((prev) => ({ ...prev, ...data.completed }))
+          setToast({ type: 'success', text: 'Historial restaurado desde: system/check-semanas/check-history.json' })
+          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+          return
+        }
+      }
+      const historyW1 = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history-sem1.json'))
+      if (historyW1) {
+        const txt = await historyW1.text()
+        const data = JSON.parse(txt || '{}')
+        if (data && typeof data === 'object' && data.completed) {
+          setCompleted((prev) => ({ ...prev, ...data.completed }))
+          setToast({ type: 'success', text: 'Historial Semana 1 restaurado desde: system/check-semanas/check-history-sem1.json' })
+          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+        }
+      }
+    } catch (err) {
+      console.warn('No se pudo leer check-history-sem1.json', err)
+    }
+  }
+
   const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || [])
     const files = filterSystemFiles(rawFiles)
     setDirFiles(files)
     loadConfig(files)
-    // Try to load check-history.json (full) or fallback to week 1 history from the raw (unfiltered) list
-    ;(async () => {
-      try {
-        const full = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history.json'))
-        if (full) {
-          const txt = await full.text()
-          const data = JSON.parse(txt || '{}')
-          if (data && typeof data === 'object' && data.completed) {
-            setCompleted((prev) => ({ ...prev, ...data.completed }))
-            setToast({ type: 'success', text: 'Historial restaurado desde: system/check-semanas/check-history.json' })
-            if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-            toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-            return
-          }
-        }
-        const historyW1 = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history-sem1.json'))
-        if (historyW1) {
-          const txt = await historyW1.text()
-          const data = JSON.parse(txt || '{}')
-          if (data && typeof data === 'object' && data.completed) {
-            setCompleted((prev) => ({ ...prev, ...data.completed }))
-            setToast({ type: 'success', text: 'Historial Semana 1 restaurado desde: system/check-semanas/check-history-sem1.json' })
-            if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-            toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-          }
-        }
-      } catch (err) {
-        console.warn('No se pudo leer check-history-sem1.json', err)
-      }
-    })()
+    void restoreCheckHistory(rawFiles)
   }
 
   const triggerReselect = () => folderInputRef.current?.click()
@@ -360,8 +361,10 @@ useEffect(() => {
               // @ts-expect-error webkitdirectory es no estándar
               webkitdirectory=""
               onChange={(e) => {
-                const files = filterSystemFiles(Array.from(e.target.files || []))
+                const rawFiles = Array.from(e.target.files || [])
+                const files = filterSystemFiles(rawFiles)
                 setDirFiles(files)
+                void restoreCheckHistory(rawFiles)
                 setStep(1)
               }}
             />
