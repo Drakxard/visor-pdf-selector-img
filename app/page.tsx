@@ -34,6 +34,7 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
+  const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
@@ -336,6 +337,17 @@ useEffect(() => {
     setPdfUrl(null)
   }, [currentPdf])
 
+  // listen for fullscreen messages from the PDF viewer
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'viewerFullscreen') {
+        setPdfFullscreen(!!e.data.value)
+      }
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [])
+
   // greeting screen
   if (!mounted) return null
   if (!started) {
@@ -508,6 +520,11 @@ useEffect(() => {
     setOrders({ ...orders, [key]: arr.map((p) => p.path) })
   }
 
+  const selectedFiles =
+    viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
+  const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
+  const practiceFiles = selectedFiles.filter((f) => f.tableType === "practice")
+
   // main interface
   return (
     <>
@@ -570,30 +587,72 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
-            <ul className="space-y-1">
-              {(fileTree[viewWeek]?.[viewSubject] || []).map((p, idx) => (
-                <li
-                  key={p.path}
-                  className={`flex items-center gap-2 ${
-                    completed[p.path] ? "line-through text-gray-400" : ""
-                  }`}
-                >
-                  <span
-                    className="flex-1 truncate cursor-pointer"
-                    title={p.file.name}
-                    onClick={() => handleSelectPdf(p)}
-                  >
-                    {p.file.name}
-                  </span>
-                  <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
-                    ↑
-                  </button>
-                  <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
-                    ↓
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-4">
+              {theoryFiles.length > 0 && (
+                <div>
+                  <h3 className="font-semibold">Teoría:</h3>
+                  <ul className="space-y-1">
+                    {theoryFiles.map((p) => {
+                      const idx = selectedFiles.indexOf(p)
+                      return (
+                        <li
+                          key={p.path}
+                          className={`flex items-center gap-2 ${
+                            completed[p.path] ? "line-through text-gray-400" : ""
+                          }`}
+                        >
+                          <span
+                            className="flex-1 truncate cursor-pointer"
+                            title={p.file.name}
+                            onClick={() => handleSelectPdf(p)}
+                          >
+                            {p.file.name}
+                          </span>
+                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
+                            ↑
+                          </button>
+                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
+                            ↓
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+              {practiceFiles.length > 0 && (
+                <div>
+                  <h3 className="font-semibold">Práctica:</h3>
+                  <ul className="space-y-1">
+                    {practiceFiles.map((p) => {
+                      const idx = selectedFiles.indexOf(p)
+                      return (
+                        <li
+                          key={p.path}
+                          className={`flex items-center gap-2 ${
+                            completed[p.path] ? "line-through text-gray-400" : ""
+                          }`}
+                        >
+                          <span
+                            className="flex-1 truncate cursor-pointer"
+                            title={p.file.name}
+                            onClick={() => handleSelectPdf(p)}
+                          >
+                            {p.file.name}
+                          </span>
+                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
+                            ↑
+                          </button>
+                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
+                            ↓
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+            </div>
           </>
         )}
       </aside>
@@ -676,17 +735,26 @@ useEffect(() => {
     </div>
     {viewerOpen && currentPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        <div className="flex items-center justify-between p-2 border-b">
-          <span className="truncate" title={currentPdf.file.name}>
-            {currentPdf.file.name}
-          </span>
-          <div className="flex items-center gap-2">
-            <span>
-              Días restantes: {daysUntil(currentPdf)}
+        {!pdfFullscreen && (
+          <div className="flex items-center justify-between p-2 border-b">
+            <span className="truncate" title={currentPdf.file.name}>
+              {currentPdf.file.name}
             </span>
-            <button onClick={() => setViewerOpen(false)}>✕</button>
+            <div className="flex items-center gap-2">
+              <span>
+                Días restantes: {daysUntil(currentPdf)}
+              </span>
+              <button
+                onClick={() => {
+                  setViewerOpen(false)
+                  setPdfFullscreen(false)
+                }}
+              >
+                ✕
+              </button>
+            </div>
           </div>
-        </div>
+        )}
         <div className="flex-1">
           <iframe
             title="Visor PDF"
