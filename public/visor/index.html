@@ -1039,8 +1039,14 @@
       fullscreenBtn.addEventListener('click', toggleFullscreen);
       function toggleFullscreen() {
         isFullscreen = !isFullscreen;
-        if (isFullscreen) { document.body.classList.add('fullscreen'); fullscreenBtn.textContent = '⛷'; }
-        else { document.body.classList.remove('fullscreen'); fullscreenBtn.textContent = '⛶'; }
+        if (isFullscreen) {
+          document.body.classList.add('fullscreen');
+          fullscreenBtn.textContent = '⛷';
+        } else {
+          document.body.classList.remove('fullscreen');
+          fullscreenBtn.textContent = '⛶';
+        }
+        window.parent.postMessage({ type: 'viewer-fullscreen', isFullscreen }, '*');
       }
 
       backBtn.addEventListener('click', () => {
