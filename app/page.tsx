@@ -22,6 +22,7 @@ export default function Home() {
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
   const [weeks, setWeeks] = useState(1)
+  const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
@@ -39,12 +40,8 @@ export default function Home() {
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
-  // Directory handle for optional write access (File System Access API)
-  const dirHandleRef = useRef<any>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
-  // Track FS permission status for UI feedback
-  const [fsPermission, setFsPermission] = useState<'none' | 'read' | 'readwrite' | 'denied'>('none')
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -66,145 +63,6 @@ export default function Home() {
       return true
     }
     return false
-  }
-
-  // Test write+read to confirm I/O works and file is created
-  const testFolderIO = async () => {
-    try {
-      await saveHistoryToFolder()
-      await loadHistoryFromFolder()
-      // If both succeeded, the individual toasts already informed paths
-    } catch {
-      // Errors are handled inside each function with toasts
-    }
-  }
-
-  // Load history JSON from connected folder using FS Access API
-  const loadHistoryFromFolder = async () => {
-    try {
-      const handle = dirHandleRef.current
-      if (!handle) throw new Error('NoFolderAccess')
-      // Try read permission first
-      try {
-        const q = await handle.queryPermission?.({ mode: 'read' })
-        if (q !== 'granted') {
-          const r = await handle.requestPermission?.({ mode: 'read' })
-          if (r !== 'granted') throw new Error('ReadDenied')
-        }
-      } catch {
-        // if query throws, attempt request
-        const r = await handle.requestPermission?.({ mode: 'read' })
-        if (r !== 'granted') throw new Error('ReadDenied')
-      }
-      const getOrCreateDir = async (parent: any, name: string) => await parent.getDirectoryHandle(name, { create: false })
-      const root = handle
-      const systemDir = await getOrCreateDir(root, 'system').catch(() => null)
-      if (!systemDir) throw new Error('NotFound')
-      const semanasDir = await (systemDir as any).getDirectoryHandle('check-semanas', { create: false }).catch(() => null)
-      if (!semanasDir) throw new Error('NotFound')
-      // Prefer full history
-      let fileHandle: any = null
-      try {
-        fileHandle = await (semanasDir as any).getFileHandle('check-history.json', { create: false })
-      } catch {}
-      if (!fileHandle) {
-        try { fileHandle = await (semanasDir as any).getFileHandle('check-history-sem1.json', { create: false }) } catch {}
-      }
-      if (!fileHandle) throw new Error('NotFound')
-      const file = await fileHandle.getFile()
-      const txt = await file.text()
-      const data = JSON.parse(txt || '{}')
-      if (data && typeof data === 'object' && data.completed) {
-        setCompleted((prev) => ({ ...prev, ...data.completed }))
-        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-        const used = fileHandle.name
-        setToast({ type: 'success', text: `Historial restaurado desde: system/check-semanas/${used}` })
-        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-      } else {
-        throw new Error('FormatoInvalido')
-      }
-    } catch (err: any) {
-      if (err?.message === 'NoFolderAccess') {
-        setToast({ type: 'error', text: 'Conecta la carpeta para importar historial' })
-      } else if (err?.message === 'ReadDenied') {
-        setToast({ type: 'error', text: 'Permiso de lectura denegado' })
-      } else if (err?.message === 'NotFound') {
-        setToast({ type: 'error', text: 'No se encontró historial en la carpeta' })
-      } else if (err?.message === 'FormatoInvalido') {
-        setToast({ type: 'error', text: 'Historial con formato inválido' })
-      } else {
-        setToast({ type: 'error', text: 'Error al leer historial desde carpeta' })
-      }
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-    }
-  }
-
-  // Explicit button to request access to the gestor folder
-  // Helper: map PermissionState to our simple label
-  const mapPerm = (state: PermissionState | 'granted' | 'denied' | 'prompt') => {
-    if (state === 'granted') return 'readwrite'
-    if (state === 'denied') return 'denied'
-    return 'read' // prompt or unknown treated as minimal
-  }
-
-  // Ensure we have readwrite permission; throws 'NoFolderAccess' or 'WriteDenied'
-  const ensureWritablePermission = async () => {
-    const handle = dirHandleRef.current
-    if (!handle) throw new Error('NoFolderAccess')
-    try {
-      const q = await handle.queryPermission?.({ mode: 'readwrite' })
-      if (q === 'granted') { setFsPermission('readwrite'); return }
-      const r = await handle.requestPermission?.({ mode: 'readwrite' })
-      if (r === 'granted') { setFsPermission('readwrite'); return }
-      setFsPermission('denied')
-      throw new Error('WriteDenied')
-    } catch {
-      // Fallback: try read-only so UI can reflect something
-      try {
-        const qread = await handle.queryPermission?.({ mode: 'read' })
-        setFsPermission(mapPerm(qread as any))
-      } catch {}
-      throw new Error('WriteDenied')
-    }
-  }
-
-  const requestFolderAccess = async () => {
-    try {
-      if (!('showDirectoryPicker' in window)) {
-        setToast({ type: 'error', text: 'Tu navegador no permite acceso a carpetas' })
-        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-        return
-      }
-      // @ts-ignore
-      dirHandleRef.current = await (window as any).showDirectoryPicker()
-      // Immediately request write permission
-      try {
-        const res = await dirHandleRef.current.requestPermission?.({ mode: 'readwrite' })
-        const label = mapPerm(res as any)
-        setFsPermission(label)
-        setToast({ type: label === 'readwrite' ? 'success' : 'error', text: label === 'readwrite' ? 'Acceso de escritura concedido' : 'Acceso limitado (solo lectura o denegado)' })
-      } catch {
-        setFsPermission('read')
-        setToast({ type: 'error', text: 'No se pudo solicitar permiso de escritura' })
-      }
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-      // Intentar leer historial existente si la carpeta ya lo tiene
-      try { await loadHistoryFromFolder() } catch {}
-    } catch (err) {
-      setToast({ type: 'error', text: 'No se concedió acceso a la carpeta' })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-    }
-  }
-
-  const reloadConfig = async () => {
-    const ok = await loadConfig(dirFiles)
-    setToast({ type: ok ? 'success' : 'error', text: ok ? 'Configuración recargada' : 'config.json no encontrado' })
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }
 
   const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -244,88 +102,18 @@ export default function Home() {
     })()
   }
 
-  // Save FULL history JSON into /system/check-semanas/check-history.json using FS Access API
-  const saveHistoryToFolder = async () => {
-    try {
-      if (!('showDirectoryPicker' in window)) {
-        setToast({ type: 'error', text: 'Tu navegador no permite escribir en la carpeta' })
-        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-        return
-      }
-      if (!dirHandleRef.current) {
-        // No handle yet; ask user via the settings button first
-        throw new Error('NoFolderAccess')
-      }
-      await ensureWritablePermission()
-      const getOrCreateDir = async (parent: any, name: string) => await parent.getDirectoryHandle(name, { create: true })
-      const root = dirHandleRef.current
-      const systemDir = await getOrCreateDir(root, 'system')
-      const semanasDir = await getOrCreateDir(systemDir, 'check-semanas')
-      const fileHandle = await semanasDir.getFileHandle('check-history.json', { create: true })
-
-      const payload = { version: 2, updatedAt: new Date().toISOString(), completed }
-      const writable = await (fileHandle as any).createWritable()
-      await writable.write(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
-      await writable.close()
-      setToast({ type: 'success', text: 'Guardado OK: system/check-semanas/check-history.json' })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-    } catch (err: any) {
-      if (err && err.message === 'NoFolderAccess') {
-        setToast({ type: 'error', text: 'Sin permiso. Conecta la carpeta: Configuración → Conectar carpeta gestor' })
-      } else if (err && err.message === 'WriteDenied') {
-        setToast({ type: 'error', text: 'Permiso de escritura denegado por el usuario' })
-      } else {
-        console.error('No se pudo guardar el historial', err)
-        setToast({ type: 'error', text: 'Error al guardar: system/check-semanas/check-history.json' })
-      }
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-    }
-  }
-
-  // Backwards-compatible helper to save only week 1, keeping existing UI button behavior if used
-  const saveWeek1HistoryToFolder = async () => {
-    try {
-      if (!('showDirectoryPicker' in window)) {
-        setToast({ type: 'error', text: 'Tu navegador no permite escribir en la carpeta' })
-        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-        return
-      }
-      if (!dirHandleRef.current) throw new Error('NoFolderAccess')
-      await ensureWritablePermission()
-      const getOrCreateDir = async (parent: any, name: string) => await parent.getDirectoryHandle(name, { create: true })
-      const root = dirHandleRef.current
-      const systemDir = await getOrCreateDir(root, 'system')
-      const semanasDir = await getOrCreateDir(systemDir, 'check-semanas')
-      const fileHandle = await semanasDir.getFileHandle('check-history-sem1.json', { create: true })
-
-      const week1: Record<string, boolean> = {}
-      Object.entries(completed).forEach(([k, v]) => { if (k.startsWith('Semana 1/')) week1[k] = v })
-      const payload = { version: 1, updatedAt: new Date().toISOString(), completed: week1 }
-      const writable = await (fileHandle as any).createWritable()
-      await writable.write(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
-      await writable.close()
-      setToast({ type: 'success', text: 'Guardado OK: system/check-semanas/check-history-sem1.json' })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-    } catch (err: any) {
-      if (err && err.message === 'NoFolderAccess') {
-        setToast({ type: 'error', text: 'Sin permiso. Conecta la carpeta: Configuración → Conectar carpeta gestor' })
-      } else if (err && err.message === 'WriteDenied') {
-        setToast({ type: 'error', text: 'Permiso de escritura denegado por el usuario' })
-      } else {
-        console.error('No se pudo guardar el historial (sem1)', err)
-        setToast({ type: 'error', text: 'Error al guardar: system/check-semanas/check-history-sem1.json' })
-      }
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-    }
-  }
-
   const triggerReselect = () => folderInputRef.current?.click()
+
+  const unlockNextWeek = () => {
+    setUnlockedWeeks((prev) => {
+      const next = Math.min(weeks, prev + 1)
+      localStorage.setItem("unlockedWeeks", String(next))
+      setToast({ type: 'success', text: `Semana ${next} desbloqueada` })
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+      return next
+    })
+  }
 
   useEffect(() => {
     if (step === 1) {
@@ -351,6 +139,8 @@ export default function Home() {
     } else {
       const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
       setWeeks(storedWeeks)
+      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
+      setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
 
@@ -402,11 +192,6 @@ export default function Home() {
   // persist completed
   useEffect(() => {
     localStorage.setItem("completed", JSON.stringify(completed))
-    // Auto-guardar a archivo si hay acceso a carpeta
-    if (dirHandleRef.current) {
-      // No bloquear el hilo UI; ignorar errores
-      saveHistoryToFolder().catch(() => {})
-    }
   }, [completed])
 
   useEffect(() => {
@@ -674,13 +459,9 @@ useEffect(() => {
     const key = currentPdf.path
     const wasCompleted = !!completed[key]
     setCompleted((prev) => ({ ...prev, [key]: !wasCompleted }))
-    // Informar si solo se guardó localmente (sin permisos de carpeta)
-    if (!dirHandleRef.current) {
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      setToast({ type: 'success', text: 'Guardado local (localStorage). Conecta carpeta para guardar en archivo.' })
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-    }
-    // Guardado a archivo se dispara en el useEffect de "completed"
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    setToast({ type: 'success', text: 'Guardado en localStorage' })
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
     try {
       const norm = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
       const canonical = canonicalSubjects.find(s => norm(s) === norm(currentPdf.subject)) || currentPdf.subject
@@ -735,7 +516,7 @@ useEffect(() => {
             <ul className="space-y-1">
               {Array.from({ length: weeks }, (_, i) => {
                 const wk = i + 1
-                const locked = wk > 1
+                const locked = wk > unlockedWeeks
                 return (
                   <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
                     {locked ? (
@@ -877,13 +658,8 @@ useEffect(() => {
       <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
-          <button onClick={reloadConfig}>Recargar config.json</button>
-          <button onClick={requestFolderAccess}>Conectar carpeta gestor</button>
-          <div className="text-xs text-gray-600">Permiso carpeta: {fsPermission}</div>
           <button onClick={triggerReselect}>Reseleccionar carpeta</button>
-          <button onClick={saveWeek1HistoryToFolder}>Guardar historial Semana 1</button>
-          <button onClick={saveHistoryToFolder}>Guardar historial completo</button>
-          <button onClick={testFolderIO}>Probar guardado/lectura</button>
+          <button onClick={unlockNextWeek}>Unlock Next Semana</button>
           <input
             type="file"
             ref={folderInputRef}
