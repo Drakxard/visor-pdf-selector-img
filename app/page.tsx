@@ -22,6 +22,7 @@ export default function Home() {
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
   const [weeks, setWeeks] = useState(1)
+  const [availableWeeks, setAvailableWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
@@ -45,6 +46,15 @@ export default function Home() {
   const [mounted, setMounted] = useState(false)
   // Track FS permission status for UI feedback
   const [fsPermission, setFsPermission] = useState<'none' | 'read' | 'readwrite' | 'denied'>('none')
+
+  const nextSunday = (d: Date) => {
+    const date = new Date(d)
+    date.setHours(0, 0, 0, 0)
+    const day = date.getDay()
+    const diff = (7 - day) % 7 || 7
+    date.setDate(date.getDate() + diff)
+    return date
+  }
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -353,6 +363,26 @@ export default function Home() {
       setWeeks(storedWeeks)
     }
   }, [setTheme])
+
+  useEffect(() => {
+    const total = weeks
+    if (!total) return
+    const now = new Date()
+    let unlocked = parseInt(localStorage.getItem("availableWeeks") || "1")
+    let next = localStorage.getItem("nextUnlockDate")
+    let nextDate = next ? new Date(next) : null
+    if (!nextDate) {
+      nextDate = nextSunday(now)
+    }
+    while (unlocked < total && now >= nextDate) {
+      unlocked++
+      nextDate = new Date(nextDate.getTime() + 7 * 24 * 60 * 60 * 1000)
+    }
+    unlocked = Math.min(unlocked, total)
+    setAvailableWeeks(unlocked)
+    localStorage.setItem("availableWeeks", String(unlocked))
+    localStorage.setItem("nextUnlockDate", nextDate.toISOString())
+  }, [weeks])
 
   // cleanup toast timer on unmount
   useEffect(() => {
@@ -734,8 +764,8 @@ useEffect(() => {
             <h2 className="text-xl">Semanas</h2>
             <ul className="space-y-1">
               {Array.from({ length: weeks }, (_, i) => {
-                const wk = i + 1
-                const locked = wk > 1
+                  const wk = i + 1
+                  const locked = wk > availableWeeks
                 return (
                   <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
                     {locked ? (
