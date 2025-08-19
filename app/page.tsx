@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
+import { differenceInCalendarWeeks } from "date-fns"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -22,6 +23,7 @@ export default function Home() {
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
   const [weeks, setWeeks] = useState(1)
+  const [totalWeeks, setTotalWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
@@ -51,17 +53,29 @@ export default function Home() {
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
     )
 
+  const refreshUnlockedWeeks = (max?: number) => {
+    const limit = max ?? totalWeeks
+    const storedStart = localStorage.getItem("startDate")
+    let start = storedStart ? new Date(storedStart) : new Date()
+    if (!storedStart) localStorage.setItem("startDate", start.toISOString())
+    const diff = differenceInCalendarWeeks(new Date(), start, { weekStartsOn: 0 })
+    const unlocked = Math.min(limit, diff + 1)
+    setWeeks(unlocked)
+    localStorage.setItem("weeks", String(unlocked))
+  }
+
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
     if (cfg) {
       const text = await cfg.text()
       const data = JSON.parse(text)
-      setWeeks(data.weeks || 1)
+      setTotalWeeks(data.weeks || 1)
+      refreshUnlockedWeeks(data.weeks || 1)
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
       setOrders(data.orders || {})
-      localStorage.setItem("weeks", String(data.weeks || 1))
+      localStorage.setItem("totalWeeks", String(data.weeks || 1))
       localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
     }
@@ -349,10 +363,17 @@ export default function Home() {
     if (!stored) {
       setSetupComplete(false)
     } else {
-      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
-      setWeeks(storedWeeks)
+      const storedTotal = parseInt(localStorage.getItem("totalWeeks") || "1")
+      setTotalWeeks(storedTotal)
+      refreshUnlockedWeeks(storedTotal)
     }
   }, [setTheme])
+
+  // refresh unlocked weeks periodically to catch new Sundays
+  useEffect(() => {
+    const id = window.setInterval(() => refreshUnlockedWeeks(), 60 * 60 * 1000)
+    return () => window.clearInterval(id)
+  }, [totalWeeks])
 
   // cleanup toast timer on unmount
   useEffect(() => {
@@ -733,9 +754,9 @@ useEffect(() => {
           <>
             <h2 className="text-xl">Semanas</h2>
             <ul className="space-y-1">
-              {Array.from({ length: weeks }, (_, i) => {
+              {Array.from({ length: totalWeeks }, (_, i) => {
                 const wk = i + 1
-                const locked = wk > 1
+                const locked = wk > weeks
                 return (
                   <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
                     {locked ? (
