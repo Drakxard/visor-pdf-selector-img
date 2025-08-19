@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
-import { differenceInCalendarWeeks } from "date-fns"
+import { differenceInWeeks } from "date-fns"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -57,8 +57,11 @@ export default function Home() {
     const limit = max ?? totalWeeks
     const storedStart = localStorage.getItem("startDate")
     let start = storedStart ? new Date(storedStart) : new Date()
+    start.setHours(0, 0, 0, 0)
     if (!storedStart) localStorage.setItem("startDate", start.toISOString())
-    const diff = differenceInCalendarWeeks(new Date(), start, { weekStartsOn: 0 })
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const diff = differenceInWeeks(today, start)
     const unlocked = Math.min(limit, diff + 1)
     setWeeks(unlocked)
     localStorage.setItem("weeks", String(unlocked))
