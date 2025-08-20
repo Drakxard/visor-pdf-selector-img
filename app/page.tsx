@@ -171,7 +171,11 @@ export default function Home() {
     const handler = () => setStarted(true)
     if (!started) {
       window.addEventListener("keydown", handler)
-      return () => window.removeEventListener("keydown", handler)
+      window.addEventListener("pointerdown", handler)
+      return () => {
+        window.removeEventListener("keydown", handler)
+        window.removeEventListener("pointerdown", handler)
+      }
     }
   }, [started])
 
@@ -355,7 +359,7 @@ useEffect(() => {
     const greeting = hour >= 19 || hour < 6 ? "Buenas noches" : "Buenos días"
     return (
       <main className="min-h-screen flex items-center justify-center text-2xl">
-        <p>{greeting}. Presiona cualquier tecla para continuar.</p>
+        <p>{greeting}. Toca la pantalla o presiona una tecla para continuar.</p>
       </main>
     )
   }
@@ -528,8 +532,8 @@ useEffect(() => {
   // main interface
   return (
     <>
-      <main className="grid grid-cols-2 min-h-screen">
-      <aside className="border-r p-4 space-y-2">
+      <main className="flex flex-col md:grid md:grid-cols-2 min-h-screen">
+        <aside className="border-b md:border-r p-4 space-y-2">
         {!viewWeek && (
           <>
             <h2 className="text-xl">Semanas</h2>
@@ -597,7 +601,7 @@ useEffect(() => {
                       return (
                         <li
                           key={p.path}
-                          className={`flex items-center gap-2 ${
+                          className={`flex flex-wrap items-center gap-2 ${
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
@@ -629,7 +633,7 @@ useEffect(() => {
                       return (
                         <li
                           key={p.path}
-                          className={`flex items-center gap-2 ${
+                          className={`flex flex-wrap items-center gap-2 ${
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
@@ -655,9 +659,9 @@ useEffect(() => {
             </div>
           </>
         )}
-      </aside>
-      <section className="flex flex-col h-screen">
-        <div className="flex items-center justify-between p-2 border-b">
+        </aside>
+        <section className="flex flex-col flex-1 md:h-screen">
+        <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
           <div className="flex items-center gap-2">
             <span>📄</span>
             <span
@@ -667,7 +671,7 @@ useEffect(() => {
               {currentPdf ? currentPdf.file.name : "Sin selección"}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={prevPdf} disabled={queueIndex <= 0}>
               ←
             </button>
@@ -702,8 +706,8 @@ useEffect(() => {
         <div className="p-2 text-sm text-gray-500">
           {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ""}
         </div>
-      </section>
-    </main>
+        </section>
+      </main>
     {/* Toast banner */}
     {toast && (
       <div
@@ -736,11 +740,11 @@ useEffect(() => {
     {viewerOpen && currentPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
         {!pdfFullscreen && (
-          <div className="flex items-center justify-between p-2 border-b">
+          <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
             <span className="truncate" title={currentPdf.file.name}>
               {currentPdf.file.name}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span>
                 Días restantes: {daysUntil(currentPdf)}
               </span>
