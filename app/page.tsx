@@ -5,7 +5,7 @@ import { useTheme } from "next-themes"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
-type PdfFile = {
+type ResourceFile = {
   file: File
   path: string
   week: number
@@ -24,17 +24,17 @@ export default function Home() {
   const [weeks, setWeeks] = useState(1)
   const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
-  const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
+  const [fileTree, setFileTree] = useState<Record<number, Record<string, ResourceFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
-  const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
-  const [queue, setQueue] = useState<PdfFile[]>([])
+  const [currentFile, setCurrentFile] = useState<ResourceFile | null>(null)
+  const [queue, setQueue] = useState<ResourceFile[]>([])
   const [queueIndex, setQueueIndex] = useState(0)
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [fileUrl, setFileUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
-  const [pdfFullscreen, setPdfFullscreen] = useState(false)
+  const [fileFullscreen, setFileFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
@@ -43,6 +43,21 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  const getEmbedUrl = (url: string) => {
+    try {
+      const u = new URL(url)
+      if (u.hostname.includes('youtube.com')) {
+        const v = u.searchParams.get('v')
+        if (v) return `https://www.youtube.com/embed/${v}`
+      }
+      if (u.hostname === 'youtu.be') {
+        const id = u.pathname.slice(1)
+        if (id) return `https://www.youtube.com/embed/${id}`
+      }
+    } catch {}
+    return url
+  }
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -225,9 +240,8 @@ useEffect(() => {
 
   // build tree from selected directory
   useEffect(() => {
-    const tree: Record<number, Record<string, PdfFile[]>> = {}
+    const tree: Record<number, Record<string, ResourceFile[]>> = {}
     for (const file of dirFiles) {
-      if (!file.name.toLowerCase().endsWith(".pdf")) continue
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
@@ -290,7 +304,7 @@ useEffect(() => {
       Viernes: 5,
     }
     const today = new Date().getDay()
-    const stats: { subject: string; days: number; pdfs: PdfFile[] }[] = []
+    const stats: { subject: string; days: number; files: ResourceFile[] }[] = []
     Object.values(fileTree).forEach((subjects) => {
       Object.entries(subjects).forEach(([subject, files]) => {
         const remaining = files.filter((f) => !completed[f.path])
@@ -306,46 +320,68 @@ useEffect(() => {
           if (diff === 0) diff = 7
           if (diff < days) days = diff
         })
-        stats.push({ subject, days, pdfs: remaining })
+        stats.push({ subject, days, files: remaining })
       })
     })
     stats.sort((a, b) => {
       if (a.days !== b.days) return a.days - b.days
-      return b.pdfs.length - a.pdfs.length
+      return b.files.length - a.files.length
     })
-    const q: PdfFile[] = []
+    const q: ResourceFile[] = []
     stats.forEach((s) => {
       q.push(
-        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
+        ...s.files.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
       )
     })
     setQueue(q)
     if (q.length) {
-      const current = currentPdf && q.find((f) => f.path === currentPdf.path)
+      const current = currentFile && q.find((f) => f.path === currentFile.path)
       const target = current || q[0]
-      setCurrentPdf(target)
+      setCurrentFile(target)
       setQueueIndex(q.findIndex((f) => f.path === target.path))
     } else {
-      setCurrentPdf(null)
+      setCurrentFile(null)
       setQueueIndex(0)
     }
   }, [fileTree, completed, theory, practice])
 
-  // object url for viewer
+  // object url or external link for viewer
   useEffect(() => {
-    if (currentPdf) {
-      const url = URL.createObjectURL(currentPdf.file)
-      setPdfUrl(url)
-      return () => URL.revokeObjectURL(url)
+    let revoke: string | null = null
+    let active = true
+    const setup = async () => {
+      if (!currentFile) {
+        setFileUrl(null)
+        return
+      }
+      const name = currentFile.file.name.toLowerCase()
+      if (name.endsWith('.url')) {
+        try {
+          const txt = await currentFile.file.text()
+          const match = txt.match(/^URL=(.*)$/m)
+          const link = match ? match[1].trim() : txt.trim()
+          if (active) setFileUrl(getEmbedUrl(link))
+        } catch {
+          if (active) setFileUrl(null)
+        }
+      } else {
+        const url = URL.createObjectURL(currentFile.file)
+        revoke = url
+        if (active) setFileUrl(url)
+      }
     }
-    setPdfUrl(null)
-  }, [currentPdf])
+    void setup()
+    return () => {
+      active = false
+      if (revoke) URL.revokeObjectURL(revoke)
+    }
+  }, [currentFile])
 
-  // listen for fullscreen messages from the PDF viewer
+  // listen for fullscreen messages from the viewer
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'viewerFullscreen') {
-        setPdfFullscreen(!!e.data.value)
+        setFileFullscreen(!!e.data.value)
       }
     }
     window.addEventListener('message', handler)
@@ -426,7 +462,7 @@ useEffect(() => {
     }
   }
 
-  const daysUntil = (pdf: PdfFile) => {
+  const daysUntil = (file: ResourceFile) => {
     const dayMap: Record<string, number> = {
       Lunes: 1,
       Martes: 2,
@@ -436,7 +472,7 @@ useEffect(() => {
     }
     const today = new Date().getDay()
     const dayName =
-      pdf.tableType === "practice" ? practice[pdf.subject] : theory[pdf.subject]
+      file.tableType === "practice" ? practice[file.subject] : theory[file.subject]
     if (!dayName) return 0
     const target = dayMap[dayName]
     let diff = target - today
@@ -445,37 +481,37 @@ useEffect(() => {
     return diff
   }
 
-  const handleSelectPdf = (pdf: PdfFile) => {
-    const idx = queue.findIndex((f) => f.path === pdf.path)
+  const handleSelectFile = (file: ResourceFile) => {
+    const idx = queue.findIndex((f) => f.path === file.path)
     if (idx >= 0) {
       setQueueIndex(idx)
-      setCurrentPdf(queue[idx])
+      setCurrentFile(queue[idx])
     } else {
-      setCurrentPdf(pdf)
+      setCurrentFile(file)
     }
   }
 
-  const prevPdf = () => {
+  const prevFile = () => {
     if (queueIndex > 0) {
       const i = queueIndex - 1
       setQueueIndex(i)
-      setCurrentPdf(queue[i])
+      setCurrentFile(queue[i])
       setViewerOpen(true)
     }
   }
 
-  const nextPdf = () => {
+  const nextFile = () => {
     if (queueIndex < queue.length - 1) {
       const i = queueIndex + 1
       setQueueIndex(i)
-      setCurrentPdf(queue[i])
+      setCurrentFile(queue[i])
       setViewerOpen(true)
     }
   }
 
   const toggleComplete = async () => {
-    if (!currentPdf) return
-    const key = currentPdf.path
+    if (!currentFile) return
+    const key = currentFile.path
     const wasCompleted = !!completed[key]
     setCompleted((prev) => ({ ...prev, [key]: !wasCompleted }))
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
@@ -483,13 +519,13 @@ useEffect(() => {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
     try {
       const norm = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
-      const canonical = canonicalSubjects.find(s => norm(s) === norm(currentPdf.subject)) || currentPdf.subject
+      const canonical = canonicalSubjects.find(s => norm(s) === norm(currentFile.subject)) || currentFile.subject
       const resp = await fetch("/api/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           subject: canonical,
-          tableType: currentPdf.tableType,
+          tableType: currentFile.tableType,
           delta: wasCompleted ? -1 : 1,
         }),
       })
@@ -514,7 +550,7 @@ useEffect(() => {
     }
   }
 
-  const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
+  const reorderFile = (week: number, subject: string, index: number, delta: number) => {
     const arr = [...(fileTree[week]?.[subject] || [])]
     const target = index + delta
     if (target < 0 || target >= arr.length) return
@@ -608,14 +644,14 @@ useEffect(() => {
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
-                            onClick={() => handleSelectPdf(p)}
+                            onClick={() => handleSelectFile(p)}
                           >
                             {p.file.name}
                           </span>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
+                          <button onClick={() => reorderFile(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
                           </button>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
+                          <button onClick={() => reorderFile(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
                         </li>
@@ -640,14 +676,14 @@ useEffect(() => {
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
-                            onClick={() => handleSelectPdf(p)}
+                            onClick={() => handleSelectFile(p)}
                           >
                             {p.file.name}
                           </span>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
+                          <button onClick={() => reorderFile(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
                           </button>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
+                          <button onClick={() => reorderFile(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
                         </li>
@@ -666,45 +702,55 @@ useEffect(() => {
             <span>📄</span>
             <span
               className="truncate"
-              title={currentPdf ? currentPdf.file.name : "Sin selección"}
+              title={currentFile ? currentFile.file.name : "Sin selección"}
             >
-              {currentPdf ? currentPdf.file.name : "Sin selección"}
+              {currentFile ? currentFile.file.name : "Sin selección"}
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={prevPdf} disabled={queueIndex <= 0}>
+            <button onClick={prevFile} disabled={queueIndex <= 0}>
               ←
             </button>
-            <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
+            <button onClick={nextFile} disabled={queueIndex >= queue.length - 1}>
               →
             </button>
-            {currentPdf && (
+            {currentFile && (
               <input
                 type="checkbox"
-                checked={!!completed[currentPdf.path]}
+                checked={!!completed[currentFile.path]}
                 onChange={toggleComplete}
               />
             )}
-            {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
+            {currentFile && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
           </div>
         </div>
         <div className="flex-1">
-          {currentPdf && pdfUrl ? (
-            <iframe
-              title="Previsualización"
-              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-                currentPdf.file.name,
-              )}`}
-              className="w-full h-full border-0"
-            />
+          {currentFile && fileUrl ? (
+            currentFile.file.name.toLowerCase().endsWith('.pdf') ? (
+              <iframe
+                title="Previsualización"
+                src={`/visor/index.html?url=${encodeURIComponent(fileUrl)}&name=${encodeURIComponent(
+                  currentFile.file.name,
+                )}`}
+                className="w-full h-full border-0"
+              />
+            ) : (
+              <iframe
+                title="Previsualización"
+                src={fileUrl}
+                className="w-full h-full border-0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            )
           ) : (
             <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
-              Selecciona un PDF
+              Selecciona un archivo
             </div>
           )}
         </div>
         <div className="p-2 text-sm text-gray-500">
-          {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ""}
+          {currentFile ? `Semana ${currentFile.week} - ${currentFile.subject}` : ""}
         </div>
         </section>
       </main>
@@ -737,21 +783,21 @@ useEffect(() => {
         </div>
       )}
     </div>
-    {viewerOpen && currentPdf && pdfUrl && (
+    {viewerOpen && currentFile && fileUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        {!pdfFullscreen && (
+        {!fileFullscreen && (
           <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
-            <span className="truncate" title={currentPdf.file.name}>
-              {currentPdf.file.name}
+            <span className="truncate" title={currentFile.file.name}>
+              {currentFile.file.name}
             </span>
             <div className="flex flex-wrap items-center gap-2">
               <span>
-                Días restantes: {daysUntil(currentPdf)}
+                Días restantes: {daysUntil(currentFile)}
               </span>
               <button
                 onClick={() => {
                   setViewerOpen(false)
-                  setPdfFullscreen(false)
+                  setFileFullscreen(false)
                 }}
               >
                 ✕
@@ -760,13 +806,23 @@ useEffect(() => {
           </div>
         )}
         <div className="flex-1">
-          <iframe
-            title="Visor PDF"
-            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-              currentPdf.file.name,
-            )}`}
-            className="w-full h-full border-0"
-          />
+          {currentFile.file.name.toLowerCase().endsWith('.pdf') ? (
+            <iframe
+              title="Visor"
+              src={`/visor/index.html?url=${encodeURIComponent(fileUrl)}&name=${encodeURIComponent(
+                currentFile.file.name,
+              )}`}
+              className="w-full h-full border-0"
+            />
+          ) : (
+            <iframe
+              title="Visor"
+              src={fileUrl}
+              className="w-full h-full border-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          )}
         </div>
       </div>
     )}
