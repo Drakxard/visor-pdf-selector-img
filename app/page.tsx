@@ -372,9 +372,9 @@ useEffect(() => {
     ;(async () => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
-        const text = new TextDecoder().decode(buf)
+        const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
         const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0].split('\u0000')[0] : null
+        const raw = match ? match[0] : null
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
