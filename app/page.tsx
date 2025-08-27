@@ -38,6 +38,8 @@ export default function Home() {
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
+  const [rootDirHandle, setRootDirHandle] =
+    useState<FileSystemDirectoryHandle | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
@@ -517,6 +519,39 @@ useEffect(() => {
     }
   }
 
+  async function ensureDir(
+    root: FileSystemDirectoryHandle,
+    parts: string[],
+  ): Promise<FileSystemDirectoryHandle> {
+    let dir = root
+    for (const part of parts) {
+      dir = await dir.getDirectoryHandle(part, { create: true })
+    }
+    return dir
+  }
+
+  const saveLinkFile = async (
+    parts: string[],
+    fileName: string,
+    content: string,
+  ) => {
+    try {
+      let base = rootDirHandle
+      if (!base && 'showDirectoryPicker' in window) {
+        base = await (window as any).showDirectoryPicker({ mode: 'readwrite' })
+        setRootDirHandle(base)
+      }
+      if (!base) return
+      const dir = await ensureDir(base, parts)
+      const handle = await dir.getFileHandle(fileName, { create: true })
+      const writable = await handle.createWritable()
+      await writable.write(content)
+      await writable.close()
+    } catch (err) {
+      console.error('Failed to save link file', err)
+    }
+  }
+
   const handleDragOverArea = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     const rect = e.currentTarget.getBoundingClientRect()
@@ -549,6 +584,11 @@ useEffect(() => {
       value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
     })
     setDirFiles((prev) => [...prev, file])
+    void saveLinkFile(
+      [`Semana${viewWeek}`, viewSubject!, category],
+      fileName,
+      content,
+    )
     const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
     const pdf: PdfFile = {
       file,
