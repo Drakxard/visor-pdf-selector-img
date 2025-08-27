@@ -44,13 +44,40 @@ export default function Home() {
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const [rootHandle, setRootHandle] = useState<any | null>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    const anyWin = window as any
+    if (anyWin.pdfDirectoryHandle) {
+      ;(async () => {
+        try {
+          const perm =
+            (await anyWin.pdfDirectoryHandle.queryPermission({
+              mode: "readwrite",
+            })) === "granted"
+              ? "granted"
+              : await anyWin.pdfDirectoryHandle.requestPermission({
+                  mode: "readwrite",
+                })
+          if (perm === "granted") {
+            setRootHandle(anyWin.pdfDirectoryHandle)
+          }
+        } catch {
+          /* ignore */
+        }
+      })()
+    }
+  }, [])
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
     )
+
+  const sanitizeFileName = (name: string) =>
+    name.replace(/[\\/:*?"<>|]/g, "_")
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -67,6 +94,38 @@ export default function Home() {
       return true
     }
     return false
+  }
+
+  const saveLinkToDisk = async (relPath: string, content: string) => {
+    const base = rootHandle
+    if (!base) {
+      console.error("No se tiene acceso de escritura a la carpeta seleccionada")
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      setToast({ type: "error", text: "Sin acceso a la carpeta" })
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+      return
+    }
+    try {
+      const parts = relPath.split("/")
+      let dir = base
+      for (let i = 0; i < parts.length - 1; i++) {
+        dir = await dir.getDirectoryHandle(parts[i], { create: true })
+      }
+      const fileHandle = await dir.getFileHandle(parts[parts.length - 1], {
+        create: true,
+      })
+      const writable = await fileHandle.createWritable()
+      await writable.write(content)
+      await writable.close()
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      setToast({ type: "success", text: "Enlace guardado" })
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+    } catch (err) {
+      console.error("No se pudo guardar enlace", err)
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      setToast({ type: "error", text: "No se pudo crear el enlace" })
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+    }
   }
 
   const restoreCheckHistory = async (rawFiles: File[]) => {
@@ -99,15 +158,56 @@ export default function Home() {
     }
   }
 
+  const collectFilesFromHandle = async (
+    dir: any,
+    path: string = "root/",
+  ): Promise<File[]> => {
+    const out: File[] = []
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind === "file") {
+        const f = await handle.getFile()
+        Object.defineProperty(f, "webkitRelativePath", {
+          value: `${path}${name}`,
+        })
+        out.push(f)
+      } else if (handle.kind === "directory") {
+        const nested = await collectFilesFromHandle(handle, `${path}${name}/`)
+        out.push(...nested)
+      }
+    }
+    return out
+  }
+
   const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || [])
     const files = filterSystemFiles(rawFiles)
     setDirFiles(files)
     loadConfig(files)
     void restoreCheckHistory(rawFiles)
+    if (!setupComplete && step === 0) setStep(1)
   }
 
-  const triggerReselect = () => folderInputRef.current?.click()
+  const triggerReselect = async () => {
+    if ("showDirectoryPicker" in window) {
+      try {
+        const handle = await (window as any).showDirectoryPicker({
+          mode: "readwrite",
+        })
+        ;(window as any).pdfDirectoryHandle = handle
+        setRootHandle(handle)
+        const rawFiles = await collectFilesFromHandle(handle)
+        const files = filterSystemFiles(rawFiles)
+        setDirFiles(files)
+        loadConfig(files)
+        await restoreCheckHistory(rawFiles)
+        if (!setupComplete && step === 0) setStep(1)
+        return
+      } catch (err) {
+        console.error("No se pudo acceder a la carpeta", err)
+      }
+    }
+    folderInputRef.current?.click()
+  }
 
   const unlockNextWeek = () => {
     setUnlockedWeeks((prev) => {
@@ -415,17 +515,19 @@ useEffect(() => {
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
             <p>Paso 1: Selecciona la carpeta "gestor"</p>
+            <button
+              className="px-4 py-2 border rounded"
+              onClick={() => void triggerReselect()}
+            >
+              Elegir carpeta
+            </button>
             <input
               type="file"
+              ref={folderInputRef}
+              style={{ display: "none" }}
               // @ts-expect-error webkitdirectory es no estándar
               webkitdirectory=""
-              onChange={(e) => {
-                const rawFiles = Array.from(e.target.files || [])
-                const files = filterSystemFiles(rawFiles)
-                setDirFiles(files)
-                void restoreCheckHistory(rawFiles)
-                setStep(1)
-              }}
+              onChange={handleReselect}
             />
           </main>
         )
@@ -542,14 +644,16 @@ useEffect(() => {
       setDragCategory(null)
       return
     }
-    const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const rawName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const safeName = sanitizeFileName(rawName)
     const content = `[InternetShortcut]\nURL=${data}\n`
-    const file = new File([content], fileName, { type: 'text/plain' })
+    const file = new File([content], safeName, { type: 'text/plain' })
     Object.defineProperty(file, 'webkitRelativePath', {
-      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
+      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${safeName}`,
     })
     setDirFiles((prev) => [...prev, file])
-    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    const path = `Semana${viewWeek}/${viewSubject}/${category}/${safeName}`
+    void saveLinkToDisk(path, content)
     const pdf: PdfFile = {
       file,
       path,
@@ -846,7 +950,7 @@ useEffect(() => {
       <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
-          <button onClick={triggerReselect}>Reseleccionar carpeta</button>
+          <button onClick={() => void triggerReselect()}>Reseleccionar carpeta</button>
           <button onClick={unlockNextWeek}>Unlock Next Semana</button>
           <input
             type="file"
