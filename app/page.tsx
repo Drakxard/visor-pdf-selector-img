@@ -11,6 +11,7 @@ type PdfFile = {
   week: number
   subject: string
   tableType: "theory" | "practice"
+  isPdf: boolean
 }
 
 export default function Home() {
@@ -32,6 +33,7 @@ export default function Home() {
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
@@ -227,7 +229,6 @@ useEffect(() => {
   useEffect(() => {
     const tree: Record<number, Record<string, PdfFile[]>> = {}
     for (const file of dirFiles) {
-      if (!file.name.toLowerCase().endsWith(".pdf")) continue
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
@@ -246,6 +247,7 @@ useEffect(() => {
           week,
           subject,
           tableType: table,
+          isPdf: file.name.toLowerCase().endsWith(".pdf"),
         })
       }
     }
@@ -331,14 +333,29 @@ useEffect(() => {
     }
   }, [fileTree, completed, theory, practice])
 
-  // object url for viewer
+  // object url or embed link for viewer
   useEffect(() => {
-    if (currentPdf) {
+    if (!currentPdf) {
+      setPdfUrl(null)
+      setEmbedUrl(null)
+      return
+    }
+    if (currentPdf.isPdf) {
       const url = URL.createObjectURL(currentPdf.file)
       setPdfUrl(url)
+      setEmbedUrl(null)
       return () => URL.revokeObjectURL(url)
     }
     setPdfUrl(null)
+    ;(async () => {
+      try {
+        const text = await currentPdf.file.text()
+        const match = text.match(/URL=(.+)|^(https?:\/\/\S+)/m)
+        setEmbedUrl(match ? match[1] || match[2] : null)
+      } catch {
+        setEmbedUrl(null)
+      }
+    })()
   }, [currentPdf])
 
   // listen for fullscreen messages from the PDF viewer
@@ -445,7 +462,7 @@ useEffect(() => {
     return diff
   }
 
-  const handleSelectPdf = (pdf: PdfFile) => {
+  const handleSelectFile = (pdf: PdfFile) => {
     const idx = queue.findIndex((f) => f.path === pdf.path)
     if (idx >= 0) {
       setQueueIndex(idx)
@@ -608,7 +625,7 @@ useEffect(() => {
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
-                            onClick={() => handleSelectPdf(p)}
+                            onClick={() => handleSelectFile(p)}
                           >
                             {p.file.name}
                           </span>
@@ -640,7 +657,7 @@ useEffect(() => {
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
-                            onClick={() => handleSelectPdf(p)}
+                            onClick={() => handleSelectFile(p)}
                           >
                             {p.file.name}
                           </span>
@@ -689,17 +706,21 @@ useEffect(() => {
           </div>
         </div>
         <div className="flex-1">
-          {currentPdf && pdfUrl ? (
+          {currentPdf && (pdfUrl || embedUrl) ? (
             <iframe
               title="Previsualización"
-              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-                currentPdf.file.name,
-              )}`}
+              src={
+                currentPdf.isPdf
+                  ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
+                      currentPdf.file.name,
+                    )}`
+                  : embedUrl!
+              }
               className="w-full h-full border-0"
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
-              Selecciona un PDF
+              Selecciona un archivo
             </div>
           )}
         </div>
@@ -737,7 +758,7 @@ useEffect(() => {
         </div>
       )}
     </div>
-    {viewerOpen && currentPdf && pdfUrl && (
+    {viewerOpen && currentPdf && (pdfUrl || embedUrl) && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
         {!pdfFullscreen && (
           <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
@@ -761,10 +782,14 @@ useEffect(() => {
         )}
         <div className="flex-1">
           <iframe
-            title="Visor PDF"
-            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-              currentPdf.file.name,
-            )}`}
+            title={currentPdf.isPdf ? "Visor PDF" : "Visor"}
+            src={
+              currentPdf.isPdf
+                ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
+                    currentPdf.file.name,
+                  )}`
+                : embedUrl!
+            }
             className="w-full h-full border-0"
           />
         </div>
