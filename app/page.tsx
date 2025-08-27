@@ -37,6 +37,7 @@ export default function Home() {
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
+  const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
@@ -495,7 +496,7 @@ useEffect(() => {
     } else {
       setCurrentPdf(pdf)
     }
-    setViewerOpen(true)
+    setViewerOpen(pdf.isPdf)
   }
 
   const prevPdf = () => {
@@ -503,7 +504,7 @@ useEffect(() => {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(true)
+      setViewerOpen(queue[i].isPdf)
     }
   }
 
@@ -512,8 +513,53 @@ useEffect(() => {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(true)
+      setViewerOpen(queue[i].isPdf)
     }
+  }
+
+  const handleDragOverArea = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const rect = e.currentTarget.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    setDragCategory(y < rect.height / 2 ? 'theory' : 'practice')
+  }
+
+  const handleDragLeaveArea = () => setDragCategory(null)
+
+  const handleDropLink = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const data =
+      e.dataTransfer.getData('text/uri-list') ||
+      e.dataTransfer.getData('text/plain')
+    if (!data) {
+      setDragCategory(null)
+      return
+    }
+    const category = dragCategory || 'theory'
+    const suggested = data.includes('youtube') ? 'video.lnk' : 'enlace.lnk'
+    const name = prompt('Nombre del enlace:', suggested)
+    if (!name) {
+      setDragCategory(null)
+      return
+    }
+    const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const content = `[InternetShortcut]\nURL=${data}\n`
+    const file = new File([content], fileName, { type: 'text/plain' })
+    Object.defineProperty(file, 'webkitRelativePath', {
+      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
+    })
+    setDirFiles((prev) => [...prev, file])
+    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    const pdf: PdfFile = {
+      file,
+      path,
+      week: viewWeek!,
+      subject: viewSubject!,
+      tableType: category,
+      isPdf: false,
+    }
+    setCurrentPdf(pdf)
+    setDragCategory(null)
   }
 
   const toggleComplete = async () => {
@@ -634,7 +680,12 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
-            <div className="space-y-4">
+            <div
+              className="relative space-y-4"
+              onDragOver={handleDragOverArea}
+              onDragLeave={handleDragLeaveArea}
+              onDrop={handleDropLink}
+            >
               {theoryFiles.length > 0 && (
                 <div>
                   <h3 className="font-semibold">Teoría:</h3>
@@ -697,6 +748,28 @@ useEffect(() => {
                       )
                     })}
                   </ul>
+                </div>
+              )}
+              {dragCategory && (
+                <div className="absolute inset-0 flex flex-col bg-white/90 dark:bg-gray-800/90 pointer-events-none">
+                  <div
+                    className={`flex-1 flex items-center justify-center ${
+                      dragCategory === 'theory'
+                        ? 'bg-gray-200 dark:bg-gray-700'
+                        : ''
+                    }`}
+                  >
+                    Teoría
+                  </div>
+                  <div
+                    className={`flex-1 flex items-center justify-center ${
+                      dragCategory === 'practice'
+                        ? 'bg-gray-200 dark:bg-gray-700'
+                        : ''
+                    }`}
+                  >
+                    Práctica
+                  </div>
                 </div>
               )}
             </div>
