@@ -11,6 +11,7 @@ type PdfFile = {
   week: number
   subject: string
   tableType: "theory" | "practice"
+  isPdf: boolean
 }
 
 export default function Home() {
@@ -227,9 +228,9 @@ useEffect(() => {
   useEffect(() => {
     const tree: Record<number, Record<string, PdfFile[]>> = {}
     for (const file of dirFiles) {
-      if (!file.name.toLowerCase().endsWith(".pdf")) continue
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
+      const isPdf = file.name.toLowerCase().endsWith(".pdf")
       const parts = rel.split("/") || []
       if (parts.length >= 5) {
         const weekPart = parts[1]
@@ -246,6 +247,7 @@ useEffect(() => {
           week,
           subject,
           tableType: table,
+          isPdf,
         })
       }
     }
@@ -331,14 +333,41 @@ useEffect(() => {
     }
   }, [fileTree, completed, theory, practice])
 
-  // object url for viewer
+  // object url for viewer or external links
   useEffect(() => {
-    if (currentPdf) {
-      const url = URL.createObjectURL(currentPdf.file)
-      setPdfUrl(url)
-      return () => URL.revokeObjectURL(url)
+    let objectUrl: string | null = null
+    let cancelled = false
+
+    const prepare = async () => {
+      if (!currentPdf) {
+        setPdfUrl(null)
+        return
+      }
+      if (currentPdf.isPdf) {
+        objectUrl = URL.createObjectURL(currentPdf.file)
+        if (!cancelled) setPdfUrl(objectUrl)
+      } else {
+        try {
+          const text = await currentPdf.file.text()
+          const match = text.match(/URL=([^\n\r]+)/i)
+          let url = match ? match[1].trim() : text.trim()
+          if (!/^https?:/i.test(url)) {
+            objectUrl = URL.createObjectURL(currentPdf.file)
+            url = objectUrl
+          }
+          if (!cancelled) setPdfUrl(url)
+        } catch {
+          objectUrl = URL.createObjectURL(currentPdf.file)
+          if (!cancelled) setPdfUrl(objectUrl)
+        }
+      }
     }
-    setPdfUrl(null)
+    void prepare()
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [currentPdf])
 
   // listen for fullscreen messages from the PDF viewer
@@ -690,16 +719,24 @@ useEffect(() => {
         </div>
         <div className="flex-1">
           {currentPdf && pdfUrl ? (
-            <iframe
-              title="Previsualización"
-              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-                currentPdf.file.name,
-              )}`}
-              className="w-full h-full border-0"
-            />
+            currentPdf.isPdf ? (
+              <iframe
+                title="Previsualización"
+                src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                  currentPdf.file.name,
+                )}`}
+                className="w-full h-full border-0"
+              />
+            ) : (
+              <iframe
+                title="Previsualización"
+                src={pdfUrl}
+                className="w-full h-full border-0"
+              />
+            )
           ) : (
             <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
-              Selecciona un PDF
+              Selecciona un archivo
             </div>
           )}
         </div>
@@ -760,13 +797,21 @@ useEffect(() => {
           </div>
         )}
         <div className="flex-1">
-          <iframe
-            title="Visor PDF"
-            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
-              currentPdf.file.name,
-            )}`}
-            className="w-full h-full border-0"
-          />
+          {currentPdf.isPdf ? (
+            <iframe
+              title="Visor PDF"
+              src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+                currentPdf.file.name,
+              )}`}
+              className="w-full h-full border-0"
+            />
+          ) : (
+            <iframe
+              title="Contenido"
+              src={pdfUrl}
+              className="w-full h-full border-0"
+            />
+          )}
         </div>
       </div>
     )}
