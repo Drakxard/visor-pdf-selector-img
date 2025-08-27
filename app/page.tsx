@@ -333,6 +333,28 @@ useEffect(() => {
     }
   }, [fileTree, completed, theory, practice])
 
+  const toEmbedUrl = (url: string) => {
+    try {
+      const u = new URL(url)
+      if (u.hostname.includes("youtube.com")) {
+        const v = u.searchParams.get("v")
+        if (v) return `https://www.youtube.com/embed/${v}`
+        const parts = u.pathname.split("/")
+        const i = parts.indexOf("embed")
+        if (i >= 0 && parts[i + 1]) {
+          return `https://www.youtube.com/embed/${parts[i + 1]}`
+        }
+      }
+      if (u.hostname === "youtu.be") {
+        const id = u.pathname.slice(1)
+        if (id) return `https://www.youtube.com/embed/${id}`
+      }
+      return url
+    } catch {
+      return url
+    }
+  }
+
   // object url or embed link for viewer
   useEffect(() => {
     if (!currentPdf) {
@@ -349,9 +371,12 @@ useEffect(() => {
     setPdfUrl(null)
     ;(async () => {
       try {
-        const text = await currentPdf.file.text()
-        const match = text.match(/URL=(.+)|^(https?:\/\/\S+)/m)
-        setEmbedUrl(match ? match[1] || match[2] : null)
+        const buf = await currentPdf.file.arrayBuffer()
+        const text = new TextDecoder().decode(buf)
+        const match = text.match(/https?:\/\/[^\s]+/)
+        const raw = match ? match[0].split('\u0000')[0] : null
+        const url = raw ? toEmbedUrl(raw) : null
+        setEmbedUrl(url)
       } catch {
         setEmbedUrl(null)
       }
@@ -470,6 +495,7 @@ useEffect(() => {
     } else {
       setCurrentPdf(pdf)
     }
+    setViewerOpen(true)
   }
 
   const prevPdf = () => {
@@ -717,6 +743,8 @@ useEffect(() => {
                   : embedUrl!
               }
               className="w-full h-full border-0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
@@ -791,6 +819,8 @@ useEffect(() => {
                 : embedUrl!
             }
             className="w-full h-full border-0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
           />
         </div>
       </div>
