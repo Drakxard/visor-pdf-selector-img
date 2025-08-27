@@ -13,6 +13,15 @@ type PdfFile = {
   tableType: "theory" | "practice"
 }
 
+type VideoFile = {
+  file: File
+  path: string
+  week: number
+  subject: string
+  tableType: "theory" | "practice"
+  url: string
+}
+
 export default function Home() {
   const { setTheme } = useTheme()
   const [started, setStarted] = useState(false)
@@ -25,13 +34,16 @@ export default function Home() {
   const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
+  const [videoTree, setVideoTree] = useState<Record<number, Record<string, VideoFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
+  const [currentVideo, setCurrentVideo] = useState<VideoFile | null>(null)
   const [queue, setQueue] = useState<PdfFile[]>([])
   const [queueIndex, setQueueIndex] = useState(0)
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [videoOpen, setVideoOpen] = useState(false)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
@@ -48,6 +60,26 @@ export default function Home() {
     files.filter(
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
     )
+
+  const parseLnk = async (file: File): Promise<string | null> => {
+    try {
+      const buf = await file.arrayBuffer()
+      const text = new TextDecoder("utf-16le").decode(buf)
+      const idx = text.indexOf("http")
+      if (idx >= 0) {
+        const end = text.indexOf("\u0000", idx)
+        return text.substring(idx, end >= 0 ? end : undefined)
+      }
+    } catch (e) {
+      console.warn("parseLnk failed", e)
+    }
+    return null
+  }
+
+  const getYouTubeId = (url: string) => {
+    const m = url.match(/(?:v=|be\/)([\w-]{11})/)
+    return m ? m[1] : url
+  }
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -225,49 +257,73 @@ useEffect(() => {
 
   // build tree from selected directory
   useEffect(() => {
-    const tree: Record<number, Record<string, PdfFile[]>> = {}
-    for (const file of dirFiles) {
-      if (!file.name.toLowerCase().endsWith(".pdf")) continue
-      const rel = (file as any).webkitRelativePath || ""
-      if (rel.split("/").includes("system")) continue
-      const parts = rel.split("/") || []
-      if (parts.length >= 5) {
-        const weekPart = parts[1]
-        const subject = parts[2]
-        const table = parts[3].toLowerCase().includes("pract")
-          ? "practice"
-          : "theory"
-        const week = parseInt(weekPart.replace(/\D/g, ""))
-        if (!tree[week]) tree[week] = {}
-        if (!tree[week][subject]) tree[week][subject] = []
-        tree[week][subject].push({
-          file,
-          path: parts.slice(1).join("/"),
-          week,
-          subject,
-          tableType: table,
-        })
-      }
-    }
-    for (const w in tree) {
-      for (const s in tree[w]) {
-        const key = `${w}-${s}`
-        if (orders[key]) {
-          tree[w][s].sort(
-            (a, b) => orders[key].indexOf(a.path) - orders[key].indexOf(b.path),
-          )
-        } else {
-          tree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
+    const build = async () => {
+      const pdfTree: Record<number, Record<string, PdfFile[]>> = {}
+      const vidTree: Record<number, Record<string, VideoFile[]>> = {}
+      for (const file of dirFiles) {
+        const rel = (file as any).webkitRelativePath || ""
+        if (rel.split("/").includes("system")) continue
+        const parts = rel.split("/") || []
+        if (parts.length >= 5) {
+          const weekPart = parts[1]
+          const subject = parts[2]
+          const table = parts[3].toLowerCase().includes("pract")
+            ? "practice"
+            : "theory"
+          const week = parseInt(weekPart.replace(/\D/g, ""))
+          if (file.name.toLowerCase().endsWith(".pdf")) {
+            if (!pdfTree[week]) pdfTree[week] = {}
+            if (!pdfTree[week][subject]) pdfTree[week][subject] = []
+            pdfTree[week][subject].push({
+              file,
+              path: parts.slice(1).join("/"),
+              week,
+              subject,
+              tableType: table,
+            })
+          } else if (file.name.toLowerCase().endsWith(".lnk")) {
+            const url = await parseLnk(file)
+            if (!url) continue
+            if (!vidTree[week]) vidTree[week] = {}
+            if (!vidTree[week][subject]) vidTree[week][subject] = []
+            vidTree[week][subject].push({
+              file,
+              path: parts.slice(1).join("/"),
+              week,
+              subject,
+              tableType: table,
+              url,
+            })
+          }
         }
       }
+      for (const w in pdfTree) {
+        for (const s in pdfTree[w]) {
+          const key = `${w}-${s}`
+          if (orders[key]) {
+            pdfTree[w][s].sort(
+              (a, b) => orders[key].indexOf(a.path) - orders[key].indexOf(b.path),
+            )
+          } else {
+            pdfTree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
+          }
+        }
+      }
+      for (const w in vidTree) {
+        for (const s in vidTree[w]) {
+          vidTree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
+        }
+      }
+      for (let w = 1; w <= weeks; w++) {
+        if (!pdfTree[w]) pdfTree[w] = {}
+        names.forEach((n) => {
+          if (!pdfTree[w][n]) pdfTree[w][n] = []
+        })
+      }
+      setFileTree(pdfTree)
+      setVideoTree(vidTree)
     }
-    for (let w = 1; w <= weeks; w++) {
-      if (!tree[w]) tree[w] = {}
-      names.forEach((n) => {
-        if (!tree[w][n]) tree[w][n] = []
-      })
-    }
-    setFileTree(tree)
+    void build()
   }, [dirFiles, orders, weeks, names])
 
   useEffect(() => {
@@ -275,10 +331,13 @@ useEffect(() => {
     Object.values(fileTree).forEach((subjects) => {
       Object.keys(subjects).forEach((s) => subs.add(s))
     })
+    Object.values(videoTree).forEach((subjects) => {
+      Object.keys(subjects).forEach((s) => subs.add(s))
+    })
     if (subs.size && names.length === 0) {
       setNames(Array.from(subs))
     }
-  }, [fileTree, names.length])
+  }, [fileTree, videoTree, names.length])
 
   // compute queue ordered by urgency
   useEffect(() => {
@@ -528,6 +587,8 @@ useEffect(() => {
     viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
   const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
   const practiceFiles = selectedFiles.filter((f) => f.tableType === "practice")
+  const videoFiles =
+    viewWeek && viewSubject ? videoTree[viewWeek]?.[viewSubject] || [] : []
 
   // main interface
   return (
@@ -656,6 +717,28 @@ useEffect(() => {
                   </ul>
                 </div>
               )}
+              {videoFiles.length > 0 && (
+                <div>
+                  <h3 className="font-semibold">Videos:</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                    {videoFiles.map((v) => (
+                      <button
+                        key={v.path}
+                        className="flex flex-col items-center"
+                        onClick={() => {
+                          setCurrentVideo(v)
+                          setVideoOpen(true)
+                        }}
+                      >
+                        <span className="text-4xl">🎬</span>
+                        <span className="mt-1 text-xs w-24 truncate" title={v.file.name}>
+                          {v.file.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -767,6 +850,26 @@ useEffect(() => {
             )}`}
             className="w-full h-full border-0"
           />
+        </div>
+      </div>
+    )}
+    {videoOpen && currentVideo && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+        <div className="bg-white dark:bg-gray-900 p-4 rounded max-w-3xl w-full">
+          <div className="relative w-full aspect-video">
+            <iframe
+              className="w-full h-full"
+              src={`https://www.youtube.com/embed/${getYouTubeId(currentVideo.url)}`}
+              title={currentVideo.file.name}
+              allowFullScreen
+            />
+          </div>
+          <button
+            className="mt-2 px-4 py-2 border rounded"
+            onClick={() => setVideoOpen(false)}
+          >
+            Cerrar
+          </button>
         </div>
       </div>
     )}
