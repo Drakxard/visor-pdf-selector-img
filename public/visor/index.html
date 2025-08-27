@@ -89,6 +89,19 @@
     .upload-subtext { font-size: 14px; color: #9aa0a6; }
     #file-input { display: none; }
 
+    #link-drop-overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      z-index: 1000;
+    }
+    #link-drop-overlay.hidden { display: none; }
+    .link-zone {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      font-size: 24px; color: #e8eaed; background: rgba(0,0,0,0.6);
+      border: 2px dashed #8ab4f8;
+    }
+    body.light-mode .link-zone { color: #202124; }
+    .link-zone.hover { background: rgba(138,180,248,0.3); }
+
     #pdf-container {
       position: absolute; top: 56px; left: 0; right: 0; bottom: 0;
       overflow-y: auto; overflow-x: auto; display: flex; flex-direction: column;
@@ -417,11 +430,15 @@
         • <kbd>Ctrl</kbd> + <kbd>I</kbd> nuevamente para guardar todas las selecciones<br>
         • Se admite marcar en varias páginas<br>
         <small>Las imágenes se guardan en la carpeta elegida</small>
-      </div>
-    </div>
+  </div>
+  </div>
+  </div>
+  <div id="link-drop-overlay" class="hidden">
+    <div class="link-zone teo">Teoría</div>
+    <div class="link-zone prac">Práctica</div>
   </div>
 
-   Modal de categoría (Teoría/Práctica) 
+  <!-- Modal de categoría (Teoría/Práctica) -->
   <div id="category-modal" class="info-modal hidden" role="dialog" aria-modal="true" aria-labelledby="category-title">
     <div class="info-content">
       <div class="info-header">
@@ -1784,12 +1801,74 @@
             };
             reqPra.onerror = checkDone;
           });
-        } catch (e) {
-          console.warn('No se pudieron cargar carpetas de categorías');
-        }
+      } catch (e) {
+        console.warn('No se pudieron cargar carpetas de categorías');
       }
+    }
 
-      function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
+    // Drag & drop YouTube links to create .lnk files
+    const linkOverlay = document.getElementById('link-drop-overlay');
+    const linkZones = linkOverlay ? linkOverlay.querySelectorAll('.link-zone') : [];
+    window.addEventListener('dragenter', (e) => {
+      const types = Array.from(e.dataTransfer?.types || []);
+      if (types.includes('text/uri-list') || types.includes('text/plain')) {
+        linkOverlay?.classList.remove('hidden');
+      }
+    });
+    if (linkOverlay) {
+      linkOverlay.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const rect = linkOverlay.getBoundingClientRect();
+        const mid = rect.top + rect.height / 2;
+        linkZones.forEach((z) => z.classList.remove('hover'));
+        if (e.clientY < mid) {
+          linkZones[0].classList.add('hover');
+        } else {
+          linkZones[1].classList.add('hover');
+        }
+      });
+      ;['dragleave', 'dragend'].forEach((ev) => {
+        linkOverlay.addEventListener(ev, (ev2) => {
+          if (ev2.target === linkOverlay) linkOverlay.classList.add('hidden');
+        });
+      });
+      linkOverlay.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        linkOverlay.classList.add('hidden');
+        const data = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+        const url = data.trim();
+        if (!/https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url)) {
+          showToast('Solo se aceptan enlaces de YouTube', 'error');
+          return;
+        }
+        const rect = linkOverlay.getBoundingClientRect();
+        const cat = e.clientY < rect.top + rect.height / 2 ? 'teo' : 'practica';
+        await saveLinkFile(url, cat);
+      });
+    }
+
+    async function saveLinkFile(url, cat) {
+      if (!supportsFileSystemAccess()) {
+        showToast('Tu navegador no soporta guardar enlaces', 'error');
+        return;
+      }
+      const handle = await ensureCategoryHandle(cat);
+      if (!handle) return;
+      const name = prompt('Nombre del archivo', 'video.lnk');
+      if (!name) return;
+      try {
+        const fileHandle = await handle.getFileHandle(name.endsWith('.lnk') ? name : `${name}.lnk`, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(`[InternetShortcut]\nURL=${url}\n`);
+        await writable.close();
+        showToast('Enlace guardado', 'success');
+      } catch (err) {
+        console.error('No se pudo guardar el enlace', err);
+        showToast('No se pudo guardar el enlace', 'error');
+      }
+    }
+
+    function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
         const rect = document.createElement('div');
         rect.className = 'selection-rect';
         rect.dataset.page = String(pageNum);
