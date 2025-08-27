@@ -63,6 +63,36 @@ export default function Home() {
   const sanitizeFileName = (name: string) =>
     name.replace(/[\\/:*?"<>|]/g, "_")
 
+  const restoreCheckHistory = async (rawFiles: File[]) => {
+    try {
+      const full = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history.json'))
+      if (full) {
+        const txt = await full.text()
+        const data = JSON.parse(txt || '{}')
+        if (data && typeof data === 'object' && data.completed) {
+          setCompleted((prev) => ({ ...prev, ...data.completed }))
+          setToast({ type: 'success', text: 'Historial restaurado desde: system/check-semanas/check-history.json' })
+          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+          return
+        }
+      }
+      const historyW1 = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history-sem1.json'))
+      if (historyW1) {
+        const txt = await historyW1.text()
+        const data = JSON.parse(txt || '{}')
+        if (data && typeof data === 'object' && data.completed) {
+          setCompleted((prev) => ({ ...prev, ...data.completed }))
+          setToast({ type: 'success', text: 'Historial Semana 1 restaurado desde: system/check-semanas/check-history-sem1.json' })
+          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+        }
+      }
+    } catch (err) {
+      console.warn('No se pudo leer check-history-sem1.json', err)
+    }
+  }
+
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
     if (cfg) {
@@ -78,6 +108,44 @@ export default function Home() {
       return true
     }
     return false
+  }
+
+  const readAllFiles = async (dirHandle: any) => {
+    const files: File[] = []
+    const walk = async (dir: any, path: string[]) => {
+      for await (const [name, handle] of dir.entries()) {
+        if (handle.kind === 'file') {
+          const file = await handle.getFile()
+          Object.defineProperty(file, 'webkitRelativePath', {
+            value: [dirHandle.name, ...path, name].join('/'),
+          })
+          files.push(file)
+        } else if (handle.kind === 'directory') {
+          await walk(handle, [...path, name])
+        }
+      }
+    }
+    await walk(dirHandle, [])
+    return files
+  }
+
+  const pickRootDir = async () => {
+    if (!('showDirectoryPicker' in window)) {
+      folderInputRef.current?.click()
+      return
+    }
+    try {
+      const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' })
+      setRootHandle(handle)
+      const rawFiles = await readAllFiles(handle)
+      const files = filterSystemFiles(rawFiles)
+      setDirFiles(files)
+      await loadConfig(files)
+      void restoreCheckHistory(rawFiles)
+      setStep(1)
+    } catch (err) {
+      console.error('No se pudo acceder a la carpeta', err)
+    }
   }
 
   const saveLinkToDisk = async (relPath: string, content: string) => {
@@ -112,45 +180,22 @@ export default function Home() {
     }
   }
 
-  const restoreCheckHistory = async (rawFiles: File[]) => {
-    try {
-      const full = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history.json'))
-      if (full) {
-        const txt = await full.text()
-        const data = JSON.parse(txt || '{}')
-        if (data && typeof data === 'object' && data.completed) {
-          setCompleted((prev) => ({ ...prev, ...data.completed }))
-          setToast({ type: 'success', text: 'Historial restaurado desde: system/check-semanas/check-history.json' })
-          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-          return
-        }
-      }
-      const historyW1 = rawFiles.find((f) => ((f as any).webkitRelativePath || '').toLowerCase().endsWith('/system/check-semanas/check-history-sem1.json'))
-      if (historyW1) {
-        const txt = await historyW1.text()
-        const data = JSON.parse(txt || '{}')
-        if (data && typeof data === 'object' && data.completed) {
-          setCompleted((prev) => ({ ...prev, ...data.completed }))
-          setToast({ type: 'success', text: 'Historial Semana 1 restaurado desde: system/check-semanas/check-history-sem1.json' })
-          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-        }
-      }
-    } catch (err) {
-      console.warn('No se pudo leer check-history-sem1.json', err)
-    }
-  }
-
   const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || [])
     const files = filterSystemFiles(rawFiles)
     setDirFiles(files)
     loadConfig(files)
     void restoreCheckHistory(rawFiles)
+    setStep(1)
   }
 
-  const triggerReselect = () => folderInputRef.current?.click()
+  const triggerReselect = () => {
+    if ('showDirectoryPicker' in window) {
+      void pickRootDir()
+    } else {
+      folderInputRef.current?.click()
+    }
+  }
 
   const unlockNextWeek = () => {
     setUnlockedWeeks((prev) => {
@@ -458,17 +503,19 @@ useEffect(() => {
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
             <p>Paso 1: Selecciona la carpeta "gestor"</p>
+            <button
+              className="px-4 py-2 border rounded"
+              onClick={pickRootDir}
+            >
+              Elegir carpeta
+            </button>
             <input
+              ref={folderInputRef}
               type="file"
+              className="hidden"
               // @ts-expect-error webkitdirectory es no estándar
               webkitdirectory=""
-              onChange={(e) => {
-                const rawFiles = Array.from(e.target.files || [])
-                const files = filterSystemFiles(rawFiles)
-                setDirFiles(files)
-                void restoreCheckHistory(rawFiles)
-                setStep(1)
-              }}
+              onChange={handleReselect}
             />
           </main>
         )
