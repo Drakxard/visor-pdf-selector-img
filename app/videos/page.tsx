@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 interface Video {
   title: string
@@ -21,13 +22,17 @@ function toEmbed(url: string) {
 export default function VideosPage() {
   const [videos, setVideos] = useState<Video[]>([])
   const [current, setCurrent] = useState<Video | null>(null)
+  const params = useSearchParams()
+
+  const dir = params.get('dir') || ''
 
   useEffect(() => {
-    fetch('/api/videos')
+    const url = dir ? `/api/videos?dir=${encodeURIComponent(dir)}` : '/api/videos'
+    fetch(url)
       .then((res) => res.json())
       .then((data) => setVideos(data.videos || []))
       .catch(() => setVideos([]))
-  }, [])
+  }, [dir])
 
   return (
     <div className="p-4 space-y-4">
