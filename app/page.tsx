@@ -44,6 +44,7 @@ export default function Home() {
   const folderInputRef = useRef<HTMLInputElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const [rootHandle, setRootHandle] = useState<any | null>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
@@ -67,6 +68,46 @@ export default function Home() {
       return true
     }
     return false
+  }
+
+  const pickRootHandle = async (): Promise<any | null> => {
+    if (!("showDirectoryPicker" in window)) return null
+    try {
+      const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" })
+      setRootHandle(handle)
+      return handle
+    } catch {
+      return null
+    }
+  }
+
+  const saveLinkToDisk = async (relPath: string, content: string) => {
+    let base = rootHandle
+    if (!base) {
+      base = await pickRootHandle()
+      if (!base) return
+    }
+    try {
+      const parts = relPath.split("/")
+      let dir = base
+      for (let i = 0; i < parts.length - 1; i++) {
+        dir = await dir.getDirectoryHandle(parts[i], { create: true })
+      }
+      const fileHandle = await dir.getFileHandle(parts[parts.length - 1], {
+        create: true,
+      })
+      const writable = await fileHandle.createWritable()
+      await writable.write(content)
+      await writable.close()
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      setToast({ type: "success", text: "Enlace guardado" })
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+    } catch (err) {
+      console.error("No se pudo guardar enlace", err)
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      setToast({ type: "error", text: "No se pudo crear el enlace" })
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+    }
   }
 
   const restoreCheckHistory = async (rawFiles: File[]) => {
@@ -550,6 +591,7 @@ useEffect(() => {
     })
     setDirFiles((prev) => [...prev, file])
     const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    void saveLinkToDisk(path, content)
     const pdf: PdfFile = {
       file,
       path,
