@@ -333,6 +333,13 @@ useEffect(() => {
     }
   }, [fileTree, completed, theory, practice])
 
+  const parseShortcutUrl = (text: string) => {
+    const m = text.match(/URL=(.+)/i)
+    if (m) return m[1].trim()
+    const generic = text.match(/https?:\/\/[^\s]+/)
+    return generic ? generic[0] : null
+  }
+
   const toEmbedUrl = (url: string) => {
     try {
       const u = new URL(url)
@@ -373,8 +380,7 @@ useEffect(() => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
         const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const raw = parseShortcutUrl(text)
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
