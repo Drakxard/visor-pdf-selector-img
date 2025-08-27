@@ -45,6 +45,8 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+  const [draggingLink, setDraggingLink] = useState(false)
+  const [dragTarget, setDragTarget] = useState<"theory" | "practice" | null>(null)
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -495,7 +497,7 @@ useEffect(() => {
     } else {
       setCurrentPdf(pdf)
     }
-    setViewerOpen(true)
+    setViewerOpen(pdf.isPdf)
   }
 
   const prevPdf = () => {
@@ -567,6 +569,64 @@ useEffect(() => {
     setOrders({ ...orders, [key]: arr.map((p) => p.path) })
   }
 
+  const addLinkFile = (url: string, table: "theory" | "practice") => {
+    if (!viewWeek || !viewSubject) return
+    const safeName =
+      url.replace(/https?:\/\/www\.|https?:\/\//, "").replace(/[^a-z0-9]/gi, "-") ||
+      "link"
+    const fileName = `${safeName}.lnk`
+    const blob = new Blob([url], { type: "text/plain" })
+    const file = new File([blob], fileName)
+    const path = `Semana ${viewWeek}/${viewSubject}/${
+      table === "practice" ? "Practica" : "Teoria"
+    }/${fileName}`
+    const entry: PdfFile = {
+      file,
+      path,
+      week: viewWeek,
+      subject: viewSubject,
+      tableType: table,
+      isPdf: false,
+    }
+    setDirFiles([...dirFiles, file])
+    setFileTree({
+      ...fileTree,
+      [viewWeek]: {
+        ...(fileTree[viewWeek] || {}),
+        [viewSubject]: [...(fileTree[viewWeek]?.[viewSubject] || []), entry],
+      },
+    })
+  }
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (
+      !e.dataTransfer.types.includes("text/uri-list") &&
+      !e.dataTransfer.types.includes("text/plain")
+    )
+      return
+    e.preventDefault()
+    const rect = e.currentTarget.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    setDraggingLink(true)
+    setDragTarget(y < rect.height / 2 ? "theory" : "practice")
+  }
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const url =
+      e.dataTransfer.getData("text/uri-list") ||
+      e.dataTransfer.getData("text/plain")
+    setDraggingLink(false)
+    setDragTarget(null)
+    if (!url) return
+    e.preventDefault()
+    addLinkFile(url, dragTarget || "theory")
+  }
+
+  const handleDragLeave = () => {
+    setDraggingLink(false)
+    setDragTarget(null)
+  }
+
   const selectedFiles =
     viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
   const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
@@ -634,7 +694,30 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
-            <div className="space-y-4">
+            <div
+              className="space-y-4 relative"
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              onDragLeave={handleDragLeave}
+            >
+              {draggingLink && (
+                <div className="absolute inset-0 bg-white/80 flex flex-col text-center pointer-events-none">
+                  <div
+                    className={`flex-1 flex items-center justify-center border-b ${
+                      dragTarget === "theory" ? "bg-blue-200" : ""
+                    }`}
+                  >
+                    Teoría
+                  </div>
+                  <div
+                    className={`flex-1 flex items-center justify-center ${
+                      dragTarget === "practice" ? "bg-blue-200" : ""
+                    }`}
+                  >
+                    Práctica
+                  </div>
+                </div>
+              )}
               {theoryFiles.length > 0 && (
                 <div>
                   <h3 className="font-semibold">Teoría:</h3>
