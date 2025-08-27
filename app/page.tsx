@@ -36,6 +36,7 @@ export default function Home() {
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
+  const [videoOpen, setVideoOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
@@ -495,7 +496,13 @@ useEffect(() => {
     } else {
       setCurrentPdf(pdf)
     }
-    setViewerOpen(true)
+    if (pdf.isPdf) {
+      setViewerOpen(true)
+      setVideoOpen(false)
+    } else {
+      setViewerOpen(false)
+      setVideoOpen(true)
+    }
   }
 
   const prevPdf = () => {
@@ -503,7 +510,13 @@ useEffect(() => {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(true)
+      if (queue[i].isPdf) {
+        setViewerOpen(true)
+        setVideoOpen(false)
+      } else {
+        setViewerOpen(false)
+        setVideoOpen(true)
+      }
     }
   }
 
@@ -512,7 +525,13 @@ useEffect(() => {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(true)
+      if (queue[i].isPdf) {
+        setViewerOpen(true)
+        setVideoOpen(false)
+      } else {
+        setViewerOpen(false)
+        setVideoOpen(true)
+      }
     }
   }
 
@@ -728,7 +747,21 @@ useEffect(() => {
                 onChange={toggleComplete}
               />
             )}
-            {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
+            {currentPdf && (
+              <button
+                onClick={() => {
+                  if (currentPdf.isPdf) {
+                    setViewerOpen(true)
+                    setVideoOpen(false)
+                  } else {
+                    setVideoOpen(true)
+                    setViewerOpen(false)
+                  }
+                }}
+              >
+                Abrir
+              </button>
+            )}
           </div>
         </div>
         <div className="flex-1">
@@ -786,7 +819,7 @@ useEffect(() => {
         </div>
       )}
     </div>
-    {viewerOpen && currentPdf && (pdfUrl || embedUrl) && (
+    {viewerOpen && currentPdf && currentPdf.isPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
         {!pdfFullscreen && (
           <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
@@ -810,14 +843,32 @@ useEffect(() => {
         )}
         <div className="flex-1">
           <iframe
-            title={currentPdf.isPdf ? "Visor PDF" : "Visor"}
-            src={
-              currentPdf.isPdf
-                ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
-                    currentPdf.file.name,
-                  )}`
-                : embedUrl!
-            }
+            title="Visor PDF"
+            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
+              currentPdf.file.name,
+            )}`}
+            className="w-full h-full border-0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        </div>
+      </div>
+    )}
+    {videoOpen && currentPdf && !currentPdf.isPdf && embedUrl && (
+      <div className="fixed inset-0 z-50 flex flex-col bg-black/90">
+        <div className="flex justify-end p-2">
+          <button
+            onClick={() => {
+              setVideoOpen(false)
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <iframe
+            title="YouTube"
+            src={embedUrl}
             className="w-full h-full border-0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
