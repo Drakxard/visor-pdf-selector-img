@@ -36,6 +36,7 @@ export default function Home() {
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
+  const [videoOpen, setVideoOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
@@ -360,6 +361,8 @@ useEffect(() => {
     if (!currentPdf) {
       setPdfUrl(null)
       setEmbedUrl(null)
+      setViewerOpen(false)
+      setVideoOpen(false)
       return
     }
     if (currentPdf.isPdf) {
@@ -489,30 +492,47 @@ useEffect(() => {
 
   const handleSelectFile = (pdf: PdfFile) => {
     const idx = queue.findIndex((f) => f.path === pdf.path)
-    if (idx >= 0) {
-      setQueueIndex(idx)
-      setCurrentPdf(queue[idx])
+    const file = idx >= 0 ? queue[idx] : pdf
+    if (idx >= 0) setQueueIndex(idx)
+    setCurrentPdf(file)
+    if (file.isPdf) {
+      setVideoOpen(false)
+      setViewerOpen(true)
     } else {
-      setCurrentPdf(pdf)
+      setViewerOpen(false)
+      setVideoOpen(true)
     }
-    setViewerOpen(true)
   }
 
   const prevPdf = () => {
     if (queueIndex > 0) {
       const i = queueIndex - 1
+      const file = queue[i]
       setQueueIndex(i)
-      setCurrentPdf(queue[i])
-      setViewerOpen(true)
+      setCurrentPdf(file)
+      if (file.isPdf) {
+        setVideoOpen(false)
+        setViewerOpen(true)
+      } else {
+        setViewerOpen(false)
+        setVideoOpen(true)
+      }
     }
   }
 
   const nextPdf = () => {
     if (queueIndex < queue.length - 1) {
       const i = queueIndex + 1
+      const file = queue[i]
       setQueueIndex(i)
-      setCurrentPdf(queue[i])
-      setViewerOpen(true)
+      setCurrentPdf(file)
+      if (file.isPdf) {
+        setVideoOpen(false)
+        setViewerOpen(true)
+      } else {
+        setViewerOpen(false)
+        setVideoOpen(true)
+      }
     }
   }
 
@@ -728,7 +748,27 @@ useEffect(() => {
                 onChange={toggleComplete}
               />
             )}
-            {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
+            {currentPdf && (
+              currentPdf.isPdf ? (
+                <button
+                  onClick={() => {
+                    setVideoOpen(false)
+                    setViewerOpen(true)
+                  }}
+                >
+                  Abrir
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    setViewerOpen(false)
+                    setVideoOpen(true)
+                  }}
+                >
+                  Abrir
+                </button>
+              )
+            )}
           </div>
         </div>
         <div className="flex-1">
@@ -786,7 +826,7 @@ useEffect(() => {
         </div>
       )}
     </div>
-    {viewerOpen && currentPdf && (pdfUrl || embedUrl) && (
+    {viewerOpen && currentPdf?.isPdf && pdfUrl && (
       <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
         {!pdfFullscreen && (
           <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
@@ -810,18 +850,33 @@ useEffect(() => {
         )}
         <div className="flex-1">
           <iframe
-            title={currentPdf.isPdf ? "Visor PDF" : "Visor"}
-            src={
-              currentPdf.isPdf
-                ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
-                    currentPdf.file.name,
-                  )}`
-                : embedUrl!
-            }
+            title="Visor PDF"
+            src={`/visor/index.html?url=${encodeURIComponent(pdfUrl)}&name=${encodeURIComponent(
+              currentPdf.file.name,
+            )}`}
             className="w-full h-full border-0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
           />
+        </div>
+      </div>
+    )}
+    {videoOpen && currentPdf && !currentPdf.isPdf && embedUrl && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+        <div className="relative w-full max-w-3xl aspect-video">
+          <iframe
+            src={embedUrl}
+            title={currentPdf.file.name}
+            className="w-full h-full border-0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+          <button
+            className="absolute top-2 right-2 text-white"
+            onClick={() => setVideoOpen(false)}
+          >
+            ✕
+          </button>
         </div>
       </div>
     )}
