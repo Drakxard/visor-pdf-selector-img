@@ -25,6 +25,8 @@ export default function Home() {
   const [weeks, setWeeks] = useState(1)
   const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
+  const [rootDirHandle, setRootDirHandle] =
+    useState<FileSystemDirectoryHandle | null>(null)
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
@@ -99,12 +101,22 @@ export default function Home() {
     }
   }
 
-  const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReselect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || [])
     const files = filterSystemFiles(rawFiles)
     setDirFiles(files)
-    loadConfig(files)
+    void loadConfig(files)
     void restoreCheckHistory(rawFiles)
+    if ("showDirectoryPicker" in window) {
+      try {
+        const handle = await (window as any).showDirectoryPicker({
+          mode: "readwrite",
+        })
+        setRootDirHandle(handle)
+      } catch (err) {
+        console.warn("No se seleccionó directorio para escritura", err)
+      }
+    }
   }
 
   const triggerReselect = () => folderInputRef.current?.click()
@@ -526,7 +538,7 @@ useEffect(() => {
 
   const handleDragLeaveArea = () => setDragCategory(null)
 
-  const handleDropLink = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDropLink = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     const data =
       e.dataTransfer.getData('text/uri-list') ||
@@ -560,6 +572,31 @@ useEffect(() => {
     }
     setCurrentPdf(pdf)
     setDragCategory(null)
+    if (rootDirHandle) {
+      try {
+        const perm = await rootDirHandle.queryPermission({ mode: 'readwrite' })
+        if (perm !== 'granted') {
+          const req = await rootDirHandle.requestPermission({
+            mode: 'readwrite',
+          })
+          if (req !== 'granted') throw new Error('Permiso denegado')
+        }
+        const dirs = [`Semana${viewWeek}`, viewSubject!, category]
+        let dirHandle = rootDirHandle
+        for (const dirName of dirs) {
+          dirHandle = await dirHandle.getDirectoryHandle(dirName, { create: true })
+        }
+        const lnkHandle = await dirHandle.getFileHandle(fileName, { create: true })
+        const writable = await lnkHandle.createWritable()
+        await writable.write(content)
+        await writable.close()
+      } catch (err) {
+        console.error('No se pudo guardar el enlace', err)
+        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+        setToast({ type: 'error', text: 'No se pudo guardar el enlace' })
+        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+      }
+    }
   }
 
   const toggleComplete = async () => {
