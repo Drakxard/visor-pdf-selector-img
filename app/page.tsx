@@ -48,10 +48,20 @@ export default function Home() {
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
+  useEffect(() => {
+    const anyWin = window as any
+    if (anyWin.pdfDirectoryHandle) {
+      setRootHandle(anyWin.pdfDirectoryHandle)
+    }
+  }, [])
+
   const filterSystemFiles = (files: File[]) =>
     files.filter(
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
     )
+
+  const sanitizeFileName = (name: string) =>
+    name.replace(/[\\/:*?"<>|]/g, "_")
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -70,22 +80,14 @@ export default function Home() {
     return false
   }
 
-  const pickRootHandle = async (): Promise<any | null> => {
-    if (!("showDirectoryPicker" in window)) return null
-    try {
-      const handle = await (window as any).showDirectoryPicker({ mode: "readwrite" })
-      setRootHandle(handle)
-      return handle
-    } catch {
-      return null
-    }
-  }
-
   const saveLinkToDisk = async (relPath: string, content: string) => {
-    let base = rootHandle
+    const base = rootHandle
     if (!base) {
-      base = await pickRootHandle()
-      if (!base) return
+      console.error("No se tiene acceso de escritura a la carpeta seleccionada")
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      setToast({ type: "error", text: "Sin acceso a la carpeta" })
+      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+      return
     }
     try {
       const parts = relPath.split("/")
@@ -583,14 +585,15 @@ useEffect(() => {
       setDragCategory(null)
       return
     }
-    const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const rawName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const safeName = sanitizeFileName(rawName)
     const content = `[InternetShortcut]\nURL=${data}\n`
-    const file = new File([content], fileName, { type: 'text/plain' })
+    const file = new File([content], safeName, { type: 'text/plain' })
     Object.defineProperty(file, 'webkitRelativePath', {
-      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
+      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${safeName}`,
     })
     setDirFiles((prev) => [...prev, file])
-    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    const path = `Semana${viewWeek}/${viewSubject}/${category}/${safeName}`
     void saveLinkToDisk(path, content)
     const pdf: PdfFile = {
       file,
