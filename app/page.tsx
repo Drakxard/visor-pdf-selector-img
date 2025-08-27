@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
+import { extractUrlFromLnk, youtubeEmbedUrl } from "@/lib/lnk"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
-type PdfFile = {
+type ResourceFile = {
   file: File
   path: string
   week: number
   subject: string
   tableType: "theory" | "practice"
+  type: "pdf" | "video"
+  videoUrl?: string
 }
 
 export default function Home() {
@@ -24,14 +27,17 @@ export default function Home() {
   const [weeks, setWeeks] = useState(1)
   const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
-  const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
+  const [fileTree, setFileTree] = useState<Record<number, Record<string, ResourceFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
-  const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
-  const [queue, setQueue] = useState<PdfFile[]>([])
+  const [currentPdf, setCurrentPdf] = useState<ResourceFile | null>(null)
+  const [queue, setQueue] = useState<ResourceFile[]>([])
   const [queueIndex, setQueueIndex] = useState(0)
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
+  const [currentVideo, setCurrentVideo] = useState<ResourceFile | null>(null)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [videoOpen, setVideoOpen] = useState(false)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
@@ -225,49 +231,59 @@ useEffect(() => {
 
   // build tree from selected directory
   useEffect(() => {
-    const tree: Record<number, Record<string, PdfFile[]>> = {}
-    for (const file of dirFiles) {
-      if (!file.name.toLowerCase().endsWith(".pdf")) continue
-      const rel = (file as any).webkitRelativePath || ""
-      if (rel.split("/").includes("system")) continue
-      const parts = rel.split("/") || []
-      if (parts.length >= 5) {
-        const weekPart = parts[1]
-        const subject = parts[2]
-        const table = parts[3].toLowerCase().includes("pract")
-          ? "practice"
-          : "theory"
-        const week = parseInt(weekPart.replace(/\D/g, ""))
-        if (!tree[week]) tree[week] = {}
-        if (!tree[week][subject]) tree[week][subject] = []
-        tree[week][subject].push({
-          file,
-          path: parts.slice(1).join("/"),
-          week,
-          subject,
-          tableType: table,
-        })
-      }
-    }
-    for (const w in tree) {
-      for (const s in tree[w]) {
-        const key = `${w}-${s}`
-        if (orders[key]) {
-          tree[w][s].sort(
-            (a, b) => orders[key].indexOf(a.path) - orders[key].indexOf(b.path),
-          )
-        } else {
-          tree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
+    ;(async () => {
+      const tree: Record<number, Record<string, ResourceFile[]>> = {}
+      for (const file of dirFiles) {
+        const lower = file.name.toLowerCase()
+        if (!lower.endsWith(".pdf") && !lower.endsWith(".lnk")) continue
+        const rel = (file as any).webkitRelativePath || ""
+        if (rel.split("/").includes("system")) continue
+        const parts = rel.split("/") || []
+        if (parts.length >= 5) {
+          const weekPart = parts[1]
+          const subject = parts[2]
+          const table = parts[3].toLowerCase().includes("pract")
+            ? "practice"
+            : "theory"
+          const week = parseInt(weekPart.replace(/\D/g, ""))
+          if (!tree[week]) tree[week] = {}
+          if (!tree[week][subject]) tree[week][subject] = []
+          const item: ResourceFile = {
+            file,
+            path: parts.slice(1).join("/"),
+            week,
+            subject,
+            tableType: table,
+            type: lower.endsWith(".pdf") ? "pdf" : "video",
+          }
+          if (item.type === "video") {
+            const url = await extractUrlFromLnk(file)
+            if (!url) continue
+            item.videoUrl = url
+          }
+          tree[week][subject].push(item)
         }
       }
-    }
-    for (let w = 1; w <= weeks; w++) {
-      if (!tree[w]) tree[w] = {}
-      names.forEach((n) => {
-        if (!tree[w][n]) tree[w][n] = []
-      })
-    }
-    setFileTree(tree)
+      for (const w in tree) {
+        for (const s in tree[w]) {
+          const key = `${w}-${s}`
+          if (orders[key]) {
+            tree[w][s].sort(
+              (a, b) => orders[key].indexOf(a.path) - orders[key].indexOf(b.path),
+            )
+          } else {
+            tree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
+          }
+        }
+      }
+      for (let w = 1; w <= weeks; w++) {
+        if (!tree[w]) tree[w] = {}
+        names.forEach((n) => {
+          if (!tree[w][n]) tree[w][n] = []
+        })
+      }
+      setFileTree(tree)
+    })()
   }, [dirFiles, orders, weeks, names])
 
   useEffect(() => {
@@ -290,10 +306,12 @@ useEffect(() => {
       Viernes: 5,
     }
     const today = new Date().getDay()
-    const stats: { subject: string; days: number; pdfs: PdfFile[] }[] = []
+    const stats: { subject: string; days: number; files: ResourceFile[] }[] = []
     Object.values(fileTree).forEach((subjects) => {
       Object.entries(subjects).forEach(([subject, files]) => {
-        const remaining = files.filter((f) => !completed[f.path])
+        const remaining = files.filter(
+          (f) => f.type === "pdf" && !completed[f.path],
+        )
         if (!remaining.length) return
         let days = 7
         remaining.forEach((f) => {
@@ -306,17 +324,19 @@ useEffect(() => {
           if (diff === 0) diff = 7
           if (diff < days) days = diff
         })
-        stats.push({ subject, days, pdfs: remaining })
+        stats.push({ subject, days, files: remaining })
       })
     })
     stats.sort((a, b) => {
       if (a.days !== b.days) return a.days - b.days
-      return b.pdfs.length - a.pdfs.length
+      return b.files.length - a.files.length
     })
-    const q: PdfFile[] = []
+    const q: ResourceFile[] = []
     stats.forEach((s) => {
       q.push(
-        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
+        ...s.files.sort(
+          (a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name),
+        ),
       )
     })
     setQueue(q)
@@ -426,7 +446,7 @@ useEffect(() => {
     }
   }
 
-  const daysUntil = (pdf: PdfFile) => {
+  const daysUntil = (pdf: ResourceFile) => {
     const dayMap: Record<string, number> = {
       Lunes: 1,
       Martes: 2,
@@ -445,13 +465,20 @@ useEffect(() => {
     return diff
   }
 
-  const handleSelectPdf = (pdf: PdfFile) => {
-    const idx = queue.findIndex((f) => f.path === pdf.path)
+  const handleSelectResource = (res: ResourceFile) => {
+    if (res.type === "video") {
+      if (!res.videoUrl) return
+      setCurrentVideo(res)
+      setVideoUrl(youtubeEmbedUrl(res.videoUrl))
+      setVideoOpen(true)
+      return
+    }
+    const idx = queue.findIndex((f) => f.path === res.path)
     if (idx >= 0) {
       setQueueIndex(idx)
       setCurrentPdf(queue[idx])
     } else {
-      setCurrentPdf(pdf)
+      setCurrentPdf(res)
     }
   }
 
@@ -606,11 +633,12 @@ useEffect(() => {
                           }`}
                         >
                           <span
-                            className="flex-1 truncate cursor-pointer"
+                            className="flex-1 truncate cursor-pointer flex items-center gap-2"
                             title={p.file.name}
-                            onClick={() => handleSelectPdf(p)}
+                            onClick={() => handleSelectResource(p)}
                           >
-                            {p.file.name}
+                            <span>{p.type === "video" ? "🎬" : "📄"}</span>
+                            <span className="truncate">{p.file.name}</span>
                           </span>
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
@@ -638,11 +666,12 @@ useEffect(() => {
                           }`}
                         >
                           <span
-                            className="flex-1 truncate cursor-pointer"
+                            className="flex-1 truncate cursor-pointer flex items-center gap-2"
                             title={p.file.name}
-                            onClick={() => handleSelectPdf(p)}
+                            onClick={() => handleSelectResource(p)}
                           >
-                            {p.file.name}
+                            <span>{p.type === "video" ? "🎬" : "📄"}</span>
+                            <span className="truncate">{p.file.name}</span>
                           </span>
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
@@ -767,6 +796,25 @@ useEffect(() => {
             )}`}
             className="w-full h-full border-0"
           />
+        </div>
+      </div>
+    )}
+    {videoOpen && currentVideo && videoUrl && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+        <div className="relative w-full h-full max-w-4xl max-h-[90vh]">
+          <iframe
+            className="w-full h-full"
+            src={videoUrl}
+            title={currentVideo.file.name}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+          <button
+            className="absolute top-2 right-2 bg-white p-1"
+            onClick={() => setVideoOpen(false)}
+          >
+            ✕
+          </button>
         </div>
       </div>
     )}
