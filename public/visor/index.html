@@ -1114,7 +1114,7 @@
       pdfFolderBtn.addEventListener('click', async () => {
         try {
           if (!supportsDirPicker()) { pdfFolderInput.click(); return; }
-          const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+          const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
           pdfDirectoryHandle = dirHandle;
           const list = [];
           // @ts-ignore
