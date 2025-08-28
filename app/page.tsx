@@ -496,7 +496,7 @@ useEffect(() => {
     } else {
       setCurrentPdf(pdf)
     }
-    setViewerOpen(pdf.isPdf)
+    setViewerOpen(false)
   }
 
   const prevPdf = () => {
@@ -504,7 +504,7 @@ useEffect(() => {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(queue[i].isPdf)
+      setViewerOpen(false)
     }
   }
 
@@ -513,7 +513,7 @@ useEffect(() => {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      setViewerOpen(queue[i].isPdf)
+      setViewerOpen(false)
     }
   }
 
@@ -806,19 +806,41 @@ useEffect(() => {
         </div>
         <div className="flex-1">
           {currentPdf && (pdfUrl || embedUrl) ? (
-            <iframe
-              title="Previsualización"
-              src={
-                currentPdf.isPdf
-                  ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
-                      currentPdf.file.name,
-                    )}`
-                  : embedUrl!
-              }
-              className="w-full h-full border-0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen
-            />
+            <>
+              <iframe
+                title={currentPdf.isPdf ? "Visor PDF" : "Visor"}
+                src={
+                  currentPdf.isPdf
+                    ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
+                        currentPdf.file.name,
+                      )}`
+                    : embedUrl!
+                }
+                className={`w-full h-full border-0 ${viewerOpen ? 'fixed inset-0 z-40' : ''}`}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+              {viewerOpen && !pdfFullscreen && (
+                <div className="fixed top-0 left-0 right-0 z-50 flex flex-wrap items-center justify-between p-2 border-b gap-2 bg-white dark:bg-gray-900">
+                  <span className="truncate" title={currentPdf.file.name}>
+                    {currentPdf.file.name}
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span>
+                      Días restantes: {daysUntil(currentPdf)}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setViewerOpen(false)
+                        setPdfFullscreen(false)
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
               Selecciona un archivo
@@ -859,45 +881,6 @@ useEffect(() => {
         </div>
       )}
     </div>
-    {viewerOpen && currentPdf && (pdfUrl || embedUrl) && (
-      <div className="fixed inset-0 z-50 flex flex-col bg-white dark:bg-gray-900">
-        {!pdfFullscreen && (
-          <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
-            <span className="truncate" title={currentPdf.file.name}>
-              {currentPdf.file.name}
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <span>
-                Días restantes: {daysUntil(currentPdf)}
-              </span>
-              <button
-                onClick={() => {
-                  setViewerOpen(false)
-                  setPdfFullscreen(false)
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          </div>
-        )}
-        <div className="flex-1">
-          <iframe
-            title={currentPdf.isPdf ? "Visor PDF" : "Visor"}
-            src={
-              currentPdf.isPdf
-                ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
-                    currentPdf.file.name,
-                  )}`
-                : embedUrl!
-            }
-            className="w-full h-full border-0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-        </div>
-      </div>
-    )}
   </>
   )
 }
