@@ -102,6 +102,7 @@ export default function Home() {
   const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || [])
     const files = filterSystemFiles(rawFiles)
+    setNames([])
     setDirFiles(files)
     loadConfig(files)
     void restoreCheckHistory(rawFiles)
@@ -650,27 +651,30 @@ useEffect(() => {
             </button>
             <h2 className="text-xl">Semana {viewWeek}</h2>
             <ul className="space-y-1">
-              {Object.keys(fileTree[viewWeek] || {}).map((s) => {
-                const files = (fileTree[viewWeek] || {})[s] || []
-                const theoryFiles = files.filter((f) => f.tableType === "theory")
-                const practiceFiles = files.filter(
-                  (f) => f.tableType === "practice",
-                )
-                const doneTheory = theoryFiles.filter(
-                  (f) => completed[f.path],
-                ).length
-                const donePractice = practiceFiles.filter(
-                  (f) => completed[f.path],
-                ).length
-                return (
-                  <li key={s}>
-                    <button onClick={() => setViewSubject(s)}>
-                      {s} (T {doneTheory}/{theoryFiles.length} - P {donePractice}/
-                      {practiceFiles.length})
-                    </button>
-                  </li>
-                )
-              })}
+              {Object.entries(fileTree[viewWeek] || {})
+                .filter(([, files]) => files.length > 0)
+                .map(([s, files]) => {
+                  const theoryFiles = files.filter(
+                    (f) => f.tableType === "theory",
+                  )
+                  const practiceFiles = files.filter(
+                    (f) => f.tableType === "practice",
+                  )
+                  const doneTheory = theoryFiles.filter(
+                    (f) => completed[f.path],
+                  ).length
+                  const donePractice = practiceFiles.filter(
+                    (f) => completed[f.path],
+                  ).length
+                  return (
+                    <li key={s}>
+                      <button onClick={() => setViewSubject(s)}>
+                        {s} (T {doneTheory}/{theoryFiles.length} - P {donePractice}/
+                        {practiceFiles.length})
+                      </button>
+                    </li>
+                  )
+                })}
             </ul>
           </>
         )}
