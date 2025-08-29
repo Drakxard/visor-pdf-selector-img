@@ -115,6 +115,26 @@
       filter: invert(1) hue-rotate(180deg);
     }
     .anno-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
+    .draw-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
+    body.drawing .draw-layer { pointer-events: auto; }
+    #draw-indicator {
+      position: fixed; right: 20px; top: 70px;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #ff5252; border: 2px solid #fff; z-index: 1000;
+      display: none;
+    }
+    #draw-toolbar {
+      position: fixed; right: 20px; top: 100px; z-index: 1000;
+      background: rgba(0,0,0,0.7); color: #fff; padding: 8px;
+      border-radius: 8px; display: none;
+    }
+    body.light-mode #draw-toolbar { background: rgba(255,255,255,0.9); color: #000; }
+    body.drawing #draw-indicator,
+    body.drawing #draw-toolbar { display: block; }
+    #draw-toolbar label { display: block; font-size: 12px; margin-top: 4px; }
+    #draw-toolbar input[type="range"],
+    #draw-toolbar input[type="color"] { width: 100%; }
+    #draw-toolbar button { margin-top: 6px; width: 100%; }
     .page-number {
       position: absolute; bottom: -24px; left: 50%; transform: translateX(-50%);
       font-size: 12px; color: #9aa0a6;
@@ -361,6 +381,15 @@
     </div>
   </div>
 
+  <div id="draw-indicator"></div>
+  <div id="draw-toolbar">
+    <label for="draw-color">Color</label>
+    <input type="color" id="draw-color" value="#ff0000">
+    <label for="draw-width">Grosor</label>
+    <input type="range" id="draw-width" min="1" max="10" value="2">
+    <button id="draw-clear">Limpiar</button>
+  </div>
+
   <div id="permission-modal" class="permission-modal hidden">
     <div class="permission-content">
       <div class="permission-header">
@@ -523,6 +552,16 @@
         themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
       });
 
+      colorPicker.addEventListener('change', e => { drawColor = e.target.value; });
+      widthPicker.addEventListener('input', e => { drawWidth = parseInt(e.target.value, 10); });
+      clearDrawBtn.addEventListener('click', () => {
+        document.querySelectorAll('.draw-layer').forEach(c => {
+          const ctx = c.getContext('2d');
+          ctx.clearRect(0, 0, c.width, c.height);
+        });
+        saveDrawingsToFile();
+      });
+
       // Persistencia de notas
       let directoryHandle = null;
       let currentPdfName = null;
@@ -548,6 +587,15 @@
       const pdfModal = document.getElementById('pdf-modal');
       const closePdfModalBtn = document.getElementById('close-pdf-modal');
       const pdfModalBody = document.getElementById('pdf-modal-body');
+
+      const drawIndicator = document.getElementById('draw-indicator');
+      const drawToolbar = document.getElementById('draw-toolbar');
+      const colorPicker = document.getElementById('draw-color');
+      const widthPicker = document.getElementById('draw-width');
+      const clearDrawBtn = document.getElementById('draw-clear');
+      let drawingMode = false;
+      let drawColor = '#ff0000';
+      let drawWidth = 2;
 
       let captureMode = false;
       let captureCategory = null; // 'teo' | 'practica'
@@ -810,14 +858,15 @@
 
           buildPageSkeletons();
           prepareInitialReveal();
+          toggleDrawing(false);
           const saved = parseInt(
             localStorage.getItem('lastPage-' + filename) || '1',
           );
           setTimeout(() => scrollToPage(saved), 0);
           pendingAfterLoadGoTo = null;
 
-          // Cargar notas siempre desde localStorage
-          setTimeout(loadNotesFromFile, 300);
+          // Cargar notas y dibujos siempre desde localStorage
+          setTimeout(() => { loadNotesFromFile(); loadDrawingsFromFile(); }, 300);
         } catch (error) {
           console.error('Error cargando PDF:', error);
           showToast('Error cargando PDF: ' + (error?.message || ''), 'error');
@@ -862,6 +911,14 @@
           layer.dataset.page = pageNum;
           layer.style.pointerEvents = 'none'; // se habilita localmente para notas/selecciones
           wrapper.appendChild(layer);
+
+          const drawCanvas = document.createElement('canvas');
+          drawCanvas.className = 'draw-layer';
+          drawCanvas.width = w;
+          drawCanvas.height = h;
+          drawCanvas.dataset.page = pageNum;
+          wrapper.appendChild(drawCanvas);
+          attachDrawingEvents(drawCanvas);
 
           const pageNumber = document.createElement('div');
           pageNumber.className = 'page-number';
@@ -1250,6 +1307,11 @@
           if (!pdfDoc) return;
           creatingNote = !creatingNote;
           if (creatingNote) document.body.classList.add('creating-note'); else document.body.classList.remove('creating-note');
+        }
+
+        if (e.key.toLowerCase() === 'l' && !e.repeat && !e.ctrlKey && !isEditing) {
+          e.preventDefault();
+          if (pdfDoc) toggleDrawing();
         }
 
         if (!isEditing && pdfDoc) {
@@ -1650,6 +1712,82 @@
           });
         });
         return notes;
+      }
+      // ========================================
+      // DIBUJOS
+      // ========================================
+      function attachDrawingEvents(canvas) {
+        const ctx = canvas.getContext('2d');
+        let drawing = false;
+        canvas.addEventListener('mousedown', e => {
+          if (!drawingMode) return;
+          drawing = true;
+          ctx.strokeStyle = drawColor;
+          ctx.lineWidth = drawWidth;
+          ctx.lineCap = 'round';
+          const rect = canvas.getBoundingClientRect();
+          ctx.beginPath();
+          ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+        });
+        canvas.addEventListener('mousemove', e => {
+          if (!drawingMode || !drawing) return;
+          const rect = canvas.getBoundingClientRect();
+          ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+          ctx.stroke();
+        });
+        ['mouseup','mouseleave'].forEach(ev => canvas.addEventListener(ev, () => {
+          if (drawing) { drawing = false; saveDrawingsToFile(); }
+        }));
+      }
+
+      function toggleDrawing(force) {
+        drawingMode = typeof force === 'boolean' ? force : !drawingMode;
+        document.body.classList.toggle('drawing', drawingMode);
+      }
+
+      function getDrawingFileName(pdfName) {
+        const clean = pdfName.replace(/[^a-zA-Z0-9.-]/g, '_');
+        return `${clean}_drawings.json`;
+      }
+
+      function saveDrawingsToFile() {
+        if (!currentPdfName) return;
+        const drawings = [];
+        document.querySelectorAll('.draw-layer').forEach(c => {
+          const pageNum = parseInt(c.dataset.page);
+          const data = c.toDataURL('image/png');
+          drawings.push({ pageNum, data });
+        });
+        const key = `/gestor/system/dibujos/${getDrawingFileName(currentPdfName)}`;
+        const payload = { pdfName: currentPdfName, drawings, timestamp: Date.now() };
+        try { localStorage.setItem(key, JSON.stringify(payload)); } catch (err) {
+          console.error('Error guardando dibujos:', err);
+        }
+      }
+
+      function loadDrawingsFromFile() {
+        if (!currentPdfName) return;
+        const key = `/gestor/system/dibujos/${getDrawingFileName(currentPdfName)}`;
+        const text = localStorage.getItem(key);
+        if (!text) return;
+        try {
+          const data = JSON.parse(text);
+          if (data.drawings && data.drawings.length) {
+            data.drawings.forEach(d => {
+              const canvas = document.querySelector(`.draw-layer[data-page="${d.pageNum}"]`);
+              if (canvas) {
+                const img = new Image();
+                img.onload = () => {
+                  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                };
+                img.src = d.data;
+              }
+            });
+            toggleDrawing(true);
+          }
+        } catch (err) {
+          console.error('Error cargando dibujos:', err);
+        }
       }
       const folderBtn = document.getElementById('folder-btn');
       folderBtn && folderBtn.addEventListener('click', () => {});
