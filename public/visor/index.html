@@ -188,6 +188,61 @@
     }
     #draw-indicator.active { display: block; }
     .draw-canvas { position: absolute; top: 0; left: 0; z-index: 800; }
+    #draw-controls {
+      position: fixed;
+      top: 60px;
+      right: 20px;
+      background: rgba(50,54,57,0.95);
+      border: 1px solid #5f6368;
+      border-radius: 8px;
+      padding: 10px;
+      z-index: 1101;
+      font-size: 12px;
+      width: 230px;
+      color: #e8eaed;
+      display: none;
+    }
+    #draw-controls.active { display: block; }
+    #draw-controls .color-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    #draw-controls .color-row label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-size: 11px;
+      gap: 2px;
+    }
+    #draw-controls input[type="color"] {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: none;
+      background: none;
+    }
+    #draw-controls .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+    #draw-controls .slider-row label {
+      flex: 1;
+    }
+    #draw-controls .slider-row span {
+      width: 32px;
+      text-align: right;
+    }
+    #draw-controls .slider-row input[type="range"] {
+      flex: 1;
+    }
+    body.light-mode #draw-controls {
+      background: rgba(255,255,255,0.95);
+      border: 1px solid #dadce0;
+      color: #202124;
+    }
 
     .note-icon {
       display: inline-block; cursor: pointer; position: absolute; margin: 0; padding: 4px; user-select: none;
@@ -375,6 +430,22 @@
         <div id="loading-text">Cargando…</div>
       </div>
     </div>
+  </div>
+
+  <div id="draw-controls">
+    <div class="color-row">
+      <label>Línea<input type="color" id="line-color" value="#ff0000"></label>
+      <label>Llenar<input type="color" id="fill-color" value="#ff00ff"></label>
+      <label>Fondo<input type="color" id="background-color" value="#808080"></label>
+      <label>Carrera<input type="color" id="stroke-color" value="#ffff00"></label>
+      <label>Sombra<input type="color" id="shadow-color" value="#000000"></label>
+    </div>
+    <div class="slider-row"><label>Ancho del cepillo</label><input type="range" id="brush-width" min="1" max="100" value="2" step="1"><span id="brush-width-val">2</span></div>
+    <div class="slider-row"><label>Anchura del trazo</label><input type="range" id="stroke-width" min="1" max="100" value="1" step="1"><span id="stroke-width-val">1</span></div>
+    <div class="slider-row"><label>Ancho de sombra</label><input type="range" id="shadow-width" min="0" max="50" value="0" step="1"><span id="shadow-width-val">0</span></div>
+    <div class="slider-row"><label>Desplazamiento de</label><input type="range" id="shadow-offset" min="0" max="50" value="0" step="1"><span id="shadow-offset-val">0</span></div>
+    <div class="slider-row"><label>Opacidad del</label><input type="range" id="line-opacity" min="0" max="1" value="1" step="0.01"><span id="line-opacity-val">1</span></div>
+    <div class="slider-row"><label>Opacidad de forma</label><input type="range" id="shape-opacity" min="0" max="1" value="0.2" step="0.01"><span id="shape-opacity-val">0.2</span></div>
   </div>
 
   <div id="permission-modal" class="permission-modal hidden">
@@ -580,6 +651,50 @@
       // Dibujo libre
       let drawMode = false;
       let isDrawing = false;
+      const drawControls = document.getElementById('draw-controls');
+      const lineColorInput = document.getElementById('line-color');
+      const fillColorInput = document.getElementById('fill-color');
+      const backgroundColorInput = document.getElementById('background-color');
+      const strokeColorInput = document.getElementById('stroke-color');
+      const shadowColorInput = document.getElementById('shadow-color');
+      const brushWidthInput = document.getElementById('brush-width');
+      const strokeWidthInput = document.getElementById('stroke-width');
+      const shadowWidthInput = document.getElementById('shadow-width');
+      const shadowOffsetInput = document.getElementById('shadow-offset');
+      const lineOpacityInput = document.getElementById('line-opacity');
+      const shapeOpacityInput = document.getElementById('shape-opacity');
+      const brushWidthVal = document.getElementById('brush-width-val');
+      const strokeWidthVal = document.getElementById('stroke-width-val');
+      const shadowWidthVal = document.getElementById('shadow-width-val');
+      const shadowOffsetVal = document.getElementById('shadow-offset-val');
+      const lineOpacityVal = document.getElementById('line-opacity-val');
+      const shapeOpacityVal = document.getElementById('shape-opacity-val');
+
+      const drawSettings = {
+        lineColor: lineColorInput.value,
+        fillColor: fillColorInput.value,
+        backgroundColor: backgroundColorInput.value,
+        strokeColor: strokeColorInput.value,
+        shadowColor: shadowColorInput.value,
+        brushWidth: parseFloat(brushWidthInput.value),
+        strokeWidth: parseFloat(strokeWidthInput.value),
+        shadowBlur: parseFloat(shadowWidthInput.value),
+        shadowOffset: parseFloat(shadowOffsetInput.value),
+        lineOpacity: parseFloat(lineOpacityInput.value),
+        shapeOpacity: parseFloat(shapeOpacityInput.value)
+      };
+
+      lineColorInput.addEventListener('input', e => drawSettings.lineColor = e.target.value);
+      fillColorInput.addEventListener('input', e => drawSettings.fillColor = e.target.value);
+      backgroundColorInput.addEventListener('input', e => drawSettings.backgroundColor = e.target.value);
+      strokeColorInput.addEventListener('input', e => drawSettings.strokeColor = e.target.value);
+      shadowColorInput.addEventListener('input', e => drawSettings.shadowColor = e.target.value);
+      brushWidthInput.addEventListener('input', e => { drawSettings.brushWidth = parseFloat(e.target.value); brushWidthVal.textContent = e.target.value; });
+      strokeWidthInput.addEventListener('input', e => { drawSettings.strokeWidth = parseFloat(e.target.value); strokeWidthVal.textContent = e.target.value; });
+      shadowWidthInput.addEventListener('input', e => { drawSettings.shadowBlur = parseFloat(e.target.value); shadowWidthVal.textContent = e.target.value; });
+      shadowOffsetInput.addEventListener('input', e => { drawSettings.shadowOffset = parseFloat(e.target.value); shadowOffsetVal.textContent = e.target.value; });
+      lineOpacityInput.addEventListener('input', e => { drawSettings.lineOpacity = parseFloat(e.target.value); lineOpacityVal.textContent = parseFloat(e.target.value).toFixed(2); });
+      shapeOpacityInput.addEventListener('input', e => { drawSettings.shapeOpacity = parseFloat(e.target.value); shapeOpacityVal.textContent = parseFloat(e.target.value).toFixed(2); });
 
       const PROMPT_FILE = 'prompts.json';
       const USER_PROMPTS = {
@@ -2088,6 +2203,7 @@
         const canvases = document.querySelectorAll('.draw-canvas');
         canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
         drawIndicator.classList.toggle('active', drawMode);
+        drawControls.classList.toggle('active', drawMode);
       }
 
       function saveDrawing(canvas) {
@@ -2119,9 +2235,14 @@
         isDrawing = true;
         const canvas = e.target;
         const ctx = canvas.getContext('2d');
-        ctx.strokeStyle = '#ff0000';
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = drawSettings.lineColor;
+        ctx.lineWidth = drawSettings.brushWidth;
         ctx.lineCap = 'round';
+        ctx.globalAlpha = drawSettings.lineOpacity;
+        ctx.shadowColor = drawSettings.shadowColor;
+        ctx.shadowBlur = drawSettings.shadowBlur;
+        ctx.shadowOffsetX = drawSettings.shadowOffset;
+        ctx.shadowOffsetY = drawSettings.shadowOffset;
         ctx.beginPath();
         ctx.moveTo(e.offsetX, e.offsetY);
         canvas._ctx = ctx;
@@ -2140,6 +2261,10 @@
         const canvas = e.target;
         const ctx = canvas._ctx;
         ctx.closePath();
+        ctx.globalAlpha = 1;
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
         isDrawing = false;
         saveDrawing(canvas);
       }
