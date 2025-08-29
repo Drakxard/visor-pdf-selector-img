@@ -173,6 +173,22 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    #draw-indicator {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(255,0,0,0.8);
+      border: 2px solid #fff;
+      z-index: 1100;
+      pointer-events: none;
+      display: none;
+    }
+    #draw-indicator.active { display: block; }
+    .draw-canvas { position: absolute; top: 0; left: 0; z-index: 800; }
+
     .note-icon {
       display: inline-block; cursor: pointer; position: absolute; margin: 0; padding: 4px; user-select: none;
       z-index: 900; font-size: 20px; background: rgba(255,255,255,0.95); border-radius: 50%;
@@ -549,6 +565,10 @@
       const closePdfModalBtn = document.getElementById('close-pdf-modal');
       const pdfModalBody = document.getElementById('pdf-modal-body');
 
+      const drawIndicator = document.createElement('div');
+      drawIndicator.id = 'draw-indicator';
+      document.body.appendChild(drawIndicator);
+
       let captureMode = false;
       let captureCategory = null; // 'teo' | 'practica'
       let pendingStart = null; // { pageNum, xp, yp, layer }
@@ -556,6 +576,10 @@
 
       let theoryHandle = null;
       let practiceHandle = null;
+
+      // Dibujo libre
+      let drawMode = false;
+      let isDrawing = false;
 
       const PROMPT_FILE = 'prompts.json';
       const USER_PROMPTS = {
@@ -794,6 +818,8 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
+          drawMode = false;
+          updateDrawMode();
 
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
@@ -854,6 +880,19 @@
           textLayer.style.width = w + 'px';
           textLayer.style.height = h + 'px';
           wrapper.appendChild(textLayer);
+
+          const drawCanvas = document.createElement('canvas');
+          drawCanvas.className = 'draw-canvas';
+          drawCanvas.width = w;
+          drawCanvas.height = h;
+          drawCanvas.dataset.page = String(pageNum);
+          drawCanvas.style.pointerEvents = 'none';
+          drawCanvas.style.touchAction = 'none';
+          drawCanvas.addEventListener('pointerdown', startDraw);
+          drawCanvas.addEventListener('pointermove', drawMove);
+          drawCanvas.addEventListener('pointerup', endDraw);
+          drawCanvas.addEventListener('pointerleave', endDraw);
+          wrapper.appendChild(drawCanvas);
 
           const layer = document.createElement('div');
           layer.className = 'anno-layer';
@@ -916,6 +955,7 @@
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
+        loadDrawingsFromStorage();
       }
 
       function clearContainer() {
@@ -1196,6 +1236,13 @@
           activeElement.tagName === 'INPUT' ||
           activeElement.classList.contains('mq-editable-field')
         );
+
+        if (!isEditing && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
+          e.preventDefault();
+          drawMode = !drawMode;
+          updateDrawMode();
+          return;
+        }
 
         // Bloquear navegación si overlay visible
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
@@ -2034,6 +2081,67 @@
         await writable.close();
         const file = new File([blob], pdfName, { type: 'application/pdf' });
         return { handle: fileHandle, file, blob };
+      }
+
+      // --- Dibujo libre ---
+      function updateDrawMode() {
+        const canvases = document.querySelectorAll('.draw-canvas');
+        canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
+        drawIndicator.classList.toggle('active', drawMode);
+      }
+
+      function saveDrawing(canvas) {
+        if (!currentPdfName) return;
+        try {
+          localStorage.setItem(`drawing-${currentPdfName}-page${canvas.dataset.page}`, canvas.toDataURL());
+        } catch (e) {}
+      }
+
+      function loadDrawingsFromStorage() {
+        if (!currentPdfName) return;
+        let found = false;
+        document.querySelectorAll('.draw-canvas').forEach(canvas => {
+          const data = localStorage.getItem(`drawing-${currentPdfName}-page${canvas.dataset.page}`);
+          if (data) {
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.onload = () => ctx.drawImage(img,0,0);
+            img.src = data;
+            found = true;
+          }
+        });
+        drawMode = found;
+        updateDrawMode();
+      }
+
+      function startDraw(e) {
+        if (!drawMode) return;
+        isDrawing = true;
+        const canvas = e.target;
+        const ctx = canvas.getContext('2d');
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(e.offsetX, e.offsetY);
+        canvas._ctx = ctx;
+      }
+
+      function drawMove(e) {
+        if (!isDrawing) return;
+        const canvas = e.target;
+        const ctx = canvas._ctx;
+        ctx.lineTo(e.offsetX, e.offsetY);
+        ctx.stroke();
+      }
+
+      function endDraw(e) {
+        if (!isDrawing) return;
+        const canvas = e.target;
+        const ctx = canvas._ctx;
+        ctx.closePath();
+        isDrawing = false;
+        saveDrawing(canvas);
       }
 
       // cargar pdf inicial si viene por query
