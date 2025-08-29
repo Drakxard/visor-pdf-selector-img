@@ -173,6 +173,72 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    #draw-indicator {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: rgba(255,0,0,0.8);
+      border: 2px solid #fff;
+      z-index: 1100;
+      pointer-events: none;
+      display: none;
+    }
+    #draw-indicator.active { display: block; }
+    .draw-canvas { position: absolute; top: 0; left: 0; z-index: 800; }
+
+    #draw-toolbar {
+      position: fixed;
+      top: 40px;
+      right: 10px;
+      background: rgba(0,0,0,0.85);
+      padding: 8px;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 12px;
+      z-index: 1100;
+      display: none;
+    }
+    #draw-toolbar.active { display: block; }
+    #draw-toolbar .color-row {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    #draw-toolbar .color-row label {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    #draw-toolbar input[type="color"] {
+      width: 24px;
+      height: 24px;
+      border: none;
+      padding: 0;
+    }
+    #draw-toolbar label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    #draw-toolbar input[type="range"] { flex: 1; }
+    #draw-toolbar button {
+      background: #444;
+      border: none;
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #draw-toolbar button.active {
+      background: #ff4d4d;
+    }
+
     .note-icon {
       display: inline-block; cursor: pointer; position: absolute; margin: 0; padding: 4px; user-select: none;
       z-index: 900; font-size: 20px; background: rgba(255,255,255,0.95); border-radius: 50%;
@@ -549,6 +615,10 @@
       const closePdfModalBtn = document.getElementById('close-pdf-modal');
       const pdfModalBody = document.getElementById('pdf-modal-body');
 
+      const drawIndicator = document.createElement('div');
+      drawIndicator.id = 'draw-indicator';
+      document.body.appendChild(drawIndicator);
+
       let captureMode = false;
       let captureCategory = null; // 'teo' | 'practica'
       let pendingStart = null; // { pageNum, xp, yp, layer }
@@ -556,6 +626,96 @@
 
       let theoryHandle = null;
       let practiceHandle = null;
+
+      // Dibujo libre
+      let drawMode = false;
+      let isDrawing = false;
+
+      let brushColor = '#ff0000';
+      let brushWidth = 2;
+      let shadowColor = '#000000';
+      let shadowWidth = 0;
+      let shadowOffset = 0;
+      let brushOpacity = 1;
+      let eraserMode = false;
+
+      const BRUSH_SETTINGS_KEY = 'draw-settings';
+
+      function saveBrushSettings() {
+        try {
+          localStorage.setItem(BRUSH_SETTINGS_KEY, JSON.stringify({
+            brushColor,
+            brushWidth,
+            shadowColor,
+            shadowWidth,
+            shadowOffset,
+            brushOpacity
+          }));
+        } catch {}
+      }
+
+      function loadBrushSettings() {
+        try {
+          const data = JSON.parse(localStorage.getItem(BRUSH_SETTINGS_KEY) || '{}');
+          if (data.brushColor) brushColor = data.brushColor;
+          if (data.brushWidth) brushWidth = data.brushWidth;
+          if (data.shadowColor) shadowColor = data.shadowColor;
+          if (data.shadowWidth) shadowWidth = data.shadowWidth;
+          if (data.shadowOffset) shadowOffset = data.shadowOffset;
+          if (typeof data.brushOpacity === 'number') brushOpacity = data.brushOpacity;
+        } catch {}
+      }
+
+      const drawToolbar = document.createElement('div');
+      drawToolbar.id = 'draw-toolbar';
+      drawToolbar.innerHTML = `
+        <div class="color-row">
+          <label>Línea<input type="color" id="tool-line-color" value="#ff0000"></label>
+          <label>Llenar<input type="color" id="tool-fill-color" value="#000000"></label>
+          <label>Fondo<input type="color" id="tool-bg-color" value="#ffffff"></label>
+          <label>Carrera<input type="color" id="tool-stroke-color" value="#000000"></label>
+          <label>Sombra<input type="color" id="tool-shadow-color" value="#000000"></label>
+        </div>
+        <label>Ancho del cepillo <input type="range" id="tool-brush-width" min="1" max="100" value="2"></label>
+        <label>Anchura del trazo <input type="range" id="tool-stroke-width" min="1" max="100" value="1"></label>
+        <label>Ancho de sombra <input type="range" id="tool-shadow-width" min="0" max="50" value="0"></label>
+        <label>Desplazamiento de <input type="range" id="tool-shadow-offset" min="0" max="50" value="0"></label>
+        <label>Opacidad del <input type="range" id="tool-opacity-line" min="0" max="1" step="0.01" value="1"></label>
+        <label>Opacidad de forma <input type="range" id="tool-opacity-shape" min="0" max="1" step="0.01" value="1"></label>
+        <button id="tool-eraser">Borrar</button>
+      `;
+      document.body.appendChild(drawToolbar);
+
+      const lineColorInput = drawToolbar.querySelector('#tool-line-color');
+      const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
+      const shadowColorInput = drawToolbar.querySelector('#tool-shadow-color');
+      const shadowWidthInput = drawToolbar.querySelector('#tool-shadow-width');
+      const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
+      const opacityInput = drawToolbar.querySelector('#tool-opacity-line');
+      const eraserBtn = drawToolbar.querySelector('#tool-eraser');
+
+      lineColorInput.addEventListener('input', e => { brushColor = e.target.value; saveBrushSettings(); });
+      brushWidthInput.addEventListener('input', e => { brushWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
+      shadowColorInput.addEventListener('input', e => { shadowColor = e.target.value; saveBrushSettings(); });
+      shadowWidthInput.addEventListener('input', e => { shadowWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
+      shadowOffsetInput.addEventListener('input', e => { shadowOffset = parseInt(e.target.value, 10); saveBrushSettings(); });
+      opacityInput.addEventListener('input', e => { brushOpacity = parseFloat(e.target.value); saveBrushSettings(); });
+      eraserBtn.addEventListener('click', () => {
+        eraserMode = !eraserMode;
+        eraserBtn.classList.toggle('active', eraserMode);
+      });
+
+      function applyBrushSettings() {
+        lineColorInput.value = brushColor;
+        brushWidthInput.value = brushWidth;
+        shadowColorInput.value = shadowColor;
+        shadowWidthInput.value = shadowWidth;
+        shadowOffsetInput.value = shadowOffset;
+        opacityInput.value = brushOpacity;
+      }
+
+      loadBrushSettings();
+      applyBrushSettings();
 
       const PROMPT_FILE = 'prompts.json';
       const USER_PROMPTS = {
@@ -794,6 +954,8 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
+          drawMode = false;
+          updateDrawMode();
 
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
@@ -854,6 +1016,19 @@
           textLayer.style.width = w + 'px';
           textLayer.style.height = h + 'px';
           wrapper.appendChild(textLayer);
+
+          const drawCanvas = document.createElement('canvas');
+          drawCanvas.className = 'draw-canvas';
+          drawCanvas.width = w;
+          drawCanvas.height = h;
+          drawCanvas.dataset.page = String(pageNum);
+          drawCanvas.style.pointerEvents = 'none';
+          drawCanvas.style.touchAction = 'none';
+          drawCanvas.addEventListener('pointerdown', startDraw);
+          drawCanvas.addEventListener('pointermove', drawMove);
+          drawCanvas.addEventListener('pointerup', endDraw);
+          drawCanvas.addEventListener('pointerleave', endDraw);
+          wrapper.appendChild(drawCanvas);
 
           const layer = document.createElement('div');
           layer.className = 'anno-layer';
@@ -916,6 +1091,7 @@
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
+        loadDrawingsFromStorage();
       }
 
       function clearContainer() {
@@ -1196,6 +1372,13 @@
           activeElement.tagName === 'INPUT' ||
           activeElement.classList.contains('mq-editable-field')
         );
+
+        if (!isEditing && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
+          e.preventDefault();
+          drawMode = !drawMode;
+          updateDrawMode();
+          return;
+        }
 
         // Bloquear navegación si overlay visible
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
@@ -2034,6 +2217,85 @@
         await writable.close();
         const file = new File([blob], pdfName, { type: 'application/pdf' });
         return { handle: fileHandle, file, blob };
+      }
+
+      // --- Dibujo libre ---
+      function updateDrawMode() {
+        const canvases = document.querySelectorAll('.draw-canvas');
+        canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
+        drawIndicator.classList.toggle('active', drawMode);
+        drawToolbar.classList.toggle('active', drawMode);
+      }
+
+      function saveDrawing(canvas) {
+        if (!currentPdfName) return;
+        try {
+          localStorage.setItem(`drawing-${currentPdfName}-page${canvas.dataset.page}`, canvas.toDataURL());
+        } catch (e) {}
+      }
+
+      function loadDrawingsFromStorage() {
+        if (!currentPdfName) return;
+        let found = false;
+        document.querySelectorAll('.draw-canvas').forEach(canvas => {
+          const data = localStorage.getItem(`drawing-${currentPdfName}-page${canvas.dataset.page}`);
+          if (data) {
+            const ctx = canvas.getContext('2d');
+            const img = new Image();
+            img.onload = () => ctx.drawImage(img,0,0);
+            img.src = data;
+            found = true;
+          }
+        });
+        drawMode = found;
+        updateDrawMode();
+      }
+
+      function startDraw(e) {
+        if (!drawMode) return;
+        isDrawing = true;
+        const canvas = e.target;
+        const ctx = canvas.getContext('2d');
+        ctx.lineCap = 'round';
+        if (eraserMode) {
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.strokeStyle = 'rgba(0,0,0,1)';
+          ctx.lineWidth = brushWidth;
+          ctx.shadowColor = 'transparent';
+          ctx.shadowBlur = 0;
+          ctx.shadowOffsetX = 0;
+          ctx.shadowOffsetY = 0;
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.strokeStyle = brushColor;
+          ctx.lineWidth = brushWidth;
+          ctx.shadowColor = shadowColor;
+          ctx.shadowBlur = shadowWidth;
+          ctx.shadowOffsetX = shadowOffset;
+          ctx.shadowOffsetY = shadowOffset;
+          ctx.globalAlpha = brushOpacity;
+        }
+        ctx.beginPath();
+        ctx.moveTo(e.offsetX, e.offsetY);
+        canvas._ctx = ctx;
+      }
+
+      function drawMove(e) {
+        if (!isDrawing) return;
+        const canvas = e.target;
+        const ctx = canvas._ctx;
+        ctx.lineTo(e.offsetX, e.offsetY);
+        ctx.stroke();
+      }
+
+      function endDraw(e) {
+        if (!isDrawing) return;
+        const canvas = e.target;
+        const ctx = canvas._ctx;
+        ctx.closePath();
+        isDrawing = false;
+        saveDrawing(canvas);
       }
 
       // cargar pdf inicial si viene por query
