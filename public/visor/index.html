@@ -244,6 +244,9 @@
     }
     body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
     body.light-mode #focus-overlay canvas { border-color: #000; }
+    body:not(.light-mode) #focus-overlay canvas {
+      filter: invert(1) hue-rotate(180deg);
+    }
 
     .note-icon {
       display: inline-block; cursor: pointer; position: absolute; margin: 0; padding: 4px; user-select: none;
@@ -2062,9 +2065,12 @@
         showNavIndicator('Selección añadida (' + selections.length + ')');
       }
 
-      function focusArea(pageNum, xp1, yp1, xp2, yp2) {
+      async function focusArea(pageNum, xp1, yp1, xp2, yp2) {
         const state = pageStates.get(pageNum);
         if (!state) return;
+        if (!state.canvas.width || !state.canvas.height) {
+          await renderPage(pageNum, state);
+        }
         const pageCanvas = state.canvas;
         const x1 = Math.min(xp1, xp2) * pageCanvas.width;
         const y1 = Math.min(yp1, yp2) * pageCanvas.height;
