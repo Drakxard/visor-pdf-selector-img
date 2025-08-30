@@ -617,8 +617,10 @@
       let practiceHandle = null;
 
       // Dibujo libre
-      let drawMode = false;
+      // Always enable drawing mode
+      let drawMode = true;
       let isDrawing = false;
+      let lastCanvas = null;
 
       let brushColor = '#ff0000';
       let brushWidth = 2;
@@ -705,6 +707,9 @@
 
       loadBrushSettings();
       applyBrushSettings();
+
+      // show drawing tools by default
+      updateDrawMode();
 
       const PROMPT_FILE = 'prompts.json';
       const USER_PROMPTS = {
@@ -943,7 +948,7 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
-          drawMode = false;
+          drawMode = true;
           updateDrawMode();
 
           const loadingTask = pdfjsLib.getDocument(url);
@@ -1362,10 +1367,9 @@
           activeElement.classList.contains('mq-editable-field')
         );
 
-        if (!isEditing && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
+        if (!isEditing && e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'z') {
           e.preventDefault();
-          drawMode = !drawMode;
-          updateDrawMode();
+          undoLastStroke();
           return;
         }
 
@@ -2225,7 +2229,6 @@
 
       function loadDrawingsFromStorage() {
         if (!currentPdfName) return;
-        let found = false;
         document.querySelectorAll('.draw-canvas').forEach(canvas => {
           const data = localStorage.getItem(`drawing-${currentPdfName}-page${canvas.dataset.page}`);
           if (data) {
@@ -2233,10 +2236,8 @@
             const img = new Image();
             img.onload = () => ctx.drawImage(img,0,0);
             img.src = data;
-            found = true;
           }
         });
-        drawMode = found;
         updateDrawMode();
       }
 
@@ -2254,28 +2255,40 @@
         ctx.shadowOffsetX = eraseMode ? 0 : shadowOffset;
         ctx.shadowOffsetY = eraseMode ? 0 : shadowOffset;
         ctx.globalAlpha = eraseMode ? 1 : brushOpacity;
-        ctx.beginPath();
-        ctx.moveTo(e.offsetX, e.offsetY);
         canvas._ctx = ctx;
+        canvas._lastX = e.offsetX;
+        canvas._lastY = e.offsetY;
+        if (!canvas._history) canvas._history = [];
+        canvas._history.push(ctx.getImageData(0,0,canvas.width,canvas.height));
+        lastCanvas = canvas;
       }
 
       function drawMove(e) {
         if (!isDrawing) return;
         const canvas = e.target;
         const ctx = canvas._ctx;
+        ctx.beginPath();
+        ctx.moveTo(canvas._lastX, canvas._lastY);
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
+        canvas._lastX = e.offsetX;
+        canvas._lastY = e.offsetY;
       }
 
       function endDraw(e) {
         if (!isDrawing) return;
         const canvas = e.target;
-        const ctx = canvas._ctx;
-        ctx.lineTo(e.offsetX, e.offsetY);
-        ctx.stroke();
-        ctx.closePath();
+        drawMove(e);
         isDrawing = false;
         saveDrawing(canvas);
+      }
+
+      function undoLastStroke() {
+        if (!lastCanvas || !lastCanvas._history || lastCanvas._history.length === 0) return;
+        const ctx = lastCanvas.getContext('2d');
+        const img = lastCanvas._history.pop();
+        ctx.putImageData(img,0,0);
+        saveDrawing(lastCanvas);
       }
 
       // cargar pdf inicial si viene por query
