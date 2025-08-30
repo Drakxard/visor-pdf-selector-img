@@ -1364,13 +1364,6 @@
           activeElement.classList.contains('mq-editable-field')
         );
 
-        if (!isEditing && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
-          e.preventDefault();
-          drawMode = !drawMode;
-          updateDrawMode();
-          return;
-        }
-
         // Bloquear navegación si overlay visible
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
           if (
@@ -2250,7 +2243,6 @@
 
       function startDraw(e) {
         if (!drawMode) return;
-        isDrawing = true;
         const canvas = e.target;
         const ctx = canvas.getContext('2d');
         ctx.globalCompositeOperation = eraseMode ? 'destination-out' : 'source-over';
@@ -2266,26 +2258,24 @@
         canvas._ctx = ctx;
         canvas._history = canvas._history || [];
         canvas._history.push(ctx.getImageData(0,0,canvas.width,canvas.height));
-        canvas._lastX = e.offsetX;
-        canvas._lastY = e.offsetY;
+        ctx.beginPath();
+        ctx.moveTo(e.offsetX, e.offsetY);
         currentCanvas = canvas;
+        isDrawing = true;
       }
 
       function drawMove(e) {
         if (!isDrawing) return;
-        const canvas = e.target;
-        const ctx = canvas._ctx;
-        ctx.beginPath();
-        ctx.moveTo(canvas._lastX, canvas._lastY);
+        const ctx = e.target._ctx;
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
-        canvas._lastX = e.offsetX;
-        canvas._lastY = e.offsetY;
       }
 
       function endDraw(e) {
         if (!isDrawing) return;
         const canvas = e.target;
+        const ctx = canvas._ctx;
+        ctx.stroke();
         isDrawing = false;
         saveDrawing(canvas);
       }
