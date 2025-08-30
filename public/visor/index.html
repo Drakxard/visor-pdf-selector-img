@@ -348,6 +348,9 @@
       z-index: 950;
       cursor: pointer;
     }
+    .focus-preview {
+      pointer-events: none;
+    }
 
     /* Modal de categoría (Teoría/Práctica) reusa estilos de info-modal */
     .category-actions {
@@ -635,6 +638,8 @@
 
       let focusMode = false;
       let focusStart = null;
+      let focusPreview = null;
+      let focusMoveHandler = null;
 
       let theoryHandle = null;
       let practiceHandle = null;
@@ -1079,14 +1084,18 @@
               const yp = ly / layer.offsetHeight;
               if (!focusStart) {
                 focusStart = { pageNum, xp, yp, layer };
+                createFocusPreview(layer, xp, yp);
                 showNavIndicator('Punto inicial marcado');
                 return;
               }
               if (focusStart.pageNum !== pageNum) {
+                removeFocusPreview();
                 focusStart = { pageNum, xp, yp, layer };
+                createFocusPreview(layer, xp, yp);
                 showToast('Inicio restablecido en esta página', 'info');
                 return;
               }
+              removeFocusPreview();
               focusArea(pageNum, focusStart.xp, focusStart.yp, xp, yp);
               focusStart = null;
               focusMode = false;
@@ -1470,6 +1479,7 @@
           if (!pdfDoc) return;
           if (captureMode) { showToast('Finaliza la captura (Ctrl+I) antes de enfocar', 'info'); return; }
           focusMode = !focusMode;
+          removeFocusPreview();
           focusStart = null;
           if (focusMode) {
             showNavIndicator('Haz dos clics para enfocar');
@@ -1539,6 +1549,7 @@
           }
           if (focusMode) {
             focusMode = false;
+            removeFocusPreview();
             focusStart = null;
             showToast('Enfoque cancelado', 'info');
           }
@@ -2034,6 +2045,35 @@
         }
       }
 
+      function createFocusPreview(layer, xp, yp) {
+        focusPreview = document.createElement('div');
+        focusPreview.className = 'selection-rect focus-preview';
+        focusPreview.dataset.xp1 = focusPreview.dataset.xp2 = String(xp);
+        focusPreview.dataset.yp1 = focusPreview.dataset.yp2 = String(yp);
+        layer.appendChild(focusPreview);
+        focusMoveHandler = (ev) => {
+          const r = layer.getBoundingClientRect();
+          const mx = ev.clientX - r.left;
+          const my = ev.clientY - r.top;
+          const mxp = mx / layer.offsetWidth;
+          const myp = my / layer.offsetHeight;
+          focusPreview.dataset.xp2 = String(mxp);
+          focusPreview.dataset.yp2 = String(myp);
+          repositionSelectionsForLayer(layer);
+        };
+        layer.addEventListener('pointermove', focusMoveHandler);
+        repositionSelectionsForLayer(layer);
+      }
+
+      function removeFocusPreview() {
+        if (focusMoveHandler && focusStart?.layer) {
+          focusStart.layer.removeEventListener('pointermove', focusMoveHandler);
+        }
+        focusPreview?.remove();
+        focusPreview = null;
+        focusMoveHandler = null;
+      }
+
       function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
         const rect = document.createElement('div');
         rect.className = 'selection-rect';
@@ -2066,30 +2106,37 @@
       }
 
       async function focusArea(pageNum, xp1, yp1, xp2, yp2) {
-        const state = pageStates.get(pageNum);
-        if (!state) return;
-        if (!state.canvas.width || !state.canvas.height) {
-          await renderPage(pageNum, state);
-        }
-        const pageCanvas = state.canvas;
-        const x1 = Math.min(xp1, xp2) * pageCanvas.width;
-        const y1 = Math.min(yp1, yp2) * pageCanvas.height;
-        const x2 = Math.max(xp1, xp2) * pageCanvas.width;
-        const y2 = Math.max(yp1, yp2) * pageCanvas.height;
+        const page = await pdfDoc.getPage(pageNum);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const x1 = Math.min(xp1, xp2) * baseViewport.width;
+        const y1 = Math.min(yp1, yp2) * baseViewport.height;
+        const x2 = Math.max(xp1, xp2) * baseViewport.width;
+        const y2 = Math.max(yp1, yp2) * baseViewport.height;
         const w = x2 - x1;
         const h = y2 - y1;
-        const overlay = document.createElement('div');
-        overlay.id = 'focus-overlay';
-        const focusCanvas = document.createElement('canvas');
-        focusCanvas.width = w;
-        focusCanvas.height = h;
-        const ctx = focusCanvas.getContext('2d');
-        ctx.drawImage(pageCanvas, x1, y1, w, h, 0, 0, w, h);
         const maxW = window.innerWidth - 40;
         const maxH = window.innerHeight - 40;
-        const scale = Math.min(maxW / w, maxH / h);
-        focusCanvas.style.width = (w * scale) + 'px';
-        focusCanvas.style.height = (h * scale) + 'px';
+        const displayScale = Math.min(maxW / w, maxH / h);
+        const renderScale = displayScale * window.devicePixelRatio;
+        const viewport = page.getViewport({ scale: renderScale });
+        const renderCanvas = document.createElement('canvas');
+        renderCanvas.width = viewport.width;
+        renderCanvas.height = viewport.height;
+        const renderCtx = renderCanvas.getContext('2d');
+        await page.render({ canvasContext: renderCtx, viewport }).promise;
+        const cropX = x1 * renderScale;
+        const cropY = y1 * renderScale;
+        const cropW = w * renderScale;
+        const cropH = h * renderScale;
+        const focusCanvas = document.createElement('canvas');
+        focusCanvas.width = cropW;
+        focusCanvas.height = cropH;
+        const ctx = focusCanvas.getContext('2d');
+        ctx.drawImage(renderCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        focusCanvas.style.width = (w * displayScale) + 'px';
+        focusCanvas.style.height = (h * displayScale) + 'px';
+        const overlay = document.createElement('div');
+        overlay.id = 'focus-overlay';
         overlay.appendChild(focusCanvas);
         overlay.addEventListener('click', () => overlay.remove());
         document.body.appendChild(overlay);
