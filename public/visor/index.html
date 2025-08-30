@@ -2257,6 +2257,7 @@
         const canvas = e.target;
         const ctx = canvas.getContext('2d');
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         if (eraserMode) {
           ctx.globalCompositeOperation = 'destination-out';
           ctx.strokeStyle = 'rgba(0,0,0,1)';
@@ -2279,14 +2280,20 @@
         ctx.beginPath();
         ctx.moveTo(e.offsetX, e.offsetY);
         canvas._ctx = ctx;
+        canvas._lastX = e.offsetX;
+        canvas._lastY = e.offsetY;
       }
 
       function drawMove(e) {
         if (!isDrawing) return;
         const canvas = e.target;
         const ctx = canvas._ctx;
+        ctx.beginPath();
+        ctx.moveTo(canvas._lastX, canvas._lastY);
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
+        canvas._lastX = e.offsetX;
+        canvas._lastY = e.offsetY;
       }
 
       function endDraw(e) {
