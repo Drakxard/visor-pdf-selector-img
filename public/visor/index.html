@@ -617,8 +617,9 @@
       let practiceHandle = null;
 
       // Dibujo libre
-      let drawMode = false;
+      let drawMode = true;
       let isDrawing = false;
+      let currentCanvas = null;
 
       let brushColor = '#ff0000';
       let brushWidth = 2;
@@ -943,7 +944,8 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
-          drawMode = false;
+          drawMode = true;
+          currentCanvas = null;
           updateDrawMode();
 
           const loadingTask = pdfjsLib.getDocument(url);
@@ -1409,6 +1411,12 @@
               showToast('Error guardando capturas', 'error');
             }
           }
+          return;
+        }
+
+        if (e.ctrlKey && e.key.toLowerCase() === 'z' && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          undoLastStroke();
           return;
         }
 
@@ -2236,7 +2244,7 @@
             found = true;
           }
         });
-        drawMode = found;
+        drawMode = true;
         updateDrawMode();
       }
 
@@ -2249,35 +2257,45 @@
         ctx.strokeStyle = eraseMode ? 'rgba(0,0,0,1)' : brushColor;
         ctx.lineWidth = brushWidth;
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         ctx.shadowColor = eraseMode ? 'rgba(0,0,0,0)' : shadowColor;
         ctx.shadowBlur = eraseMode ? 0 : shadowWidth;
         ctx.shadowOffsetX = eraseMode ? 0 : shadowOffset;
         ctx.shadowOffsetY = eraseMode ? 0 : shadowOffset;
         ctx.globalAlpha = eraseMode ? 1 : brushOpacity;
-        ctx.beginPath();
-        ctx.moveTo(e.offsetX, e.offsetY);
         canvas._ctx = ctx;
+        canvas._history = canvas._history || [];
+        canvas._history.push(ctx.getImageData(0,0,canvas.width,canvas.height));
+        canvas._lastX = e.offsetX;
+        canvas._lastY = e.offsetY;
+        currentCanvas = canvas;
       }
 
       function drawMove(e) {
         if (!isDrawing) return;
         const canvas = e.target;
         const ctx = canvas._ctx;
+        ctx.beginPath();
+        ctx.moveTo(canvas._lastX, canvas._lastY);
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(e.offsetX, e.offsetY);
+        canvas._lastX = e.offsetX;
+        canvas._lastY = e.offsetY;
       }
 
       function endDraw(e) {
         if (!isDrawing) return;
         const canvas = e.target;
-        const ctx = canvas._ctx;
-        ctx.lineTo(e.offsetX, e.offsetY);
-        ctx.stroke();
-        ctx.beginPath();
         isDrawing = false;
         saveDrawing(canvas);
+      }
+
+      function undoLastStroke() {
+        if (!currentCanvas || !currentCanvas._history || !currentCanvas._history.length) return;
+        const ctx = currentCanvas.getContext('2d');
+        const imageData = currentCanvas._history.pop();
+        ctx.putImageData(imageData, 0, 0);
+        saveDrawing(currentCanvas);
       }
 
       // cargar pdf inicial si viene por query
