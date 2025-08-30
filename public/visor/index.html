@@ -1060,6 +1060,8 @@
           drawCanvas.className = 'draw-canvas';
           drawCanvas.width = w;
           drawCanvas.height = h;
+          drawCanvas.style.width = w + 'px';
+          drawCanvas.style.height = h + 'px';
           drawCanvas.dataset.page = String(pageNum);
           drawCanvas.style.pointerEvents = drawMode ? 'auto' : 'none';
           drawCanvas.style.touchAction = 'none';
@@ -1160,7 +1162,7 @@
 
           container.appendChild(wrapper);
 
-          const state = { wrapper, canvas, textLayer, layer, renderedScale: 0, rendering: false, width: w, height: h };
+          const state = { wrapper, canvas, textLayer, layer, drawCanvas, renderedScale: 0, rendering: false, width: w, height: h };
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
@@ -1230,7 +1232,25 @@
           st.wrapper.style.height = h + 'px';
           st.layer.style.width = w + 'px';
           st.layer.style.height = h + 'px';
+          if (st.drawCanvas) {
+            const data = st.drawCanvas.toDataURL();
+            st.drawCanvas.width = w;
+            st.drawCanvas.height = h;
+            st.drawCanvas.style.width = w + 'px';
+            st.drawCanvas.style.height = h + 'px';
+            const ctx = st.drawCanvas.getContext('2d');
+            const img = new Image();
+            img.onload = () => {
+              ctx.clearRect(0, 0, w, h);
+              ctx.drawImage(img, 0, 0, w, h);
+              saveDrawing(st.drawCanvas);
+            };
+            img.src = data;
+            st.drawCanvas._history = [];
+          }
           st.renderedScale = 0;
+          st.width = w;
+          st.height = h;
         }
 
         repositionAllNotes();
@@ -2381,7 +2401,7 @@
           if (data) {
             const ctx = canvas.getContext('2d');
             const img = new Image();
-            img.onload = () => ctx.drawImage(img,0,0);
+            img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             img.src = data;
             found = true;
           }
@@ -2395,6 +2415,7 @@
         if (!drawMode) return;
         isDrawing = true;
         const canvas = e.target;
+        canvas.setPointerCapture(e.pointerId);
         const ctx = canvas.getContext('2d');
         ctx.globalCompositeOperation = eraseMode ? 'destination-out' : 'source-over';
         ctx.strokeStyle = eraseMode ? 'rgba(0,0,0,1)' : brushColor;
@@ -2415,20 +2436,19 @@
       }
 
       function drawMove(e) {
-        if (!isDrawing) return;
-        const canvas = e.target;
-        const ctx = canvas._ctx;
+        if (!isDrawing || !currentCanvas) return;
+        const ctx = currentCanvas._ctx;
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
       }
 
       function endDraw(e) {
-        if (!isDrawing) return;
-        const canvas = e.target;
-        const ctx = canvas._ctx;
+        if (!isDrawing || !currentCanvas) return;
+        const ctx = currentCanvas._ctx;
+        currentCanvas.releasePointerCapture(e.pointerId);
         ctx.closePath();
         isDrawing = false;
-        saveDrawing(canvas);
+        saveDrawing(currentCanvas);
       }
 
       function undoLastStroke() {
