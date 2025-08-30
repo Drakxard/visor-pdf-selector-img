@@ -2265,8 +2265,6 @@
         const ctx = canvas._ctx;
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(e.offsetX, e.offsetY);
       }
 
       function endDraw(e) {
@@ -2275,7 +2273,7 @@
         const ctx = canvas._ctx;
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
-        ctx.beginPath();
+        ctx.closePath();
         isDrawing = false;
         saveDrawing(canvas);
       }
