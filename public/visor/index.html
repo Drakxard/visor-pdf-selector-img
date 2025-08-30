@@ -228,6 +228,25 @@
     }
     #draw-toolbar input[type="range"] { flex: 1; }
 
+    #focus-overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.9);
+      z-index: 1200;
+    }
+    #focus-overlay.active { display: flex; }
+    #focus-overlay img {
+      max-width: 90vw;
+      max-height: 90vh;
+      border: 4px solid #fff;
+      background: #fff;
+    }
+    body.light-mode #focus-overlay { background: rgba(255,255,255,0.9); }
+    body.light-mode #focus-overlay img { border-color: #000; }
+
     .note-icon {
       display: inline-block; cursor: pointer; position: absolute; margin: 0; padding: 4px; user-select: none;
       z-index: 900; font-size: 20px; background: rgba(255,255,255,0.95); border-radius: 50%;
@@ -612,6 +631,7 @@
       let captureCategory = null; // 'teo' | 'practica'
       let pendingStart = null; // { pageNum, xp, yp, layer }
       let selections = []; // { id, pageNum, xp1, yp1, xp2, yp2, elem }
+      let focusMode = false;
 
       let theoryHandle = null;
       let practiceHandle = null;
@@ -675,6 +695,13 @@
         <button id="tool-erase-btn">Borrar</button>
       `;
       document.body.appendChild(drawToolbar);
+
+      const focusOverlay = document.createElement('div');
+      focusOverlay.id = 'focus-overlay';
+      const focusImg = document.createElement('img');
+      focusOverlay.appendChild(focusImg);
+      document.body.appendChild(focusOverlay);
+      focusOverlay.addEventListener('click', () => focusOverlay.classList.remove('active'));
 
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
@@ -1048,6 +1075,31 @@
               return;
             }
 
+            if (focusMode) {
+              e.preventDefault();
+              e.stopPropagation();
+              const lx = x; const ly = y;
+              const xp = lx / layer.offsetWidth;
+              const yp = ly / layer.offsetHeight;
+
+              if (!pendingStart) {
+                pendingStart = { pageNum, xp, yp, layer };
+                showNavIndicator('Punto inicial marcado');
+                return;
+              }
+
+              if (pendingStart.pageNum !== pageNum) {
+                pendingStart = { pageNum, xp, yp, layer };
+                showToast('Inicio restablecido en esta página', 'info');
+                return;
+              }
+
+              focusOnArea(pageNum, pendingStart.xp, pendingStart.yp, xp, yp);
+              pendingStart = null;
+              focusMode = false;
+              return;
+            }
+
             if (captureMode) {
               e.preventDefault();
               e.stopPropagation();
@@ -1371,6 +1423,16 @@
           return;
         }
 
+        if (!isEditing && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'o') {
+          e.preventDefault();
+          if (focusOverlay.classList.contains('active')) { hideFocusOverlay(); return; }
+          if (captureMode) { showToast('Finaliza la captura (Ctrl+I) antes de enfocar', 'info'); return; }
+          focusMode = true;
+          pendingStart = null;
+          showToast('Modo enfoque: 1er clic y 2do clic para delimitar área', 'info');
+          return;
+        }
+
         // Bloquear navegación si overlay visible
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
           if (
@@ -1478,6 +1540,12 @@
             exitCaptureMode(true);
             showToast('Captura cancelada', 'info');
           }
+          if (focusMode) {
+            focusMode = false;
+            pendingStart = null;
+            showToast('Enfoque cancelado', 'info');
+          }
+          hideFocusOverlay();
           creatingNote = false;
           document.body.classList.remove('creating-note');
           if (isFullscreen) toggleFullscreen();
@@ -2224,6 +2292,33 @@
         drawToolbar.classList.toggle('active', drawMode);
       }
 
+      function showFocusOverlay(src) {
+        focusImg.src = src;
+        focusOverlay.classList.add('active');
+      }
+
+      function hideFocusOverlay() {
+        focusOverlay.classList.remove('active');
+      }
+
+      async function focusOnArea(pageNum, xp1, yp1, xp2, yp2) {
+        const state = pageStates.get(pageNum);
+        if (!state) return;
+        if (!state.canvas.width || !state.canvas.height) {
+          await renderPage(pageNum, state);
+        }
+        const canvas = state.canvas;
+        const sx = Math.round(Math.min(xp1, xp2) * canvas.width);
+        const sy = Math.round(Math.min(yp1, yp2) * canvas.height);
+        const sw = Math.max(1, Math.round(Math.abs(xp2 - xp1) * canvas.width));
+        const sh = Math.max(1, Math.round(Math.abs(yp2 - yp1) * canvas.height));
+        const out = document.createElement('canvas');
+        out.width = sw; out.height = sh;
+        const octx = out.getContext('2d');
+        octx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        showFocusOverlay(out.toDataURL('image/png'));
+      }
+
       function saveDrawing(canvas) {
         if (!currentPdfName) return;
         try {
@@ -2246,6 +2341,7 @@
         });
         drawMode = true;
         updateDrawMode();
+        drawToolbar.classList.remove('active');
       }
 
       function startDraw(e) {
