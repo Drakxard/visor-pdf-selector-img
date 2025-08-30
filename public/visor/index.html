@@ -718,6 +718,12 @@
       `;
       document.body.appendChild(drawToolbar);
 
+      drawIndicator.addEventListener('click', () => {
+        if (drawMode) {
+          drawToolbar.classList.toggle('active');
+        }
+      });
+
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
       const shadowColorInput = drawToolbar.querySelector('#tool-shadow-color');
@@ -2357,7 +2363,7 @@
         const canvases = document.querySelectorAll('.draw-canvas');
         canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
         drawIndicator.classList.toggle('active', drawMode);
-        drawToolbar.classList.toggle('active', drawMode);
+        if (!drawMode) drawToolbar.classList.remove('active');
       }
 
       function saveDrawing(canvas) {
