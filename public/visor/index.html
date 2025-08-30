@@ -228,6 +228,23 @@
     }
     #draw-toolbar input[type="range"] { flex: 1; }
 
+    #focus-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.9);
+      z-index: 2000;
+    }
+    #focus-overlay canvas {
+      max-width: calc(100% - 40px);
+      max-height: calc(100% - 40px);
+      border: 2px solid #fff;
+    }
+    body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
+    body.light-mode #focus-overlay canvas { border-color: #000; }
+
     .note-icon {
       display: inline-block; cursor: pointer; position: absolute; margin: 0; padding: 4px; user-select: none;
       z-index: 900; font-size: 20px; background: rgba(255,255,255,0.95); border-radius: 50%;
@@ -612,6 +629,9 @@
       let captureCategory = null; // 'teo' | 'practica'
       let pendingStart = null; // { pageNum, xp, yp, layer }
       let selections = []; // { id, pageNum, xp1, yp1, xp2, yp2, elem }
+
+      let focusMode = false;
+      let focusStart = null;
 
       let theoryHandle = null;
       let practiceHandle = null;
@@ -1048,6 +1068,28 @@
               return;
             }
 
+            if (focusMode) {
+              e.preventDefault();
+              e.stopPropagation();
+              const lx = x; const ly = y;
+              const xp = lx / layer.offsetWidth;
+              const yp = ly / layer.offsetHeight;
+              if (!focusStart) {
+                focusStart = { pageNum, xp, yp, layer };
+                showNavIndicator('Punto inicial marcado');
+                return;
+              }
+              if (focusStart.pageNum !== pageNum) {
+                focusStart = { pageNum, xp, yp, layer };
+                showToast('Inicio restablecido en esta página', 'info');
+                return;
+              }
+              focusArea(pageNum, focusStart.xp, focusStart.yp, xp, yp);
+              focusStart = null;
+              focusMode = false;
+              return;
+            }
+
             if (captureMode) {
               e.preventDefault();
               e.stopPropagation();
@@ -1420,6 +1462,20 @@
           return;
         }
 
+        if (e.key.toLowerCase() === 'o' && !e.repeat && !e.ctrlKey && !e.altKey && !isEditing) {
+          e.preventDefault();
+          if (!pdfDoc) return;
+          if (captureMode) { showToast('Finaliza la captura (Ctrl+I) antes de enfocar', 'info'); return; }
+          focusMode = !focusMode;
+          focusStart = null;
+          if (focusMode) {
+            showNavIndicator('Haz dos clics para enfocar');
+          } else {
+            showToast('Enfoque cancelado', 'info');
+          }
+          return;
+        }
+
         if (e.key.toLowerCase() === 'f' && !e.repeat && !e.ctrlKey && !isEditing) {
           e.preventDefault(); if (pdfDoc) toggleFullscreen();
         }
@@ -1478,6 +1534,13 @@
             exitCaptureMode(true);
             showToast('Captura cancelada', 'info');
           }
+          if (focusMode) {
+            focusMode = false;
+            focusStart = null;
+            showToast('Enfoque cancelado', 'info');
+          }
+          const fo = document.getElementById('focus-overlay');
+          if (fo) fo.remove();
           creatingNote = false;
           document.body.classList.remove('creating-note');
           if (isFullscreen) toggleFullscreen();
@@ -1999,6 +2062,33 @@
         showNavIndicator('Selección añadida (' + selections.length + ')');
       }
 
+      function focusArea(pageNum, xp1, yp1, xp2, yp2) {
+        const state = pageStates.get(pageNum);
+        if (!state) return;
+        const pageCanvas = state.canvas;
+        const x1 = Math.min(xp1, xp2) * pageCanvas.width;
+        const y1 = Math.min(yp1, yp2) * pageCanvas.height;
+        const x2 = Math.max(xp1, xp2) * pageCanvas.width;
+        const y2 = Math.max(yp1, yp2) * pageCanvas.height;
+        const w = x2 - x1;
+        const h = y2 - y1;
+        const overlay = document.createElement('div');
+        overlay.id = 'focus-overlay';
+        const focusCanvas = document.createElement('canvas');
+        focusCanvas.width = w;
+        focusCanvas.height = h;
+        const ctx = focusCanvas.getContext('2d');
+        ctx.drawImage(pageCanvas, x1, y1, w, h, 0, 0, w, h);
+        const maxW = window.innerWidth - 40;
+        const maxH = window.innerHeight - 40;
+        const scale = Math.min(maxW / w, maxH / h);
+        focusCanvas.style.width = (w * scale) + 'px';
+        focusCanvas.style.height = (h * scale) + 'px';
+        overlay.appendChild(focusCanvas);
+        overlay.addEventListener('click', () => overlay.remove());
+        document.body.appendChild(overlay);
+      }
+
       function sanitizeName(name) {
         return (name || 'documento').replace(/[^a-zA-Z0-9._-]/g, '_');
       }
@@ -2246,6 +2336,7 @@
         });
         drawMode = true;
         updateDrawMode();
+        drawToolbar.classList.remove('active');
       }
 
       function startDraw(e) {
