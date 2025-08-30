@@ -626,6 +626,7 @@
       let shadowWidth = 0;
       let shadowOffset = 0;
       let brushOpacity = 1;
+      let eraseMode = false;
 
       const BRUSH_SETTINGS_KEY = 'draw-settings';
 
@@ -670,6 +671,7 @@
         <label>Desplazamiento de <input type="range" id="tool-shadow-offset" min="0" max="50" value="0"></label>
         <label>Opacidad del <input type="range" id="tool-opacity-line" min="0" max="1" step="0.01" value="1"></label>
         <label>Opacidad de forma <input type="range" id="tool-opacity-shape" min="0" max="1" step="0.01" value="1"></label>
+        <button id="tool-erase-btn">Borrar</button>
       `;
       document.body.appendChild(drawToolbar);
 
@@ -679,6 +681,7 @@
       const shadowWidthInput = drawToolbar.querySelector('#tool-shadow-width');
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
       const opacityInput = drawToolbar.querySelector('#tool-opacity-line');
+      const eraseBtn = drawToolbar.querySelector('#tool-erase-btn');
 
       lineColorInput.addEventListener('input', e => { brushColor = e.target.value; saveBrushSettings(); });
       brushWidthInput.addEventListener('input', e => { brushWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
@@ -686,6 +689,10 @@
       shadowWidthInput.addEventListener('input', e => { shadowWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
       shadowOffsetInput.addEventListener('input', e => { shadowOffset = parseInt(e.target.value, 10); saveBrushSettings(); });
       opacityInput.addEventListener('input', e => { brushOpacity = parseFloat(e.target.value); saveBrushSettings(); });
+      eraseBtn.addEventListener('click', () => {
+        eraseMode = !eraseMode;
+        eraseBtn.textContent = eraseMode ? 'Dibujar' : 'Borrar';
+      });
 
       function applyBrushSettings() {
         lineColorInput.value = brushColor;
@@ -2238,14 +2245,15 @@
         isDrawing = true;
         const canvas = e.target;
         const ctx = canvas.getContext('2d');
-        ctx.strokeStyle = brushColor;
+        ctx.globalCompositeOperation = eraseMode ? 'destination-out' : 'source-over';
+        ctx.strokeStyle = eraseMode ? 'rgba(0,0,0,1)' : brushColor;
         ctx.lineWidth = brushWidth;
         ctx.lineCap = 'round';
-        ctx.shadowColor = shadowColor;
-        ctx.shadowBlur = shadowWidth;
-        ctx.shadowOffsetX = shadowOffset;
-        ctx.shadowOffsetY = shadowOffset;
-        ctx.globalAlpha = brushOpacity;
+        ctx.shadowColor = eraseMode ? 'rgba(0,0,0,0)' : shadowColor;
+        ctx.shadowBlur = eraseMode ? 0 : shadowWidth;
+        ctx.shadowOffsetX = eraseMode ? 0 : shadowOffset;
+        ctx.shadowOffsetY = eraseMode ? 0 : shadowOffset;
+        ctx.globalAlpha = eraseMode ? 1 : brushOpacity;
         ctx.beginPath();
         ctx.moveTo(e.offsetX, e.offsetY);
         canvas._ctx = ctx;
@@ -2257,13 +2265,17 @@
         const ctx = canvas._ctx;
         ctx.lineTo(e.offsetX, e.offsetY);
         ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(e.offsetX, e.offsetY);
       }
 
       function endDraw(e) {
         if (!isDrawing) return;
         const canvas = e.target;
         const ctx = canvas._ctx;
-        ctx.closePath();
+        ctx.lineTo(e.offsetX, e.offsetY);
+        ctx.stroke();
+        ctx.beginPath();
         isDrawing = false;
         saveDrawing(canvas);
       }
