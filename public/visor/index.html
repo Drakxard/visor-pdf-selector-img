@@ -580,6 +580,10 @@
       let queueRunning = false;
       const PRELOAD_MARGIN = '1000px';
       const KEEP_BUFFER_PAGES = 8;
+      const requestIdle = window.requestIdleCallback || function (cb) {
+        return setTimeout(() => cb({ didTimeout: true, timeRemaining: () => 0 }), 1);
+      };
+      const cancelIdle = window.cancelIdleCallback || clearTimeout;
 
       // Señal de "revelar cuando lista la primera pantalla"
       let initialRevealPending = false;
@@ -860,19 +864,25 @@
         processQueue();
       }
 
-      async function processQueue() {
+      function processQueue() {
         if (queueRunning) return;
         queueRunning = true;
-        try {
-          while (renderQueue.length > 0) {
-            const pageNum = renderQueue.shift();
-            const state = pageStates.get(pageNum);
-            if (!state || state.rendering) continue;
-            await renderPage(pageNum, state);
+        const run = () => {
+          if (renderQueue.length === 0) {
+            queueRunning = false;
+            return;
           }
-        } finally {
-          queueRunning = false;
-        }
+          const pageNum = renderQueue.shift();
+          const state = pageStates.get(pageNum);
+          if (!state || state.rendering) {
+            requestIdle(run);
+            return;
+          }
+          renderPage(pageNum, state).finally(() => {
+            requestIdle(run);
+          });
+        };
+        requestIdle(run);
       }
 
       async function renderPage(pageNum, state) {
@@ -890,7 +900,7 @@
           state.layer.style.width = viewport.width + 'px';
           state.layer.style.height = viewport.height + 'px';
 
-          const ratio = window.devicePixelRatio || 1;
+          const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
           state.canvas.width = Math.floor(viewport.width * ratio);
           state.canvas.height = Math.floor(viewport.height * ratio);
           state.canvas.style.width = viewport.width + 'px';
@@ -2110,7 +2120,7 @@
 
         const maxW = window.innerWidth - 40;
         const maxH = window.innerHeight - 40;
-        const ratio = window.devicePixelRatio || 1;
+        const ratio = Math.min(window.devicePixelRatio || 1, 1.5);
         const scale = Math.min((maxW * ratio) / (baseWidth * widthFrac), (maxH * ratio) / (baseHeight * heightFrac));
         const viewport = page.getViewport({ scale });
         const x1 = Math.min(xp1, xp2) * viewport.width;
