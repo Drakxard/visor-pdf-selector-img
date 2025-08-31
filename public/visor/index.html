@@ -177,7 +177,8 @@
       background: rgba(255,0,0,0.8);
       border: 2px solid #fff;
       z-index: 1100;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: pointer;
       display: none;
     }
     #draw-indicator.active { display: block; }
@@ -527,8 +528,12 @@
       // ========================================
       const container = document.getElementById('pdf-container');
       let zoomLevel = 1;
+      let prevZoomLevel = 1;
 
       function applyZoom() {
+        const prevScale = BASE_SCALE * prevZoomLevel;
+        const centerX = container.scrollLeft + container.clientWidth / 2;
+        const centerY = container.scrollTop + container.clientHeight / 2;
         const scale = BASE_SCALE * zoomLevel;
         const cur = getCurrentPage();
         for (const [pageNum, state] of pageStates.entries()) {
@@ -544,15 +549,26 @@
           }
           const drawCanvas = state.wrapper.querySelector('.draw-canvas');
           if (drawCanvas) {
+            const data = drawCanvas.toDataURL();
             drawCanvas.width = w;
             drawCanvas.height = h;
+            const ctx = drawCanvas.getContext('2d');
+            const img = new Image();
+            img.onload = () => {
+              ctx.drawImage(img, 0, 0, w, h);
+              saveDrawing(drawCanvas);
+            };
+            img.src = data;
           }
           if (pageNum === cur) {
             state.renderedScale = 0;
             scheduleRender(pageNum);
           }
         }
+        container.scrollLeft = (centerX / prevScale) * scale - container.clientWidth / 2;
+        container.scrollTop = (centerY / prevScale) * scale - container.clientHeight / 2;
         currentPage = cur;
+        prevZoomLevel = zoomLevel;
       }
 
       window.addEventListener('message', (e) => {
@@ -774,6 +790,12 @@
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
       const opacityInput = drawToolbar.querySelector('#tool-opacity-line');
       const eraseBtn = drawToolbar.querySelector('#tool-erase-btn');
+
+      drawIndicator.addEventListener('click', () => {
+        if (drawMode) {
+          drawToolbar.classList.toggle('active');
+        }
+      });
 
       lineColorInput.addEventListener('input', e => { brushColor = e.target.value; saveBrushSettings(); });
       brushWidthInput.addEventListener('input', e => { brushWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
@@ -2338,7 +2360,7 @@
         const canvases = document.querySelectorAll('.draw-canvas');
         canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
         drawIndicator.classList.toggle('active', drawMode);
-        drawToolbar.classList.toggle('active', drawMode);
+        if (!drawMode) drawToolbar.classList.remove('active');
       }
 
       function saveDrawing(canvas) {
