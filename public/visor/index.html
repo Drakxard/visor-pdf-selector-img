@@ -527,16 +527,41 @@
       // ========================================
       const container = document.getElementById('pdf-container');
       let zoomLevel = 1;
+
       function applyZoom() {
-        container.style.zoom = String(zoomLevel);
+        const scale = BASE_SCALE * zoomLevel;
+        const cur = getCurrentPage();
+        for (const [pageNum, state] of pageStates.entries()) {
+          const w = baseWidth * scale;
+          const h = baseHeight * scale;
+          state.wrapper.style.width = w + 'px';
+          state.wrapper.style.height = h + 'px';
+          state.layer.style.width = w + 'px';
+          state.layer.style.height = h + 'px';
+          if (state.canvas) {
+            state.canvas.style.width = w + 'px';
+            state.canvas.style.height = h + 'px';
+          }
+          const drawCanvas = state.wrapper.querySelector('.draw-canvas');
+          if (drawCanvas) {
+            drawCanvas.width = w;
+            drawCanvas.height = h;
+          }
+          if (pageNum === cur) {
+            state.renderedScale = 0;
+            scheduleRender(pageNum);
+          }
+        }
+        currentPage = cur;
       }
-      applyZoom();
+
       window.addEventListener('message', (e) => {
         if (e.data && e.data.type === 'resetZoom') {
           zoomLevel = 1;
           applyZoom();
         }
       });
+
       container.addEventListener('wheel', (e) => {
         if (e.ctrlKey) {
           e.preventDefault();
@@ -546,6 +571,7 @@
           applyZoom();
         }
       }, { passive: false });
+
       document.addEventListener('keydown', (e) => {
         if (!e.ctrlKey) return;
         if (e.key === '+' || e.key === '=') {
@@ -578,6 +604,10 @@
       container.addEventListener('scroll', () => {
         if (currentPdfName) {
           const p = getCurrentPage();
+          if (p !== currentPage) {
+            currentPage = p;
+            scheduleRender(p);
+          }
           localStorage.setItem('lastPage-' + currentPdfName, String(p));
         }
       });
@@ -872,7 +902,7 @@
       function scheduleRender(pageNum) {
         const state = pageStates.get(pageNum);
         if (!state) return;
-        const targetScale = BASE_SCALE;
+        const targetScale = BASE_SCALE * zoomLevel;
         if (state.rendering) return;
         if (Math.abs((state.renderedScale || 0) - targetScale) < 0.001 && state.canvas?.width) return;
         if (!renderQueue.includes(pageNum)) renderQueue.push(pageNum);
@@ -899,24 +929,31 @@
         try {
           state.rendering = true;
           const page = await pdfDoc.getPage(pageNum);
-          const scale = BASE_SCALE;
+          const scale = BASE_SCALE * zoomLevel;
           const viewport = page.getViewport({ scale });
 
           state.wrapper.style.width = viewport.width + 'px';
           state.wrapper.style.height = viewport.height + 'px';
           state.layer.style.width = viewport.width + 'px';
           state.layer.style.height = viewport.height + 'px';
-
-          const ratio = window.devicePixelRatio || 1;
-          state.canvas.width = Math.floor(viewport.width * ratio);
-          state.canvas.height = Math.floor(viewport.height * ratio);
           state.canvas.style.width = viewport.width + 'px';
           state.canvas.style.height = viewport.height + 'px';
 
-          const ctx = state.canvas.getContext('2d');
+          const ratio = window.devicePixelRatio || 1;
+          const offscreen = document.createElement('canvas');
+          offscreen.width = Math.floor(viewport.width * ratio);
+          offscreen.height = Math.floor(viewport.height * ratio);
+          const ctx = offscreen.getContext('2d');
           ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
           await page.render({ canvasContext: ctx, viewport }).promise;
+
+          state.canvas.width = offscreen.width;
+          state.canvas.height = offscreen.height;
+          const mainCtx = state.canvas.getContext('2d');
+          mainCtx.setTransform(1, 0, 0, 1, 0, 0);
+          mainCtx.clearRect(0, 0, offscreen.width, offscreen.height);
+          mainCtx.drawImage(offscreen, 0, 0);
 
           state.renderedScale = scale;
           repositionNotesForLayer(state.layer);
@@ -973,6 +1010,7 @@
         if (pageWrapper) {
           pageWrapper.scrollIntoView({ behavior: 'instant', block: 'start' });
           currentPage = pageNum;
+          scheduleRender(pageNum);
           showNavIndicator(`Página ${pageNum}/${totalPages}`);
         }
       }
@@ -1034,7 +1072,7 @@
 
       function buildPageSkeletons() {
         clearContainer();
-        const scale = BASE_SCALE;
+        const scale = BASE_SCALE * zoomLevel;
         for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
           const wrapper = document.createElement('div');
           wrapper.className = 'page-wrapper';
