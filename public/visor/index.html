@@ -21,7 +21,6 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1/mathquill.min.css" />
-  <link rel="stylesheet" href="/visor/pdf_viewer.css" />
 
   <style>
     * { box-sizing: border-box; }
@@ -108,10 +107,6 @@
       background: #1e1e1e;
     }
     body:not(.light-mode) .page-wrapper canvas {
-      filter: invert(1) hue-rotate(180deg);
-    }
-    body:not(.light-mode) .textLayer,
-    body:not(.light-mode) .annotationLayer {
       filter: invert(1) hue-rotate(180deg);
     }
     .anno-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
@@ -885,8 +880,6 @@
 
           state.wrapper.style.width = viewport.width + 'px';
           state.wrapper.style.height = viewport.height + 'px';
-          state.textLayer.style.width = viewport.width + 'px';
-          state.textLayer.style.height = viewport.height + 'px';
           state.layer.style.width = viewport.width + 'px';
           state.layer.style.height = viewport.height + 'px';
 
@@ -900,15 +893,6 @@
           ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
           await page.render({ canvasContext: ctx, viewport }).promise;
-
-          state.textLayer.innerHTML = '';
-          const textContent = await page.getTextContent();
-          await pdfjsLib.renderTextLayer({
-            textContent,
-            container: state.textLayer,
-            viewport,
-            textDivs: []
-          }).promise;
 
           state.renderedScale = scale;
           repositionNotesForLayer(state.layer);
@@ -936,7 +920,6 @@
           if (far && state.canvas.width > 0) {
             state.canvas.width = 0;
             state.canvas.height = 0;
-            state.textLayer.innerHTML = '';
             state.renderedScale = 0;
           }
         }
@@ -1044,12 +1027,6 @@
           canvas.width = 0; canvas.height = 0;
           wrapper.appendChild(canvas);
 
-          const textLayer = document.createElement('div');
-          textLayer.className = 'textLayer';
-          textLayer.style.width = w + 'px';
-          textLayer.style.height = h + 'px';
-          wrapper.appendChild(textLayer);
-
           const drawCanvas = document.createElement('canvas');
           drawCanvas.className = 'draw-canvas';
           drawCanvas.width = w;
@@ -1154,7 +1131,7 @@
 
           container.appendChild(wrapper);
 
-          const state = { wrapper, canvas, textLayer, layer, renderedScale: 0, rendering: false, width: w, height: h };
+          const state = { wrapper, canvas, layer, renderedScale: 0, rendering: false, width: w, height: h };
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
@@ -1185,20 +1162,12 @@
       }
 
       function prepareInitialReveal() {
-        const sample = pageStates.get(1);
-        const h = sample ? sample.wrapper.getBoundingClientRect().height : (baseHeight * currentZoom * 1.5);
-        const pagesNeeded = Math.min(
-          totalPages,
-          Math.max(1, Math.ceil(container.clientHeight / Math.max(1, h)) + 1)
-        );
-
-        initialRevealSet = new Set();
-        for (let i = 1; i <= pagesNeeded; i++) initialRevealSet.add(i);
-        initialRevealNeeded = initialRevealSet.size;
+        initialRevealSet = new Set([1]);
+        initialRevealNeeded = 1;
         initialRevealCount = 0;
         initialRevealPending = true;
 
-        for (const pn of initialRevealSet) scheduleRender(pn);
+        scheduleRender(1);
         showOverlay('Preparando vista…');
       }
 
@@ -1217,9 +1186,11 @@
         const scrollRatio = beforeHeight > 0 ? beforeTop / beforeHeight : 0;
 
         const scale = currentZoom * 1.5;
-        for (const [pn, st] of pageStates.entries()) {
-          const w = baseWidth * scale;
-          const h = baseHeight * scale;
+        const w = baseWidth * scale;
+        const h = baseHeight * scale;
+        for (const pn of visibleSet) {
+          const st = pageStates.get(pn);
+          if (!st) continue;
           st.wrapper.style.width = w + 'px';
           st.wrapper.style.height = h + 'px';
           st.layer.style.width = w + 'px';
@@ -1240,7 +1211,10 @@
       }
 
       function repositionAllNotes() {
-        document.querySelectorAll('.anno-layer').forEach(layer => repositionNotesForLayer(layer));
+        visibleSet.forEach(pn => {
+          const st = pageStates.get(pn);
+          if (st) repositionNotesForLayer(st.layer);
+        });
       }
       function repositionNotesForLayer(layer) {
         const pageWidth = layer.offsetWidth;
@@ -1257,7 +1231,10 @@
 
       // Reposicionar selecciones (captura)
       function repositionAllSelections() {
-        document.querySelectorAll('.anno-layer').forEach(layer => repositionSelectionsForLayer(layer));
+        visibleSet.forEach(pn => {
+          const st = pageStates.get(pn);
+          if (st) repositionSelectionsForLayer(st.layer);
+        });
       }
       function repositionSelectionsForLayer(layer) {
         const pageWidth = layer.offsetWidth;
