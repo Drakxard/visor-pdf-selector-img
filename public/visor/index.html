@@ -554,7 +554,11 @@
       // Base size estimada (para skeletons)
       let baseWidth = 800;
       let baseHeight = 1100;
-      const BASE_SCALE = 1.5;
+      const DEFAULT_SCALE = 1.5;
+      let baseScale = DEFAULT_SCALE;
+      const MIN_SCALE = 0.5;
+      const MAX_SCALE = 4;
+      const SCALE_STEP = 0.25;
 
       // Estados por página (virtualización)
       const pageStates = new Map();
@@ -563,6 +567,26 @@
       let queueRunning = false;
       const PRELOAD_MARGIN = '1000px';
       const KEEP_BUFFER_PAGES = 8;
+
+      function setScale(newScale) {
+        baseScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+        pageStates.forEach((state, pageNum) => {
+          const w = baseWidth * baseScale;
+          const h = baseHeight * baseScale;
+          state.wrapper.style.width = w + 'px';
+          state.wrapper.style.height = h + 'px';
+          state.layer.style.width = w + 'px';
+          state.layer.style.height = h + 'px';
+          if (state.drawCanvas) {
+            state.drawCanvas.width = w;
+            state.drawCanvas.height = h;
+          }
+          state.canvas.width = 0;
+          state.canvas.height = 0;
+          state.renderedScale = 0;
+          scheduleRender(pageNum);
+        });
+      }
 
       // Señal de "revelar cuando lista la primera pantalla"
       let initialRevealPending = false;
@@ -836,7 +860,7 @@
       function scheduleRender(pageNum) {
         const state = pageStates.get(pageNum);
         if (!state) return;
-        const targetScale = BASE_SCALE;
+        const targetScale = baseScale;
         if (state.rendering) return;
         if (Math.abs((state.renderedScale || 0) - targetScale) < 0.001 && state.canvas?.width) return;
         if (!renderQueue.includes(pageNum)) renderQueue.push(pageNum);
@@ -863,7 +887,7 @@
         try {
           state.rendering = true;
           const page = await pdfDoc.getPage(pageNum);
-          const scale = BASE_SCALE;
+          const scale = baseScale;
           const viewport = page.getViewport({ scale });
 
           state.wrapper.style.width = viewport.width + 'px';
@@ -998,7 +1022,7 @@
 
       function buildPageSkeletons() {
         clearContainer();
-        const scale = BASE_SCALE;
+        const scale = baseScale;
         for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
           const wrapper = document.createElement('div');
           wrapper.className = 'page-wrapper';
@@ -1119,7 +1143,7 @@
 
           container.appendChild(wrapper);
 
-          const state = { wrapper, canvas, layer, renderedScale: 0, rendering: false, width: w, height: h };
+          const state = { wrapper, canvas, drawCanvas, layer, renderedScale: 0, rendering: false, width: w, height: h };
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
@@ -1354,6 +1378,24 @@
           activeElement.classList.contains('mq-editable-field')
         );
 
+        if (e.ctrlKey) {
+          if (e.key === '+' || e.key === '=') {
+            e.preventDefault();
+            setScale(baseScale + SCALE_STEP);
+            return;
+          }
+          if (e.key === '-' || e.key === '_') {
+            e.preventDefault();
+            setScale(baseScale - SCALE_STEP);
+            return;
+          }
+          if (e.key === '0') {
+            e.preventDefault();
+            setScale(DEFAULT_SCALE);
+            return;
+          }
+        }
+
         if (!isEditing && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
           e.preventDefault();
           drawMode = !drawMode;
@@ -1507,11 +1549,19 @@
           e.preventDefault();
           return;
         }
+        if (e.ctrlKey) {
+          e.preventDefault();
+          const delta = -Math.sign(e.deltaY);
+          setScale(baseScale + delta * SCALE_STEP);
+          return;
+        }
         requestAnimationFrame(() => {
           currentPage = getCurrentPage();
           maybeReleaseFarPages();
         });
-      });
+      }, { passive: false });
+
+      window.addEventListener('blur', () => setScale(DEFAULT_SCALE));
 
       // ========================================
       // SISTEMA DE NOTAS (existente)
