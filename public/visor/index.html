@@ -177,7 +177,8 @@
       background: rgba(255,0,0,0.8);
       border: 2px solid #fff;
       z-index: 1100;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: pointer;
       display: none;
     }
     #draw-indicator.active { display: block; }
@@ -527,8 +528,12 @@
       // ========================================
       const container = document.getElementById('pdf-container');
       let zoomLevel = 1;
+      let prevZoomLevel = 1;
 
       function applyZoom() {
+        const prevCenterX = container.scrollLeft + container.clientWidth / 2;
+        const prevCenterY = container.scrollTop + container.clientHeight / 2;
+        const ratio = zoomLevel / prevZoomLevel;
         const scale = BASE_SCALE * zoomLevel;
         const cur = getCurrentPage();
         for (const [pageNum, state] of pageStates.entries()) {
@@ -544,14 +549,26 @@
           }
           const drawCanvas = state.wrapper.querySelector('.draw-canvas');
           if (drawCanvas) {
+            const tmp = document.createElement('canvas');
+            tmp.width = drawCanvas.width;
+            tmp.height = drawCanvas.height;
+            tmp.getContext('2d').drawImage(drawCanvas, 0, 0);
             drawCanvas.width = w;
             drawCanvas.height = h;
+            drawCanvas.style.width = w + 'px';
+            drawCanvas.style.height = h + 'px';
+            const ctx = drawCanvas.getContext('2d');
+            ctx.drawImage(tmp, 0, 0, w, h);
+            drawCanvas._history = [ctx.getImageData(0, 0, w, h)];
           }
           if (pageNum === cur) {
             state.renderedScale = 0;
             scheduleRender(pageNum);
           }
         }
+        container.scrollLeft = prevCenterX * ratio - container.clientWidth / 2;
+        container.scrollTop = prevCenterY * ratio - container.clientHeight / 2;
+        prevZoomLevel = zoomLevel;
         currentPage = cur;
       }
 
@@ -766,6 +783,9 @@
         <button id="tool-erase-btn">Borrar</button>
       `;
       document.body.appendChild(drawToolbar);
+      drawIndicator.addEventListener('click', () => {
+        drawToolbar.classList.toggle('active');
+      });
 
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
@@ -2338,7 +2358,7 @@
         const canvases = document.querySelectorAll('.draw-canvas');
         canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
         drawIndicator.classList.toggle('active', drawMode);
-        drawToolbar.classList.toggle('active', drawMode);
+        if (!drawMode) drawToolbar.classList.remove('active');
       }
 
       function saveDrawing(canvas) {
