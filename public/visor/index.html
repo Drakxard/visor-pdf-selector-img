@@ -530,6 +530,7 @@
 
       function applyZoom() {
         const scale = BASE_SCALE * zoomLevel;
+        const cur = getCurrentPage();
         for (const [pageNum, state] of pageStates.entries()) {
           const w = baseWidth * scale;
           const h = baseHeight * scale;
@@ -537,16 +538,21 @@
           state.wrapper.style.height = h + 'px';
           state.layer.style.width = w + 'px';
           state.layer.style.height = h + 'px';
+          if (state.canvas) {
+            state.canvas.style.width = w + 'px';
+            state.canvas.style.height = h + 'px';
+          }
           const drawCanvas = state.wrapper.querySelector('.draw-canvas');
           if (drawCanvas) {
             drawCanvas.width = w;
             drawCanvas.height = h;
           }
-          state.renderedScale = 0;
-          if (visibleSet.has(pageNum)) {
+          if (pageNum === cur) {
+            state.renderedScale = 0;
             scheduleRender(pageNum);
           }
         }
+        currentPage = cur;
       }
 
       window.addEventListener('message', (e) => {
@@ -598,6 +604,10 @@
       container.addEventListener('scroll', () => {
         if (currentPdfName) {
           const p = getCurrentPage();
+          if (p !== currentPage) {
+            currentPage = p;
+            scheduleRender(p);
+          }
           localStorage.setItem('lastPage-' + currentPdfName, String(p));
         }
       });
@@ -1000,6 +1010,7 @@
         if (pageWrapper) {
           pageWrapper.scrollIntoView({ behavior: 'instant', block: 'start' });
           currentPage = pageNum;
+          scheduleRender(pageNum);
           showNavIndicator(`Página ${pageNum}/${totalPages}`);
         }
       }
