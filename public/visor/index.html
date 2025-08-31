@@ -580,6 +580,9 @@
       let queueRunning = false;
       const PRELOAD_MARGIN = '1000px';
       const KEEP_BUFFER_PAGES = 8;
+      const TEXT_LAYER_RANGE = 2; // render text for current page +/- range
+      const SCALE_FACTOR = 1.25; // lower scale for faster rendering
+      const MAX_DEVICE_PIXEL_RATIO = 2; // cap DPR to avoid huge canvases
 
       // Señal de "revelar cuando lista la primera pantalla"
       let initialRevealPending = false;
@@ -853,9 +856,15 @@
       function scheduleRender(pageNum) {
         const state = pageStates.get(pageNum);
         if (!state) return;
-        const targetScale = currentZoom * 1.5;
+        const targetScale = currentZoom * SCALE_FACTOR;
         if (state.rendering) return;
-        if (Math.abs((state.renderedScale || 0) - targetScale) < 0.001 && state.canvas?.width) return;
+        const needsText = shouldRenderTextLayer(pageNum);
+        if (
+          Math.abs((state.renderedScale || 0) - targetScale) < 0.001 &&
+          state.canvas?.width &&
+          (!needsText || state.textLayer.childElementCount > 0)
+        )
+          return;
         if (!renderQueue.includes(pageNum)) renderQueue.push(pageNum);
         processQueue();
       }
@@ -869,6 +878,7 @@
             const state = pageStates.get(pageNum);
             if (!state || state.rendering) continue;
             await renderPage(pageNum, state);
+            await new Promise(r => requestAnimationFrame(r));
           }
         } finally {
           queueRunning = false;
@@ -880,7 +890,7 @@
         try {
           state.rendering = true;
           const page = await pdfDoc.getPage(pageNum);
-          const scale = currentZoom * 1.5;
+          const scale = currentZoom * SCALE_FACTOR;
           const viewport = page.getViewport({ scale });
 
           state.wrapper.style.width = viewport.width + 'px';
@@ -890,7 +900,7 @@
           state.layer.style.width = viewport.width + 'px';
           state.layer.style.height = viewport.height + 'px';
 
-          const ratio = window.devicePixelRatio || 1;
+          const ratio = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_PIXEL_RATIO);
           state.canvas.width = Math.floor(viewport.width * ratio);
           state.canvas.height = Math.floor(viewport.height * ratio);
           state.canvas.style.width = viewport.width + 'px';
@@ -902,13 +912,15 @@
           await page.render({ canvasContext: ctx, viewport }).promise;
 
           state.textLayer.innerHTML = '';
-          const textContent = await page.getTextContent();
-          await pdfjsLib.renderTextLayer({
-            textContent,
-            container: state.textLayer,
-            viewport,
-            textDivs: []
-          }).promise;
+          if (shouldRenderTextLayer(pageNum)) {
+            const textContent = await page.getTextContent();
+            await pdfjsLib.renderTextLayer({
+              textContent,
+              container: state.textLayer,
+              viewport,
+              textDivs: []
+            }).promise;
+          }
 
           state.renderedScale = scale;
           repositionNotesForLayer(state.layer);
@@ -959,6 +971,11 @@
           }
         });
         return closestPage || 1;
+      }
+
+      function shouldRenderTextLayer(pageNum) {
+        const cur = getCurrentPage();
+        return Math.abs(pageNum - cur) <= TEXT_LAYER_RANGE;
       }
 
       function scrollToPage(pageNum) {
@@ -1027,7 +1044,7 @@
 
       function buildPageSkeletons() {
         clearContainer();
-        const scale = currentZoom * 1.5;
+        const scale = currentZoom * SCALE_FACTOR;
         for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
           const wrapper = document.createElement('div');
           wrapper.className = 'page-wrapper';
@@ -1186,7 +1203,7 @@
 
       function prepareInitialReveal() {
         const sample = pageStates.get(1);
-        const h = sample ? sample.wrapper.getBoundingClientRect().height : (baseHeight * currentZoom * 1.5);
+        const h = sample ? sample.wrapper.getBoundingClientRect().height : (baseHeight * currentZoom * SCALE_FACTOR);
         const pagesNeeded = Math.min(
           totalPages,
           Math.max(1, Math.ceil(container.clientHeight / Math.max(1, h)) + 1)
@@ -1216,7 +1233,7 @@
         const beforeHeight = container.scrollHeight;
         const scrollRatio = beforeHeight > 0 ? beforeTop / beforeHeight : 0;
 
-        const scale = currentZoom * 1.5;
+        const scale = currentZoom * SCALE_FACTOR;
         for (const [pn, st] of pageStates.entries()) {
           const w = baseWidth * scale;
           const h = baseHeight * scale;
