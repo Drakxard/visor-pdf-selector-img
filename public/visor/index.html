@@ -95,6 +95,11 @@
     }
     body.light-mode #pdf-container { background: #fff; }
 
+    /* Evitar selección de texto para mejorar rendimiento */
+    #pdf-container, #pdf-container canvas {
+      user-select: none;
+    }
+
     /* Desactivar scroll mientras carga o se guarda */
     #pdf-container.no-scroll {
       overflow: hidden !important;
@@ -110,7 +115,6 @@
     body:not(.light-mode) .page-wrapper canvas {
       filter: invert(1) hue-rotate(180deg);
     }
-    body:not(.light-mode) .textLayer,
     body:not(.light-mode) .annotationLayer {
       filter: invert(1) hue-rotate(180deg);
     }
@@ -578,7 +582,7 @@
       const visibleSet = new Set();
       const renderQueue = [];
       let queueRunning = false;
-      const PRELOAD_MARGIN = '1000px';
+      const PRELOAD_MARGIN = '200px';
       const KEEP_BUFFER_PAGES = 8;
 
       // Señal de "revelar cuando lista la primera pantalla"
@@ -885,8 +889,6 @@
 
           state.wrapper.style.width = viewport.width + 'px';
           state.wrapper.style.height = viewport.height + 'px';
-          state.textLayer.style.width = viewport.width + 'px';
-          state.textLayer.style.height = viewport.height + 'px';
           state.layer.style.width = viewport.width + 'px';
           state.layer.style.height = viewport.height + 'px';
 
@@ -900,15 +902,6 @@
           ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
           await page.render({ canvasContext: ctx, viewport }).promise;
-
-          state.textLayer.innerHTML = '';
-          const textContent = await page.getTextContent();
-          await pdfjsLib.renderTextLayer({
-            textContent,
-            container: state.textLayer,
-            viewport,
-            textDivs: []
-          }).promise;
 
           state.renderedScale = scale;
           repositionNotesForLayer(state.layer);
@@ -936,7 +929,6 @@
           if (far && state.canvas.width > 0) {
             state.canvas.width = 0;
             state.canvas.height = 0;
-            state.textLayer.innerHTML = '';
             state.renderedScale = 0;
           }
         }
@@ -1044,12 +1036,6 @@
           canvas.width = 0; canvas.height = 0;
           wrapper.appendChild(canvas);
 
-          const textLayer = document.createElement('div');
-          textLayer.className = 'textLayer';
-          textLayer.style.width = w + 'px';
-          textLayer.style.height = h + 'px';
-          wrapper.appendChild(textLayer);
-
           const drawCanvas = document.createElement('canvas');
           drawCanvas.className = 'draw-canvas';
           drawCanvas.width = w;
@@ -1154,7 +1140,7 @@
 
           container.appendChild(wrapper);
 
-          const state = { wrapper, canvas, textLayer, layer, renderedScale: 0, rendering: false, width: w, height: h };
+          const state = { wrapper, canvas, layer, renderedScale: 0, rendering: false, width: w, height: h };
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
@@ -1185,21 +1171,13 @@
       }
 
       function prepareInitialReveal() {
-        const sample = pageStates.get(1);
-        const h = sample ? sample.wrapper.getBoundingClientRect().height : (baseHeight * currentZoom * 1.5);
-        const pagesNeeded = Math.min(
-          totalPages,
-          Math.max(1, Math.ceil(container.clientHeight / Math.max(1, h)) + 1)
-        );
-
-        initialRevealSet = new Set();
-        for (let i = 1; i <= pagesNeeded; i++) initialRevealSet.add(i);
-        initialRevealNeeded = initialRevealSet.size;
+        initialRevealSet = new Set([1]);
+        initialRevealNeeded = 1;
         initialRevealCount = 0;
         initialRevealPending = true;
 
-        for (const pn of initialRevealSet) scheduleRender(pn);
-        showOverlay('Preparando vista…');
+        scheduleRender(1);
+        showOverlay('Cargando PDF…');
       }
 
       // ========================================
@@ -1217,7 +1195,12 @@
         const scrollRatio = beforeHeight > 0 ? beforeTop / beforeHeight : 0;
 
         const scale = currentZoom * 1.5;
-        for (const [pn, st] of pageStates.entries()) {
+        const current = getCurrentPage();
+        const minPage = Math.max(1, current - KEEP_BUFFER_PAGES);
+        const maxPage = Math.min(totalPages, current + KEEP_BUFFER_PAGES);
+        for (let pn = minPage; pn <= maxPage; pn++) {
+          const st = pageStates.get(pn);
+          if (!st) continue;
           const w = baseWidth * scale;
           const h = baseHeight * scale;
           st.wrapper.style.width = w + 'px';
