@@ -21,7 +21,6 @@
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1/mathquill.min.css" />
-  <link rel="stylesheet" href="/visor/pdf_viewer.css" />
 
   <style>
     * { box-sizing: border-box; }
@@ -68,7 +67,6 @@
     body.light-mode .control-btn { color: #202124; }
     body.light-mode .control-btn:hover { background: rgba(0,0,0,0.1); }
 
-    #zoom-display { min-width: 60px; text-align: center; font-size: 13px; }
 
     #drop-zone {
       position: absolute; top: 56px; left: 0; right: 0; bottom: 0;
@@ -108,10 +106,6 @@
       background: #1e1e1e;
     }
     body:not(.light-mode) .page-wrapper canvas {
-      filter: invert(1) hue-rotate(180deg);
-    }
-    body:not(.light-mode) .textLayer,
-    body:not(.light-mode) .annotationLayer {
       filter: invert(1) hue-rotate(180deg);
     }
     .anno-layer { position: absolute; top: 0; left: 0; pointer-events: none; }
@@ -399,9 +393,6 @@
       <input type="file" id="pdf-folder-input" class="hidden" style="display:none"
         accept="application/pdf" multiple webkitdirectory directory />
 
-      <button class="control-btn" id="zoom-out">−</button>
-      <span id="zoom-display">100%</span>
-      <button class="control-btn" id="zoom-in">+</button>
       <button class="control-btn" id="fullscreen-btn">⛶</button>
 
       <div class="file-status">
@@ -473,11 +464,6 @@
         • <kbd>Ctrl+L</kbd> para LaTeX en notas<br>
         • Arrastra hacia arriba para eliminar<br><br>
 
-        <strong>🔍 Zoom:</strong><br>
-        • <kbd>Ctrl</kbd> + <kbd>+</kbd> / <kbd>-</kbd> para zoom<br>
-        • <kbd>Ctrl</kbd> + <kbd>0</kbd> para resetear<br>
-        • Rueda del mouse + <kbd>Ctrl</kbd><br><br>
-
         <strong>💾 Guardado Automático:</strong><br>
         • Las notas se guardan automáticamente en archivos<br>
         • Se cargan automáticamente al abrir el mismo PDF<br>
@@ -544,9 +530,6 @@
       const uploadArea = document.getElementById('upload-area');
       const fileInput = document.getElementById('file-input');
       const fileInfo = document.getElementById('file-info');
-      const zoomDisplay = document.getElementById('zoom-display');
-      const zoomInBtn = document.getElementById('zoom-in');
-      const zoomOutBtn = document.getElementById('zoom-out');
       const fullscreenBtn = document.getElementById('fullscreen-btn');
       const backBtn = document.getElementById('back-btn');
       let navIndicator = document.getElementById('nav-indicator');
@@ -564,7 +547,6 @@
       });
 
       let pdfDoc = null;
-      let currentZoom = 1.0;
       let isFullscreen = false;
       let currentPage = 1;
       let totalPages = 0;
@@ -572,6 +554,7 @@
       // Base size estimada (para skeletons)
       let baseWidth = 800;
       let baseHeight = 1100;
+      const BASE_SCALE = 1.5;
 
       // Estados por página (virtualización)
       const pageStates = new Map();
@@ -853,7 +836,7 @@
       function scheduleRender(pageNum) {
         const state = pageStates.get(pageNum);
         if (!state) return;
-        const targetScale = currentZoom * 1.5;
+        const targetScale = BASE_SCALE;
         if (state.rendering) return;
         if (Math.abs((state.renderedScale || 0) - targetScale) < 0.001 && state.canvas?.width) return;
         if (!renderQueue.includes(pageNum)) renderQueue.push(pageNum);
@@ -880,13 +863,11 @@
         try {
           state.rendering = true;
           const page = await pdfDoc.getPage(pageNum);
-          const scale = currentZoom * 1.5;
+          const scale = BASE_SCALE;
           const viewport = page.getViewport({ scale });
 
           state.wrapper.style.width = viewport.width + 'px';
           state.wrapper.style.height = viewport.height + 'px';
-          state.textLayer.style.width = viewport.width + 'px';
-          state.textLayer.style.height = viewport.height + 'px';
           state.layer.style.width = viewport.width + 'px';
           state.layer.style.height = viewport.height + 'px';
 
@@ -900,15 +881,6 @@
           ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
           await page.render({ canvasContext: ctx, viewport }).promise;
-
-          state.textLayer.innerHTML = '';
-          const textContent = await page.getTextContent();
-          await pdfjsLib.renderTextLayer({
-            textContent,
-            container: state.textLayer,
-            viewport,
-            textDivs: []
-          }).promise;
 
           state.renderedScale = scale;
           repositionNotesForLayer(state.layer);
@@ -936,7 +908,6 @@
           if (far && state.canvas.width > 0) {
             state.canvas.width = 0;
             state.canvas.height = 0;
-            state.textLayer.innerHTML = '';
             state.renderedScale = 0;
           }
         }
@@ -1027,7 +998,7 @@
 
       function buildPageSkeletons() {
         clearContainer();
-        const scale = currentZoom * 1.5;
+        const scale = BASE_SCALE;
         for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
           const wrapper = document.createElement('div');
           wrapper.className = 'page-wrapper';
@@ -1043,12 +1014,6 @@
           const canvas = document.createElement('canvas');
           canvas.width = 0; canvas.height = 0;
           wrapper.appendChild(canvas);
-
-          const textLayer = document.createElement('div');
-          textLayer.className = 'textLayer';
-          textLayer.style.width = w + 'px';
-          textLayer.style.height = h + 'px';
-          wrapper.appendChild(textLayer);
 
           const drawCanvas = document.createElement('canvas');
           drawCanvas.className = 'draw-canvas';
@@ -1154,7 +1119,7 @@
 
           container.appendChild(wrapper);
 
-          const state = { wrapper, canvas, textLayer, layer, renderedScale: 0, rendering: false, width: w, height: h };
+          const state = { wrapper, canvas, layer, renderedScale: 0, rendering: false, width: w, height: h };
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
@@ -1185,63 +1150,15 @@
       }
 
       function prepareInitialReveal() {
-        const sample = pageStates.get(1);
-        const h = sample ? sample.wrapper.getBoundingClientRect().height : (baseHeight * currentZoom * 1.5);
-        const pagesNeeded = Math.min(
-          totalPages,
-          Math.max(1, Math.ceil(container.clientHeight / Math.max(1, h)) + 1)
-        );
-
-        initialRevealSet = new Set();
-        for (let i = 1; i <= pagesNeeded; i++) initialRevealSet.add(i);
-        initialRevealNeeded = initialRevealSet.size;
+        initialRevealSet = new Set([1]);
+        initialRevealNeeded = 1;
         initialRevealCount = 0;
         initialRevealPending = true;
 
-        for (const pn of initialRevealSet) scheduleRender(pn);
+        scheduleRender(1);
         showOverlay('Preparando vista…');
       }
 
-      // ========================================
-      // ZOOM
-      // ========================================
-      zoomInBtn.addEventListener('click', () => { currentZoom = Math.min(currentZoom + 0.05, 3.0); updateZoom(); });
-      zoomOutBtn.addEventListener('click', () => { currentZoom = Math.max(currentZoom - 0.05, 0.25); updateZoom(); });
-
-      async function updateZoom() {
-        if (!pdfDoc) return;
-        zoomDisplay.textContent = Math.round(currentZoom * 100) + '%';
-
-        const beforeTop = container.scrollTop;
-        const beforeHeight = container.scrollHeight;
-        const scrollRatio = beforeHeight > 0 ? beforeTop / beforeHeight : 0;
-
-        const scale = currentZoom * 1.5;
-        for (const [pn, st] of pageStates.entries()) {
-          const w = baseWidth * scale;
-          const h = baseHeight * scale;
-          st.wrapper.style.width = w + 'px';
-          st.wrapper.style.height = h + 'px';
-          st.layer.style.width = w + 'px';
-          st.layer.style.height = h + 'px';
-          st.renderedScale = 0;
-        }
-
-        repositionAllNotes();
-        repositionAllSelections();
-
-        for (const pn of visibleSet) scheduleRender(pn);
-
-        requestAnimationFrame(() => {
-          const afterHeight = container.scrollHeight;
-          container.scrollTop = Math.round(scrollRatio * afterHeight);
-          maybeReleaseFarPages();
-        });
-      }
-
-      function repositionAllNotes() {
-        document.querySelectorAll('.anno-layer').forEach(layer => repositionNotesForLayer(layer));
-      }
       function repositionNotesForLayer(layer) {
         const pageWidth = layer.offsetWidth;
         const pageHeight = layer.offsetHeight;
@@ -1256,9 +1173,6 @@
       }
 
       // Reposicionar selecciones (captura)
-      function repositionAllSelections() {
-        document.querySelectorAll('.anno-layer').forEach(layer => repositionSelectionsForLayer(layer));
-      }
       function repositionSelectionsForLayer(layer) {
         const pageWidth = layer.offsetWidth;
         const pageHeight = layer.offsetHeight;
@@ -1585,9 +1499,6 @@
           document.body.classList.remove('creating-note');
           if (isFullscreen) toggleFullscreen();
         }
-        if (e.ctrlKey && e.key === '+') { e.preventDefault(); zoomInBtn.click(); }
-        if (e.ctrlKey && e.key === '-') { e.preventDefault(); zoomOutBtn.click(); }
-        if (e.ctrlKey && e.key === '0') { e.preventDefault(); currentZoom = 1.0; updateZoom(); }
       });
 
       container.addEventListener('wheel', (e) => {
@@ -1595,10 +1506,6 @@
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
           e.preventDefault();
           return;
-        }
-        if (e.ctrlKey) {
-          e.preventDefault();
-          if (e.deltaY < 0) zoomInBtn.click(); else zoomOutBtn.click();
         }
         requestAnimationFrame(() => {
           currentPage = getCurrentPage();
@@ -1880,7 +1787,7 @@
           try {
             updateFileStatus('saving', 'Guardando...');
             const notes = collectAllNotes();
-            const data = { pdfName: currentPdfName, timestamp: Date.now(), notes, totalPages, zoom: currentZoom, version: '2.2' };
+            const data = { pdfName: currentPdfName, timestamp: Date.now(), notes, totalPages, version: '2.2' };
             const key = `/gestor/system/notas/${getNotesFileName(currentPdfName)}`;
             localStorage.setItem(key, JSON.stringify(data));
             updateFileStatus('saved', `${notes.length} notas guardadas`);
