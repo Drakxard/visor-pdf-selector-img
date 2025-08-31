@@ -718,6 +718,12 @@
       `;
       document.body.appendChild(drawToolbar);
 
+      drawIndicator.addEventListener('click', () => {
+        if (drawMode) {
+          drawToolbar.classList.toggle('active');
+        }
+      });
+
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
       const shadowColorInput = drawToolbar.querySelector('#tool-shadow-color');
@@ -1054,6 +1060,8 @@
           drawCanvas.className = 'draw-canvas';
           drawCanvas.width = w;
           drawCanvas.height = h;
+          drawCanvas.style.width = w + 'px';
+          drawCanvas.style.height = h + 'px';
           drawCanvas.dataset.page = String(pageNum);
           drawCanvas.style.pointerEvents = drawMode ? 'auto' : 'none';
           drawCanvas.style.touchAction = 'none';
@@ -1154,7 +1162,7 @@
 
           container.appendChild(wrapper);
 
-          const state = { wrapper, canvas, textLayer, layer, renderedScale: 0, rendering: false, width: w, height: h };
+          const state = { wrapper, canvas, textLayer, layer, drawCanvas, renderedScale: 0, rendering: false, width: w, height: h };
           pageStates.set(pageNum, state);
           observer.observe(wrapper);
         }
@@ -1224,6 +1232,17 @@
           st.wrapper.style.height = h + 'px';
           st.layer.style.width = w + 'px';
           st.layer.style.height = h + 'px';
+          if (st.drawCanvas) {
+            const tmp = document.createElement('canvas');
+            tmp.width = st.drawCanvas.width;
+            tmp.height = st.drawCanvas.height;
+            tmp.getContext('2d').drawImage(st.drawCanvas, 0, 0);
+            st.drawCanvas.width = w;
+            st.drawCanvas.height = h;
+            st.drawCanvas.style.width = w + 'px';
+            st.drawCanvas.style.height = h + 'px';
+            st.drawCanvas.getContext('2d').drawImage(tmp, 0, 0, w, h);
+          }
           st.renderedScale = 0;
         }
 
@@ -2357,7 +2376,7 @@
         const canvases = document.querySelectorAll('.draw-canvas');
         canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
         drawIndicator.classList.toggle('active', drawMode);
-        drawToolbar.classList.toggle('active', drawMode);
+        if (!drawMode) drawToolbar.classList.remove('active');
       }
 
       function saveDrawing(canvas) {
@@ -2406,6 +2425,7 @@
         ctx.beginPath();
         ctx.moveTo(e.offsetX, e.offsetY);
         currentCanvas = canvas;
+        canvas.setPointerCapture(e.pointerId);
       }
 
       function drawMove(e) {
@@ -2422,6 +2442,7 @@
         const ctx = canvas._ctx;
         ctx.closePath();
         isDrawing = false;
+        canvas.releasePointerCapture(e.pointerId);
         saveDrawing(canvas);
       }
 
