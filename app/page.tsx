@@ -42,6 +42,7 @@ export default function Home() {
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
   const folderInputRef = useRef<HTMLInputElement>(null)
+  const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   // Avoid hydration mismatch: render only after mounted
@@ -797,6 +798,9 @@ useEffect(() => {
                     onClick={() => {
                       setViewerOpen(false)
                       setPdfFullscreen(false)
+                      viewerRef.current?.contentWindow?.postMessage({
+                        type: 'resetZoom'
+                      }, '*')
                     }}
                   >
                     ✕
@@ -836,6 +840,7 @@ useEffect(() => {
           <div className="flex-1">
             {currentPdf && (pdfUrl || embedUrl) ? (
               <iframe
+                ref={viewerRef}
                 title={viewerOpen ? (currentPdf.isPdf ? 'Visor PDF' : 'Visor') : 'Previsualización'}
                 src={
                   currentPdf.isPdf

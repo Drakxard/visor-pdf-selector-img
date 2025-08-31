@@ -526,6 +526,42 @@
       // VARIABLES GLOBALES
       // ========================================
       const container = document.getElementById('pdf-container');
+      let zoomLevel = 1;
+      function applyZoom() {
+        container.style.zoom = String(zoomLevel);
+      }
+      applyZoom();
+      window.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'resetZoom') {
+          zoomLevel = 1;
+          applyZoom();
+        }
+      });
+      container.addEventListener('wheel', (e) => {
+        if (e.ctrlKey) {
+          e.preventDefault();
+          const delta = e.deltaY;
+          zoomLevel += delta > 0 ? -0.1 : 0.1;
+          zoomLevel = Math.min(3, Math.max(0.5, zoomLevel));
+          applyZoom();
+        }
+      }, { passive: false });
+      document.addEventListener('keydown', (e) => {
+        if (!e.ctrlKey) return;
+        if (e.key === '+' || e.key === '=') {
+          e.preventDefault();
+          zoomLevel = Math.min(3, zoomLevel + 0.1);
+          applyZoom();
+        } else if (e.key === '-') {
+          e.preventDefault();
+          zoomLevel = Math.max(0.5, zoomLevel - 0.1);
+          applyZoom();
+        } else if (e.key === '0') {
+          e.preventDefault();
+          zoomLevel = 1;
+          applyZoom();
+        }
+      });
       const dropZone = document.getElementById('drop-zone');
       const uploadArea = document.getElementById('upload-area');
       const fileInput = document.getElementById('file-input');
