@@ -37,6 +37,7 @@ export default function Home() {
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
+  const [viewerLight, setViewerLight] = useState(false)
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
@@ -386,11 +387,14 @@ useEffect(() => {
     })()
   }, [currentPdf])
 
-  // listen for fullscreen messages from the PDF viewer
+  // listen for messages from the PDF viewer
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'viewerFullscreen') {
         setPdfFullscreen(!!e.data.value)
+      } else if (e.data?.type === 'viewerTheme') {
+        setViewerLight(!!e.data.value)
+        setTheme(e.data.value ? 'light' : 'dark')
       }
     }
     window.addEventListener('message', handler)
@@ -791,6 +795,27 @@ useEffect(() => {
                   {currentPdf?.file.name}
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => {
+                      viewerRef.current?.contentWindow?.postMessage({
+                        type: 'toggleTheme'
+                      }, '*')
+                      const next = !viewerLight
+                      setViewerLight(next)
+                      setTheme(next ? 'light' : 'dark')
+                    }}
+                  >
+                    {viewerLight ? '🌞' : '🌙'}
+                  </button>
+                  <button
+                    onClick={() =>
+                      viewerRef.current?.contentWindow?.postMessage({
+                        type: 'toggleFullscreen'
+                      }, '*')
+                    }
+                  >
+                    ⛶
+                  </button>
                   <span>
                     Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
                   </span>
@@ -859,11 +884,6 @@ useEffect(() => {
               </div>
             )}
           </div>
-          {!viewerOpen && (
-            <div className="p-2 text-sm text-gray-500">
-              {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ''}
-            </div>
-          )}
         </section>
       </main>
     {/* Toast banner */}
