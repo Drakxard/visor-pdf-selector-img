@@ -92,6 +92,20 @@
     .upload-subtext { font-size: 14px; color: #9aa0a6; }
     #file-input { display: none; }
 
+    #reuse-notice {
+      position: fixed;
+      top: 70px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 4px;
+      z-index: 200;
+    }
+    #reuse-notice.hidden { display: none; }
+    body.light-mode #reuse-notice { background: rgba(0,0,0,0.8); color: #fff; }
+
     #pdf-container {
       position: absolute; top: 56px; left: 0; right: 0; bottom: 0;
       overflow-y: auto; overflow-x: auto; padding: 16px 0; background: #525659;
@@ -433,6 +447,8 @@
     <input type="file" id="file-input" accept="application/pdf">
   </div>
 
+  <div id="reuse-notice" class="hidden">Presiona Enter para usar la carpeta previa</div>
+
   <div id="pdf-container">
     <div class="nav-indicator" id="nav-indicator"></div>
     <div id="loading-overlay" class="loading-overlay hidden" aria-live="polite">
@@ -692,16 +708,68 @@
       let currentObjectUrl = null;
       let pendingAfterLoadGoTo = null; // 'first' | 'last' | null
 
-      // Recuperar carpeta previa basada en IP
+      // Manejo de carpeta previa usando File System Access
+      const reuseNotice = document.getElementById('reuse-notice');
+      const handleDbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open('visor-cache', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('handles');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      async function getSavedHandle() {
+        const db = await handleDbPromise;
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction('handles', 'readonly');
+          const store = tx.objectStore('handles');
+          const g = store.get('last');
+          g.onsuccess = () => resolve(g.result || null);
+          g.onerror = () => reject(g.error);
+        });
+      }
+
+      async function setSavedHandle(handle) {
+        const db = await handleDbPromise;
+        return new Promise((resolve, reject) => {
+          const tx = db.transaction('handles', 'readwrite');
+          const store = tx.objectStore('handles');
+          const r = handle ? store.put(handle, 'last') : store.delete('last');
+          r.onsuccess = () => resolve(null);
+          r.onerror = () => reject(r.error);
+        });
+      }
+
+      let savedHandle = null;
+
+      async function useSavedHandle() {
+        try {
+          let perm = await savedHandle.queryPermission({ mode: 'read' });
+          if (perm !== 'granted') {
+            perm = await savedHandle.requestPermission({ mode: 'read' });
+          }
+          if (perm !== 'granted') return;
+          await handleDirectory(savedHandle);
+        } catch (e) {
+          console.warn('No se pudo reutilizar carpeta previa', e);
+        }
+      }
+
       (async () => {
         try {
-          const res = await fetch('/api/last-folder');
-          const data = await res.json();
-          if (data.path) {
-            const ok = confirm(`¿Acceso ${data.path}?`);
-            if (ok) {
-              pdfFolderBtn.click();
-            }
+          savedHandle = await getSavedHandle();
+          if (savedHandle) {
+            reuseNotice.classList.remove('hidden');
+            const keyHandler = async (e) => {
+              if (e.key === 'Enter') {
+                reuseNotice.classList.add('hidden');
+                document.removeEventListener('keydown', keyHandler);
+                await useSavedHandle();
+              } else if (e.key === 'Escape') {
+                reuseNotice.classList.add('hidden');
+                document.removeEventListener('keydown', keyHandler);
+              }
+            };
+            document.addEventListener('keydown', keyHandler);
           }
         } catch (e) {
           console.warn('No se pudo recuperar carpeta previa', e);
@@ -1404,32 +1472,32 @@
       function supportsDirPicker() { return 'showDirectoryPicker' in window; }
       function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
 
+      async function handleDirectory(dirHandle) {
+        pdfDirectoryHandle = dirHandle;
+        const list = [];
+        // @ts-ignore
+        for await (const [name, handle] of dirHandle.entries()) {
+          if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
+        }
+        if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
+        list.sort((a,b) => naturalCompare(a.name,b.name));
+        pdfEntries = list; startBtn.disabled = false;
+        showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
+        try { await setSavedHandle(dirHandle); } catch {}
+      }
+
       pdfFolderBtn.addEventListener('click', async () => {
         try {
           if (!supportsDirPicker()) { pdfFolderInput.click(); return; }
           const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-          pdfDirectoryHandle = dirHandle;
-          const list = [];
-          // @ts-ignore
-          for await (const [name, handle] of dirHandle.entries()) {
-            if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
-          }
-          if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
-          list.sort((a,b) => naturalCompare(a.name,b.name));
-          pdfEntries = list; startBtn.disabled = false;
-          showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
-          fetch('/api/last-folder', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: dirHandle.name })
-          }).catch(()=>{});
+          await handleDirectory(dirHandle);
         } catch (e) {
           if (e && e.name === 'AbortError') return;
           showToast('No se pudo acceder a la carpeta de PDFs', 'error');
         }
       });
 
-      pdfFolderInput.addEventListener('change', (e) => {
+      pdfFolderInput.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files || []).filter(f => isPdf(f.name));
         if (!files.length) {
           showToast('La carpeta seleccionada no contiene PDFs', 'error');
@@ -1440,13 +1508,7 @@
         pdfEntries = list; pdfDirectoryHandle = null;
         startBtn.disabled = false;
         showToast(`Listados ${pdfEntries.length} PDFs (fallback)`, 'success');
-        const first = files[0]?.webkitRelativePath || '';
-        const folderName = first.split('/')[0] || 'carpeta';
-        fetch('/api/last-folder', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ path: folderName })
-        }).catch(()=>{});
+        try { await setSavedHandle(null); } catch {}
       });
 
       startBtn.addEventListener('click', async () => {
