@@ -692,6 +692,22 @@
       let currentObjectUrl = null;
       let pendingAfterLoadGoTo = null; // 'first' | 'last' | null
 
+      // Recuperar carpeta previa basada en IP
+      (async () => {
+        try {
+          const res = await fetch('/api/last-folder');
+          const data = await res.json();
+          if (data.path) {
+            const ok = confirm(`¿Acceso ${data.path}?`);
+            if (ok) {
+              pdfFolderBtn.click();
+            }
+          }
+        } catch (e) {
+          console.warn('No se pudo recuperar carpeta previa', e);
+        }
+      })();
+
       // Capturas (Teoría / Práctica)
       const categoryModal = document.getElementById('category-modal');
       const closeCategoryBtn = document.getElementById('close-category');
@@ -1402,6 +1418,11 @@
           list.sort((a,b) => naturalCompare(a.name,b.name));
           pdfEntries = list; startBtn.disabled = false;
           showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
+          fetch('/api/last-folder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: dirHandle.name })
+          }).catch(()=>{});
         } catch (e) {
           if (e && e.name === 'AbortError') return;
           showToast('No se pudo acceder a la carpeta de PDFs', 'error');
@@ -1419,6 +1440,13 @@
         pdfEntries = list; pdfDirectoryHandle = null;
         startBtn.disabled = false;
         showToast(`Listados ${pdfEntries.length} PDFs (fallback)`, 'success');
+        const first = files[0]?.webkitRelativePath || '';
+        const folderName = first.split('/')[0] || 'carpeta';
+        fetch('/api/last-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: folderName })
+        }).catch(()=>{});
       });
 
       startBtn.addEventListener('click', async () => {
