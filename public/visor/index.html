@@ -780,8 +780,8 @@
         await saveDirHandle(dirHandle);
       }
 
-      loadDirHandle().then(async (h) => {
-        if (h && await verifyPermission(h)) {
+      loadDirHandle().then((h) => {
+        if (h) {
           savedPdfDirHandle = h;
           showReusePrompt();
         }
