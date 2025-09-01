@@ -39,7 +39,8 @@
     #app-header {
       padding: 8px 16px;
       background: #323639;
-      display: flex;
+      /* Ocultar la segunda barra */
+      display: none;
       align-items: center;
       justify-content: space-between;
       border-bottom: 1px solid #5f6368;
@@ -69,7 +70,7 @@
 
 
     #drop-zone {
-      position: absolute; top: 56px; left: 0; right: 0; bottom: 0;
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       background: #525659; z-index: 100;
     }
@@ -88,7 +89,7 @@
     #file-input { display: none; }
 
     #pdf-container {
-      position: absolute; top: 56px; left: 0; right: 0; bottom: 0;
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       overflow-y: auto; overflow-x: auto; padding: 16px 0; background: #525659;
     }
     body.light-mode #pdf-container { background: #fff; }
@@ -545,8 +546,17 @@
           }
           const drawCanvas = state.wrapper.querySelector('.draw-canvas');
           if (drawCanvas) {
+            const dataURL = drawCanvas.toDataURL();
             drawCanvas.width = w;
             drawCanvas.height = h;
+            const ctx = drawCanvas.getContext('2d');
+            const img = new Image();
+            img.onload = () => {
+              ctx.drawImage(img, 0, 0, w, h);
+              drawCanvas._history = [ctx.getImageData(0, 0, w, h)];
+              saveDrawing(drawCanvas);
+            };
+            img.src = dataURL;
           }
           if (pageNum === cur) {
             state.renderedScale = 0;
@@ -557,9 +567,16 @@
       }
 
       window.addEventListener('message', (e) => {
-        if (e.data && e.data.type === 'resetZoom') {
+        if (e.data?.type === 'resetZoom') {
           zoomLevel = 1;
           applyZoom();
+        } else if (e.data?.type === 'toggleFullscreen') {
+          toggleFullscreen();
+        } else if (e.data?.type === 'setTheme') {
+          document.body.classList.toggle('light-mode', e.data.theme === 'light');
+          if (themeToggleBtn) {
+            themeToggleBtn.textContent = e.data.theme === 'light' ? '🌞' : '🌙';
+          }
         }
       });
 
@@ -1171,7 +1188,7 @@
               document.removeEventListener('mousemove', updateFocusPreview);
               focusArea(pageNum, focusStart.xp, focusStart.yp, xp, yp);
               focusStart = null;
-              focusMode = false;
+              showNavIndicator('Enfoque añadido. Presiona O para salir');
               return;
             }
 

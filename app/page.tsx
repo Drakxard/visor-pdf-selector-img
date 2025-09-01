@@ -15,7 +15,7 @@ type PdfFile = {
 }
 
 export default function Home() {
-  const { setTheme } = useTheme()
+  const { setTheme, resolvedTheme } = useTheme()
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
@@ -120,6 +120,16 @@ export default function Home() {
       toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
       return next
     })
+  }
+
+  const togglePdfFullscreen = () => {
+    viewerRef.current?.contentWindow?.postMessage({ type: 'toggleFullscreen' }, '*')
+  }
+
+  const toggleTheme = () => {
+    const newTheme = resolvedTheme === 'light' ? 'dark' : 'light'
+    setTheme(newTheme)
+    viewerRef.current?.contentWindow?.postMessage({ type: 'setTheme', theme: newTheme }, '*')
   }
 
   useEffect(() => {
@@ -396,6 +406,13 @@ useEffect(() => {
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
   }, [])
+
+  // sincronizar tema con el visor interno
+  useEffect(() => {
+    if (viewerOpen) {
+      viewerRef.current?.contentWindow?.postMessage({ type: 'setTheme', theme: resolvedTheme }, '*')
+    }
+  }, [viewerOpen, resolvedTheme])
 
   // greeting screen
   if (!mounted) return null
@@ -794,6 +811,12 @@ useEffect(() => {
                   <span>
                     Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
                   </span>
+                  <button onClick={togglePdfFullscreen}>
+                    {pdfFullscreen ? '⛷' : '⛶'}
+                  </button>
+                  <button onClick={toggleTheme}>
+                    {resolvedTheme === 'light' ? '🌞' : '🌙'}
+                  </button>
                   <button
                     onClick={() => {
                       setViewerOpen(false)
@@ -859,11 +882,6 @@ useEffect(() => {
               </div>
             )}
           </div>
-          {!viewerOpen && (
-            <div className="p-2 text-sm text-gray-500">
-              {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ''}
-            </div>
-          )}
         </section>
       </main>
     {/* Toast banner */}
