@@ -15,7 +15,7 @@ type PdfFile = {
 }
 
 export default function Home() {
-  const { setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
@@ -490,6 +490,16 @@ useEffect(() => {
     return diff
   }
 
+  const toggleViewerFullscreen = () => {
+    viewerRef.current?.contentWindow?.postMessage({ type: 'toggleFullscreen' }, '*')
+  }
+
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light'
+    setTheme(next)
+    viewerRef.current?.contentWindow?.postMessage({ type: 'toggleTheme' }, '*')
+  }
+
   const handleSelectFile = (pdf: PdfFile) => {
     const idx = queue.findIndex((f) => f.path === pdf.path)
     if (idx >= 0) {
@@ -794,6 +804,8 @@ useEffect(() => {
                   <span>
                     Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
                   </span>
+                  <button onClick={toggleViewerFullscreen}>[ ]</button>
+                  <button onClick={toggleTheme}>{theme === 'light' ? '🌞' : '🌙'}</button>
                   <button
                     onClick={() => {
                       setViewerOpen(false)
@@ -859,11 +871,6 @@ useEffect(() => {
               </div>
             )}
           </div>
-          {!viewerOpen && (
-            <div className="p-2 text-sm text-gray-500">
-              {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ''}
-            </div>
-          )}
         </section>
       </main>
     {/* Toast banner */}
