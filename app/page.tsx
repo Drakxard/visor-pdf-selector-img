@@ -846,7 +846,7 @@ useEffect(() => {
                   currentPdf.isPdf
                     ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
                         currentPdf.file.name,
-                      )}`
+                      )}&path=${encodeURIComponent(currentPdf.path)}`
                     : embedUrl!
                 }
                 className="w-full h-full border-0"

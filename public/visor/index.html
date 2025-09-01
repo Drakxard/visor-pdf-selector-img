@@ -177,7 +177,8 @@
       background: rgba(255,0,0,0.8);
       border: 2px solid #fff;
       z-index: 1100;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: pointer;
       display: none;
     }
     #draw-indicator.active { display: block; }
@@ -602,13 +603,13 @@
       let loadingText = document.getElementById('loading-text');
 
       container.addEventListener('scroll', () => {
-        if (currentPdfName) {
+        if (currentPdfKey) {
           const p = getCurrentPage();
           if (p !== currentPage) {
             currentPage = p;
             scheduleRender(p);
           }
-          localStorage.setItem('lastPage-' + currentPdfName, String(p));
+          localStorage.setItem('lastPage-' + currentPdfKey, String(p));
         }
       });
 
@@ -650,6 +651,7 @@
       // Persistencia de notas
       let directoryHandle = null;
       let currentPdfName = null;
+      let currentPdfKey = null;
       let saveTimeout = null;
       let db = null;
 
@@ -676,6 +678,12 @@
       const drawIndicator = document.createElement('div');
       drawIndicator.id = 'draw-indicator';
       document.body.appendChild(drawIndicator);
+
+      drawIndicator.addEventListener('click', () => {
+        if (!drawMode) return;
+        drawToolbarOpen = !drawToolbarOpen;
+        drawToolbar.classList.toggle('active', drawToolbarOpen);
+      });
 
       let captureMode = false;
       let captureCategory = null; // 'teo' | 'practica'
@@ -709,6 +717,7 @@
 
       // Dibujo libre
       let drawMode = true;
+      let drawToolbarOpen = false;
       let isDrawing = false;
       let currentCanvas = null;
 
@@ -764,6 +773,7 @@
         <label>Opacidad del <input type="range" id="tool-opacity-line" min="0" max="1" step="0.01" value="1"></label>
         <label>Opacidad de forma <input type="range" id="tool-opacity-shape" min="0" max="1" step="0.01" value="1"></label>
         <button id="tool-erase-btn">Borrar</button>
+        <button id="tool-clear-btn">Borrar todo</button>
       `;
       document.body.appendChild(drawToolbar);
 
@@ -774,6 +784,7 @@
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
       const opacityInput = drawToolbar.querySelector('#tool-opacity-line');
       const eraseBtn = drawToolbar.querySelector('#tool-erase-btn');
+      const clearBtn = drawToolbar.querySelector('#tool-clear-btn');
 
       lineColorInput.addEventListener('input', e => { brushColor = e.target.value; saveBrushSettings(); });
       brushWidthInput.addEventListener('input', e => { brushWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
@@ -784,6 +795,9 @@
       eraseBtn.addEventListener('click', () => {
         eraseMode = !eraseMode;
         eraseBtn.textContent = eraseMode ? 'Dibujar' : 'Borrar';
+      });
+      clearBtn.addEventListener('click', () => {
+        if (confirm('¿Borrar todo?')) clearAllDrawings();
       });
 
       function applyBrushSettings() {
@@ -1018,7 +1032,7 @@
       // ========================================
       // CARGA DE PDF
       // ========================================
-      async function loadPdf(url, filename) {
+      async function loadPdf(url, filename, key = filename) {
         try {
           showOverlay('Cargando PDF…');
           clearContainer();
@@ -1031,6 +1045,7 @@
           backBtn.disabled = false;
           fileInfo.textContent = filename;
           currentPdfName = filename;
+          currentPdfKey = key;
           drawMode = true;
           currentCanvas = null;
           updateDrawMode();
@@ -1051,7 +1066,7 @@
           buildPageSkeletons();
           prepareInitialReveal();
           const saved = parseInt(
-            localStorage.getItem('lastPage-' + filename) || '1',
+            localStorage.getItem('lastPage-' + currentPdfKey) || '1',
           );
           setTimeout(() => scrollToPage(saved), 0);
           pendingAfterLoadGoTo = null;
@@ -1066,6 +1081,7 @@
           backBtn.disabled = true;
           fileInfo.textContent = 'Visor PDF';
           currentPdfName = null;
+          currentPdfKey = null;
           hideOverlay();
         }
       }
@@ -1293,6 +1309,7 @@
         currentPage = 1;
         totalPages = 0;
         currentPdfName = null;
+        currentPdfKey = null;
         hideOverlay();
         if (directoryHandle) updateFileStatus('saved', 'Carpeta configurada');
         else updateFileStatus('no-access', 'Sin acceso');
@@ -2338,21 +2355,24 @@
         const canvases = document.querySelectorAll('.draw-canvas');
         canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
         drawIndicator.classList.toggle('active', drawMode);
-        drawToolbar.classList.toggle('active', drawMode);
+        if (!drawMode) {
+          drawToolbarOpen = false;
+          drawToolbar.classList.remove('active');
+        }
       }
 
       function saveDrawing(canvas) {
-        if (!currentPdfName) return;
+        if (!currentPdfKey) return;
         try {
-          localStorage.setItem(`drawing-${currentPdfName}-page${canvas.dataset.page}`, canvas.toDataURL());
+          localStorage.setItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`, canvas.toDataURL());
         } catch (e) {}
       }
 
       function loadDrawingsFromStorage() {
-        if (!currentPdfName) return;
+        if (!currentPdfKey) return;
         let found = false;
         document.querySelectorAll('.draw-canvas').forEach(canvas => {
-          const data = localStorage.getItem(`drawing-${currentPdfName}-page${canvas.dataset.page}`);
+          const data = localStorage.getItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
           if (data) {
             const ctx = canvas.getContext('2d');
             const img = new Image();
@@ -2362,8 +2382,20 @@
           }
         });
         drawMode = true;
+        drawToolbarOpen = false;
         updateDrawMode();
         drawToolbar.classList.remove('active');
+      }
+
+      function clearAllDrawings() {
+        if (!currentPdfKey) return;
+        document.querySelectorAll('.draw-canvas').forEach(canvas => {
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          try {
+            localStorage.removeItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
+          } catch (e) {}
+        });
       }
 
       function startDraw(e) {
@@ -2418,8 +2450,9 @@
       const params = new URLSearchParams(window.location.search);
       const urlParam = params.get('url');
       const nameParam = params.get('name');
+      const pathParam = params.get('path');
       if (urlParam && nameParam) {
-        loadPdf(urlParam, nameParam);
+        loadPdf(urlParam, nameParam, pathParam || nameParam);
       }
 
       // ========================================
