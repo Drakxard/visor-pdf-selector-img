@@ -68,6 +68,11 @@
     body.light-mode .control-btn:hover { background: rgba(0,0,0,0.1); }
 
 
+    body.embedded #app-header { display: none; }
+    body.embedded #pdf-container,
+    body.embedded #drop-zone { top: 0; }
+
+
     #drop-zone {
       position: absolute; top: 56px; left: 0; right: 0; bottom: 0;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -523,6 +528,7 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
+      document.body.classList.add('embedded');
       // ========================================
       // VARIABLES GLOBALES
       // ========================================
@@ -554,12 +560,19 @@
           }
         }
         currentPage = cur;
+        clearTimeout(redrawTimer);
+        redrawTimer = setTimeout(loadDrawingsFromStorage, redrawDelay);
       }
 
       window.addEventListener('message', (e) => {
-        if (e.data && e.data.type === 'resetZoom') {
+        if (!e.data) return;
+        if (e.data.type === 'resetZoom') {
           zoomLevel = 1;
           applyZoom();
+        } else if (e.data.type === 'toggleTheme') {
+          toggleTheme();
+        } else if (e.data.type === 'toggleFullscreen') {
+          toggleFullscreen();
         }
       });
 
@@ -643,10 +656,13 @@
       let creatingNote = false;
       const MQ = MathQuill.getInterface(2);
 
-      themeToggleBtn.addEventListener('click', () => {
+      function toggleTheme() {
         document.body.classList.toggle('light-mode');
-        themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
-      });
+        if (themeToggleBtn) {
+          themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
+        }
+      }
+      themeToggleBtn?.addEventListener('click', toggleTheme);
 
       // Persistencia de notas
       let directoryHandle = null;
@@ -718,6 +734,8 @@
       let drawMode = true;
       let isDrawing = false;
       let currentCanvas = null;
+      let redrawDelay = 200;
+      let redrawTimer = null;
 
       let brushColor = '#ff0000';
       let brushWidth = 2;
@@ -737,7 +755,8 @@
             shadowColor,
             shadowWidth,
             shadowOffset,
-            brushOpacity
+            brushOpacity,
+            redrawDelay
           }));
         } catch {}
       }
@@ -751,6 +770,7 @@
           if (data.shadowWidth) shadowWidth = data.shadowWidth;
           if (data.shadowOffset) shadowOffset = data.shadowOffset;
           if (typeof data.brushOpacity === 'number') brushOpacity = data.brushOpacity;
+          if (typeof data.redrawDelay === 'number') redrawDelay = data.redrawDelay;
         } catch {}
       }
 
@@ -770,6 +790,7 @@
         <label>Desplazamiento de <input type="range" id="tool-shadow-offset" min="0" max="50" value="0"></label>
         <label>Opacidad del <input type="range" id="tool-opacity-line" min="0" max="1" step="0.01" value="1"></label>
         <label>Opacidad de forma <input type="range" id="tool-opacity-shape" min="0" max="1" step="0.01" value="1"></label>
+        <label>Redibujo zoom (ms) <input type="range" id="tool-redraw-delay" min="0" max="2000" step="100" value="200"></label>
         <button id="tool-erase-btn">Borrar</button>
         <button id="tool-clear-all">Borrar todo</button>
       `;
@@ -781,6 +802,7 @@
       const shadowWidthInput = drawToolbar.querySelector('#tool-shadow-width');
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
       const opacityInput = drawToolbar.querySelector('#tool-opacity-line');
+      const redrawDelayInput = drawToolbar.querySelector('#tool-redraw-delay');
       const eraseBtn = drawToolbar.querySelector('#tool-erase-btn');
       const clearAllBtn = drawToolbar.querySelector('#tool-clear-all');
 
@@ -790,6 +812,7 @@
       shadowWidthInput.addEventListener('input', e => { shadowWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
       shadowOffsetInput.addEventListener('input', e => { shadowOffset = parseInt(e.target.value, 10); saveBrushSettings(); });
       opacityInput.addEventListener('input', e => { brushOpacity = parseFloat(e.target.value); saveBrushSettings(); });
+      redrawDelayInput.addEventListener('input', e => { redrawDelay = parseInt(e.target.value, 10); saveBrushSettings(); });
       eraseBtn.addEventListener('click', () => {
         eraseMode = !eraseMode;
         eraseBtn.textContent = eraseMode ? 'Dibujar' : 'Borrar';
@@ -803,6 +826,7 @@
         shadowWidthInput.value = shadowWidth;
         shadowOffsetInput.value = shadowOffset;
         opacityInput.value = brushOpacity;
+        redrawDelayInput.value = redrawDelay;
       }
 
       loadBrushSettings();
@@ -1171,7 +1195,6 @@
               document.removeEventListener('mousemove', updateFocusPreview);
               focusArea(pageNum, focusStart.xp, focusStart.yp, xp, yp);
               focusStart = null;
-              focusMode = false;
               return;
             }
 
@@ -2121,6 +2144,15 @@
         const ctx = canvas.getContext('2d');
         ctx.translate(-x1, -y1);
         await page.render({ canvasContext: ctx, viewport }).promise;
+        const state = pageStates.get(pageNum);
+        const drawCanvas = state?.wrapper.querySelector('.draw-canvas');
+        if (drawCanvas) {
+          const sx2 = Math.round(Math.min(xp1, xp2) * drawCanvas.width);
+          const sy2 = Math.round(Math.min(yp1, yp2) * drawCanvas.height);
+          const sw2 = Math.max(1, Math.round(Math.abs(xp2 - xp1) * drawCanvas.width));
+          const sh2 = Math.max(1, Math.round(Math.abs(yp2 - yp1) * drawCanvas.height));
+          ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
+        }
 
         const overlay = document.createElement('div');
         overlay.id = 'focus-overlay';
@@ -2167,6 +2199,10 @@
             out.width = sw; out.height = sh;
             const octx = out.getContext('2d');
             octx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+            const drawCanvas = state.wrapper.querySelector('.draw-canvas');
+            if (drawCanvas) {
+              octx.drawImage(drawCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+            }
 
             const blob = await new Promise(resolve => out.toBlob(resolve, 'image/png', 0.92));
             const fileName = `${base}_p${s.pageNum}_${String(i + 1).padStart(2, '0')}.png`;
@@ -2372,7 +2408,7 @@
           if (data) {
             const ctx = canvas.getContext('2d');
             const img = new Image();
-            img.onload = () => ctx.drawImage(img,0,0);
+            img.onload = () => ctx.drawImage(img,0,0,canvas.width,canvas.height);
             img.src = data;
             found = true;
           }

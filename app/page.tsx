@@ -15,7 +15,7 @@ type PdfFile = {
 }
 
 export default function Home() {
-  const { setTheme } = useTheme()
+  const { setTheme, theme } = useTheme()
   const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
@@ -785,29 +785,49 @@ useEffect(() => {
           className={`flex flex-col flex-1 md:h-screen ${viewerOpen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900' : ''}`}
         >
           {viewerOpen ? (
-            !pdfFullscreen && (
-              <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
-                <span className="truncate" title={currentPdf?.file.name}>
-                  {currentPdf?.file.name}
+            <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
+              <span className="truncate" title={currentPdf?.file.name}>
+                {currentPdf?.file.name}
+              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span>
+                  Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
                 </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span>
-                    Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
-                  </span>
-                  <button
-                    onClick={() => {
-                      setViewerOpen(false)
-                      setPdfFullscreen(false)
-                      viewerRef.current?.contentWindow?.postMessage({
-                        type: 'resetZoom'
-                      }, '*')
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
+                <button
+                  onClick={() =>
+                    viewerRef.current?.contentWindow?.postMessage(
+                      { type: 'toggleFullscreen' },
+                      '*'
+                    )
+                  }
+                >
+                  {pdfFullscreen ? '🗗' : '⛶'}
+                </button>
+                <button
+                  onClick={() => {
+                    setTheme(theme === 'light' ? 'dark' : 'light')
+                    viewerRef.current?.contentWindow?.postMessage(
+                      { type: 'toggleTheme' },
+                      '*'
+                    )
+                  }}
+                >
+                  {theme === 'light' ? '🌞' : '🌙'}
+                </button>
+                <button
+                  onClick={() => {
+                    setViewerOpen(false)
+                    setPdfFullscreen(false)
+                    viewerRef.current?.contentWindow?.postMessage(
+                      { type: 'resetZoom' },
+                      '*'
+                    )
+                  }}
+                >
+                  ✕
+                </button>
               </div>
-            )
+            </div>
           ) : (
             <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
               <div className="flex items-center gap-2">
@@ -859,11 +879,6 @@ useEffect(() => {
               </div>
             )}
           </div>
-          {!viewerOpen && (
-            <div className="p-2 text-sm text-gray-500">
-              {currentPdf ? `Semana ${currentPdf.week} - ${currentPdf.subject}` : ''}
-            </div>
-          )}
         </section>
       </main>
     {/* Toast banner */}
