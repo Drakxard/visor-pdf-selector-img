@@ -127,6 +127,8 @@
     .fullscreen #pdf-container::-webkit-scrollbar { display: none; }
     .fullscreen #pdf-container { -ms-overflow-style: none; scrollbar-width: none; }
 
+    body.zoomed #app-header { display: none; }
+
     .nav-indicator {
       position: absolute; top: 20px; right: 20px;
       background: rgba(0,0,0,0.7); color: white; padding: 8px 12px; border-radius: 20px;
@@ -237,10 +239,18 @@
       background: rgba(0,0,0,0.9);
       z-index: 2000;
     }
+    #focus-overlay .canvas-wrapper { position: relative; }
     #focus-overlay canvas {
+      display: block;
       max-width: calc(100% - 40px);
       max-height: calc(100% - 40px);
       border: 2px solid #fff;
+    }
+    #focus-overlay canvas.focus-draw {
+      position: absolute;
+      left: 0;
+      top: 0;
+      border: none;
     }
     body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
     body.light-mode #focus-overlay canvas { border-color: #000; }
@@ -538,6 +548,7 @@
       function applyZoom() {
         const scale = BASE_SCALE * zoomLevel;
         const cur = getCurrentPage();
+        document.body.classList.toggle('zoomed', zoomLevel !== 1);
         for (const [pageNum, state] of pageStates.entries()) {
           const w = baseWidth * scale;
           const h = baseHeight * scale;
@@ -2146,22 +2157,66 @@
         await page.render({ canvasContext: ctx, viewport }).promise;
         const state = pageStates.get(pageNum);
         const drawCanvas = state?.wrapper.querySelector('.draw-canvas');
+        let sx2, sy2, sw2, sh2;
         if (drawCanvas) {
-          const sx2 = Math.round(Math.min(xp1, xp2) * drawCanvas.width);
-          const sy2 = Math.round(Math.min(yp1, yp2) * drawCanvas.height);
-          const sw2 = Math.max(1, Math.round(Math.abs(xp2 - xp1) * drawCanvas.width));
-          const sh2 = Math.max(1, Math.round(Math.abs(yp2 - yp1) * drawCanvas.height));
+          sx2 = Math.round(Math.min(xp1, xp2) * drawCanvas.width);
+          sy2 = Math.round(Math.min(yp1, yp2) * drawCanvas.height);
+          sw2 = Math.max(1, Math.round(Math.abs(xp2 - xp1) * drawCanvas.width));
+          sh2 = Math.max(1, Math.round(Math.abs(yp2 - yp1) * drawCanvas.height));
           ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
         }
 
         const overlay = document.createElement('div');
         overlay.id = 'focus-overlay';
         const displayScale = Math.min(maxW / (canvas.width / ratio), maxH / (canvas.height / ratio));
+        const wrap = document.createElement('div');
+        wrap.className = 'canvas-wrapper';
         canvas.style.width = (canvas.width / ratio * displayScale) + 'px';
         canvas.style.height = (canvas.height / ratio * displayScale) + 'px';
-        overlay.appendChild(canvas);
-        overlay.addEventListener('click', () => overlay.remove());
+        wrap.appendChild(canvas);
+
+        const drawOverlay = document.createElement('canvas');
+        drawOverlay.width = canvas.width;
+        drawOverlay.height = canvas.height;
+        drawOverlay.className = 'focus-draw';
+        drawOverlay.style.width = canvas.style.width;
+        drawOverlay.style.height = canvas.style.height;
+        wrap.appendChild(drawOverlay);
+        overlay.appendChild(wrap);
         document.body.appendChild(overlay);
+
+        const octx = drawOverlay.getContext('2d');
+        let drawing = false;
+        function start(e) {
+          drawing = true;
+          octx.strokeStyle = brushColor;
+          octx.lineWidth = brushWidth;
+          octx.lineCap = 'round';
+          octx.beginPath();
+          octx.moveTo(e.offsetX, e.offsetY);
+        }
+        function move(e) {
+          if (!drawing) return;
+          octx.lineTo(e.offsetX, e.offsetY);
+          octx.stroke();
+        }
+        function end() { drawing = false; }
+        drawOverlay.addEventListener('mousedown', start);
+        drawOverlay.addEventListener('mousemove', move);
+        drawOverlay.addEventListener('mouseup', end);
+        drawOverlay.addEventListener('mouseleave', end);
+
+        function exitFocus(e) {
+          e.preventDefault();
+          document.removeEventListener('keydown', exitFocus);
+          overlay.remove();
+          if (drawCanvas) {
+            const ctx2 = drawCanvas.getContext('2d');
+            ctx2.drawImage(drawOverlay, 0, 0, drawOverlay.width, drawOverlay.height, sx2, sy2, sw2, sh2);
+            saveDrawing(drawCanvas);
+          }
+        }
+        document.addEventListener('keydown', exitFocus, { once: true });
       }
 
       function sanitizeName(name) {
