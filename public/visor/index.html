@@ -127,6 +127,9 @@
     .fullscreen #pdf-container::-webkit-scrollbar { display: none; }
     .fullscreen #pdf-container { -ms-overflow-style: none; scrollbar-width: none; }
 
+    body.zoomed #app-header { display: none; }
+    body.zoomed #pdf-container { top: 0; }
+
     .nav-indicator {
       position: absolute; top: 20px; right: 20px;
       background: rgba(0,0,0,0.7); color: white; padding: 8px 12px; border-radius: 20px;
@@ -241,6 +244,13 @@
       max-width: calc(100% - 40px);
       max-height: calc(100% - 40px);
       border: 2px solid #fff;
+    }
+    #focus-overlay .focus-wrapper { position: relative; }
+    #focus-overlay .focus-draw {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: auto;
     }
     body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
     body.light-mode #focus-overlay canvas { border-color: #000; }
@@ -538,6 +548,11 @@
       function applyZoom() {
         const scale = BASE_SCALE * zoomLevel;
         const cur = getCurrentPage();
+        const curState = pageStates.get(cur);
+        let relOffset = 0;
+        if (curState) {
+          relOffset = (container.scrollTop - curState.wrapper.offsetTop) / curState.wrapper.offsetHeight;
+        }
         for (const [pageNum, state] of pageStates.entries()) {
           const w = baseWidth * scale;
           const h = baseHeight * scale;
@@ -559,9 +574,17 @@
             scheduleRender(pageNum);
           }
         }
+        if (curState) {
+          container.scrollTop = curState.wrapper.offsetTop + relOffset * curState.wrapper.offsetHeight;
+        }
         currentPage = cur;
         clearTimeout(redrawTimer);
         redrawTimer = setTimeout(loadDrawingsFromStorage, redrawDelay);
+        if (zoomLevel !== 1) {
+          document.body.classList.add('zoomed');
+        } else {
+          document.body.classList.remove('zoomed');
+        }
       }
 
       window.addEventListener('message', (e) => {
@@ -2146,22 +2169,50 @@
         await page.render({ canvasContext: ctx, viewport }).promise;
         const state = pageStates.get(pageNum);
         const drawCanvas = state?.wrapper.querySelector('.draw-canvas');
+        let sx2 = 0, sy2 = 0, sw2 = canvas.width, sh2 = canvas.height;
         if (drawCanvas) {
-          const sx2 = Math.round(Math.min(xp1, xp2) * drawCanvas.width);
-          const sy2 = Math.round(Math.min(yp1, yp2) * drawCanvas.height);
-          const sw2 = Math.max(1, Math.round(Math.abs(xp2 - xp1) * drawCanvas.width));
-          const sh2 = Math.max(1, Math.round(Math.abs(yp2 - yp1) * drawCanvas.height));
+          sx2 = Math.round(Math.min(xp1, xp2) * drawCanvas.width);
+          sy2 = Math.round(Math.min(yp1, yp2) * drawCanvas.height);
+          sw2 = Math.max(1, Math.round(Math.abs(xp2 - xp1) * drawCanvas.width));
+          sh2 = Math.max(1, Math.round(Math.abs(yp2 - yp1) * drawCanvas.height));
           ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
         }
 
         const overlay = document.createElement('div');
         overlay.id = 'focus-overlay';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'focus-wrapper';
         const displayScale = Math.min(maxW / (canvas.width / ratio), maxH / (canvas.height / ratio));
         canvas.style.width = (canvas.width / ratio * displayScale) + 'px';
         canvas.style.height = (canvas.height / ratio * displayScale) + 'px';
-        overlay.appendChild(canvas);
-        overlay.addEventListener('click', () => overlay.remove());
+        wrapper.appendChild(canvas);
+        const ocanvas = document.createElement('canvas');
+        ocanvas.width = canvas.width;
+        ocanvas.height = canvas.height;
+        ocanvas.className = 'focus-draw';
+        ocanvas.style.width = canvas.style.width;
+        ocanvas.style.height = canvas.style.height;
+        ocanvas.dataset.noSave = 'true';
+        ocanvas.style.touchAction = 'none';
+        ocanvas.addEventListener('pointerdown', startDraw);
+        ocanvas.addEventListener('pointermove', drawMove);
+        ocanvas.addEventListener('pointerup', endDraw);
+        ocanvas.addEventListener('pointerleave', endDraw);
+        wrapper.appendChild(ocanvas);
+        overlay.appendChild(wrapper);
         document.body.appendChild(overlay);
+        const exit = (e) => {
+          e.preventDefault();
+          document.removeEventListener('keydown', exit);
+          overlay.remove();
+          if (drawCanvas) {
+            const octx = drawCanvas.getContext('2d');
+            octx.drawImage(ocanvas, 0, 0, ocanvas.width, ocanvas.height, sx2, sy2, sw2, sh2);
+            saveDrawing(drawCanvas);
+          }
+          focusMode = false;
+        };
+        document.addEventListener('keydown', exit, { once: true });
       }
 
       function sanitizeName(name) {
@@ -2465,7 +2516,7 @@
         const ctx = canvas._ctx;
         ctx.closePath();
         isDrawing = false;
-        saveDrawing(canvas);
+        if (!canvas.dataset.noSave) saveDrawing(canvas);
       }
 
       function undoLastStroke() {
@@ -2473,7 +2524,7 @@
         const ctx = currentCanvas.getContext('2d');
         const imageData = currentCanvas._history.pop();
         ctx.putImageData(imageData, 0, 0);
-        saveDrawing(currentCanvas);
+        if (!currentCanvas.dataset.noSave) saveDrawing(currentCanvas);
       }
 
       // cargar pdf inicial si viene por query
