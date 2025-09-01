@@ -100,6 +100,21 @@ export default function Home() {
     }
   }
 
+  const saveLastFolder = async (rawFiles: File[]) => {
+    try {
+      const first = rawFiles[0] as any
+      const rel = first?.webkitRelativePath || ''
+      const root = rel.split('/')[0] || ''
+      if (root) {
+        await fetch('/api/last-folder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: root }),
+        })
+      }
+    } catch {}
+  }
+
   const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawFiles = Array.from(e.target.files || [])
     const files = filterSystemFiles(rawFiles)
@@ -107,6 +122,7 @@ export default function Home() {
     setDirFiles(files)
     loadConfig(files)
     void restoreCheckHistory(rawFiles)
+    void saveLastFolder(rawFiles)
   }
 
   const triggerReselect = () => folderInputRef.current?.click()
@@ -121,6 +137,18 @@ export default function Home() {
       return next
     })
   }
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const r = await fetch('/api/last-folder')
+        const j = await r.json()
+        if (j.path && window.confirm(`¿Acceso ${j.path}?`)) {
+          triggerReselect()
+        }
+      } catch {}
+    })()
+  }, [])
 
   useEffect(() => {
     if (step === 1) {
@@ -426,6 +454,7 @@ useEffect(() => {
                 const files = filterSystemFiles(rawFiles)
                 setDirFiles(files)
                 void restoreCheckHistory(rawFiles)
+                void saveLastFolder(rawFiles)
                 setStep(1)
               }}
             />
@@ -899,16 +928,16 @@ useEffect(() => {
         <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
           <button onClick={triggerReselect}>Reseleccionar carpeta</button>
           <button onClick={unlockNextWeek}>Unlock Next Semana</button>
-          <input
-            type="file"
-            ref={folderInputRef}
-            style={{ display: "none" }}
-            // @ts-expect-error webkitdirectory no estándar
-            webkitdirectory=""
-            onChange={handleReselect}
-          />
         </div>
       )}
+      <input
+        type="file"
+        ref={folderInputRef}
+        style={{ display: "none" }}
+        // @ts-expect-error webkitdirectory no estándar
+        webkitdirectory=""
+        onChange={handleReselect}
+      />
     </div>
   </>
   )
