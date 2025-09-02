@@ -236,7 +236,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.9);
+      background: #000;
       z-index: 2000;
     }
     #focus-overlay .canvas-wrapper { position: relative; }
@@ -252,7 +252,7 @@
       top: 0;
       border: none;
     }
-    body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
+    body.light-mode #focus-overlay { background: #fff; }
     body.light-mode #focus-overlay canvas { border-color: #000; }
     body:not(.light-mode) #focus-overlay canvas {
       filter: invert(1) hue-rotate(180deg);
@@ -2184,6 +2184,13 @@
         wrap.appendChild(drawOverlay);
         overlay.appendChild(wrap);
         document.body.appendChild(overlay);
+
+        let offsetY = 0;
+        overlay.addEventListener('wheel', (e) => {
+          e.preventDefault();
+          offsetY += e.deltaY;
+          wrap.style.transform = `translateY(${offsetY}px)`;
+        }, { passive: false });
 
         const octx = drawOverlay.getContext('2d');
         const scaleX = drawOverlay.width / drawOverlay.offsetWidth;
