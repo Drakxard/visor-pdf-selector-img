@@ -115,6 +115,7 @@ export default function Home() {
     setUnlockedWeeks((prev) => {
       const next = Math.min(weeks, prev + 1)
       localStorage.setItem("unlockedWeeks", String(next))
+      localStorage.setItem("lastUnlockDate", String(Date.now()))
       setToast({ type: 'success', text: `Semana ${next} desbloqueada` })
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
       toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
@@ -146,7 +147,17 @@ export default function Home() {
     } else {
       const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
       setWeeks(storedWeeks)
-      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
+      let storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
+      const rawUnlock = localStorage.getItem("lastUnlockDate")
+      const lastUnlock = parseInt(rawUnlock || String(Date.now()))
+      if (!rawUnlock) localStorage.setItem("lastUnlockDate", String(lastUnlock))
+      const now = Date.now()
+      const diff = Math.floor((now - lastUnlock) / (7 * 24 * 60 * 60 * 1000))
+      if (diff > 0) {
+        storedUnlocked = Math.min(storedWeeks, storedUnlocked + diff)
+        localStorage.setItem("unlockedWeeks", String(storedUnlocked))
+        localStorage.setItem("lastUnlockDate", String(now))
+      }
       setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
@@ -327,7 +338,9 @@ useEffect(() => {
     setQueue(q)
     if (q.length) {
       const current = currentPdf && q.find((f) => f.path === currentPdf.path)
-      const target = current || q[0]
+      const stored = localStorage.getItem("lastPdf")
+      const fromStored = stored ? q.find((f) => f.path === stored) : null
+      const target = current || fromStored || q[0]
       setCurrentPdf(target)
       setQueueIndex(q.findIndex((f) => f.path === target.path))
     } else {
@@ -396,6 +409,24 @@ useEffect(() => {
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
   }, [])
+
+  // open viewer in fullscreen when pressing "f"
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'f' && currentPdf && !viewerOpen) {
+        setViewerOpen(true)
+        setPdfFullscreen(true)
+        setTimeout(() => {
+          viewerRef.current?.contentWindow?.postMessage(
+            { type: 'toggleFullscreen' },
+            '*',
+          )
+        }, 0)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [currentPdf, viewerOpen])
 
   // greeting screen
   if (!mounted) return null
@@ -495,8 +526,10 @@ useEffect(() => {
     if (idx >= 0) {
       setQueueIndex(idx)
       setCurrentPdf(queue[idx])
+      localStorage.setItem("lastPdf", queue[idx].path)
     } else {
       setCurrentPdf(pdf)
+      localStorage.setItem("lastPdf", pdf.path)
     }
     if (!pdf.isPdf) setViewerOpen(false)
   }
@@ -506,6 +539,7 @@ useEffect(() => {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      localStorage.setItem("lastPdf", queue[i].path)
       if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
@@ -515,6 +549,7 @@ useEffect(() => {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      localStorage.setItem("lastPdf", queue[i].path)
       if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
