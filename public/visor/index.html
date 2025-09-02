@@ -440,7 +440,7 @@
     </div>
   </header>
 
-  <div id="reuse-banner">Presiona Enter para cargar carpeta previa o Esc para elegir otra</div>
+  <div id="reuse-banner"></div>
 
   <div id="drop-zone">
     <div class="upload-area" id="upload-area">
@@ -748,7 +748,8 @@
         });
       }
 
-      function showReusePrompt() {
+      function showReusePrompt(dirName) {
+        reuseBanner.textContent = `¿Acceso "${dirName}"? Presiona Enter para usarla o Esc para elegir otra`;
         reuseBanner.style.display = 'block';
         function handler(e) {
           if (e.key === 'Enter') {
@@ -783,9 +784,13 @@
       loadDirHandle().then((h) => {
         if (h) {
           savedPdfDirHandle = h;
-          showReusePrompt();
+          showReusePrompt(h.name);
+        } else {
+          showToast('No se encontró carpeta previa', 'info');
         }
-      }).catch(()=>{});
+      }).catch(() => {
+        showToast('No se pudo cargar carpeta previa', 'error');
+      });
 
       // Capturas (Teoría / Práctica)
       const categoryModal = document.getElementById('category-modal');
