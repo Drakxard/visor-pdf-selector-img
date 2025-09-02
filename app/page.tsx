@@ -14,9 +14,39 @@ type PdfFile = {
   isPdf: boolean
 }
 
+const DB_NAME = "dir-handle"
+const STORE_NAME = "handles"
+
+const getDb = (): Promise<IDBDatabase> =>
+  new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1)
+    req.onupgradeneeded = () => req.result.createObjectStore(STORE_NAME)
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+
+const storeDirHandle = async (handle: FileSystemDirectoryHandle) => {
+  const db = await getDb()
+  const tx = db.transaction(STORE_NAME, "readwrite")
+  tx.objectStore(STORE_NAME).put(handle, "dir")
+  await new Promise((res, rej) => {
+    tx.oncomplete = () => res(null)
+    tx.onerror = () => rej(tx.error)
+  })
+}
+
+const loadDirHandle = async (): Promise<FileSystemDirectoryHandle | null> => {
+  const db = await getDb()
+  const tx = db.transaction(STORE_NAME, "readonly")
+  const req = tx.objectStore(STORE_NAME).get("dir")
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result || null)
+    req.onerror = () => reject(req.error)
+  })
+}
+
 export default function Home() {
   const { setTheme, theme } = useTheme()
-  const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
   const [names, setNames] = useState<string[]>([])
@@ -41,10 +71,9 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
-  const folderInputRef = useRef<HTMLInputElement>(null)
-  const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const viewerRef = useRef<HTMLIFrameElement>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
@@ -100,16 +129,40 @@ export default function Home() {
     }
   }
 
-  const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawFiles = Array.from(e.target.files || [])
-    const files = filterSystemFiles(rawFiles)
-    setNames([])
-    setDirFiles(files)
-    loadConfig(files)
-    void restoreCheckHistory(rawFiles)
+  const readDirRecursive = async (
+    handle: FileSystemDirectoryHandle,
+    path = "",
+  ): Promise<File[]> => {
+    const files: File[] = []
+    for await (const [name, entry] of handle.entries()) {
+      if (entry.kind === "file") {
+        const f = await entry.getFile()
+        Object.defineProperty(f, "webkitRelativePath", {
+          value: path ? `${path}/${name}` : name,
+        })
+        files.push(f)
+      } else if (entry.kind === "directory") {
+        const sub = await readDirRecursive(entry, path ? `${path}/${name}` : name)
+        files.push(...sub)
+      }
+    }
+    return files
   }
 
-  const triggerReselect = () => folderInputRef.current?.click()
+  const pickDirectory = async () => {
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker()
+      const raw = await readDirRecursive(dirHandle)
+      const files = filterSystemFiles(raw)
+      setNames([])
+      setDirFiles(files)
+      void restoreCheckHistory(raw)
+      await storeDirHandle(dirHandle)
+      setStep(1)
+    } catch {
+      /* usuario canceló */
+    }
+  }
 
   const unlockNextWeek = () => {
     setUnlockedWeeks((prev) => {
@@ -123,6 +176,29 @@ export default function Home() {
   }
 
   useEffect(() => {
+    ;(async () => {
+      try {
+        const handle = await loadDirHandle()
+        if (handle) {
+          let perm = await handle.queryPermission?.({ mode: "read" })
+          if (perm !== "granted") {
+            perm = await handle.requestPermission?.({ mode: "read" })
+          }
+          if (perm === "granted") {
+            const raw = await readDirRecursive(handle)
+            const files = filterSystemFiles(raw)
+            setDirFiles(files)
+            void restoreCheckHistory(raw)
+            setStep(1)
+            return
+          }
+        }
+      } catch {}
+      setSetupComplete(false)
+    })()
+  }, [])
+
+  useEffect(() => {
     if (step === 1) {
       ;(async () => {
         const ok = await loadConfig(dirFiles)
@@ -130,6 +206,25 @@ export default function Home() {
       })()
     }
   }, [step, dirFiles])
+
+  // complete setup automatically when config is checked
+  useEffect(() => {
+    if (step === 1 && configFound !== null) {
+      if (configFound) localStorage.setItem("setupComplete", "1")
+      setSetupComplete(true)
+    }
+  }, [step, configFound])
+
+  // allow opening folder selector with Enter on initial screen
+  useEffect(() => {
+    if (!setupComplete && step === 0) {
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === "Enter") void pickDirectory()
+      }
+      window.addEventListener("keydown", handler)
+      return () => window.removeEventListener("keydown", handler)
+    }
+  }, [setupComplete, step])
 
   // theme and setup flag
   useEffect(() => {
@@ -170,19 +265,6 @@ export default function Home() {
       } catch {}
     })()
   }, [])
-
-  // greeting handler
-  useEffect(() => {
-    const handler = () => setStarted(true)
-    if (!started) {
-      window.addEventListener("keydown", handler)
-      window.addEventListener("pointerdown", handler)
-      return () => {
-        window.removeEventListener("keydown", handler)
-        window.removeEventListener("pointerdown", handler)
-      }
-    }
-  }, [started])
 
   // load completed from storage
   useEffect(() => {
@@ -397,17 +479,7 @@ useEffect(() => {
     return () => window.removeEventListener('message', handler)
   }, [])
 
-  // greeting screen
   if (!mounted) return null
-  if (!started) {
-    const hour = new Date().getHours()
-    const greeting = hour >= 19 || hour < 6 ? "Buenas noches" : "Buenos días"
-    return (
-      <main className="min-h-screen flex items-center justify-center text-2xl">
-        <p>{greeting}. Toca la pantalla o presiona una tecla para continuar.</p>
-      </main>
-    )
-  }
 
   // configuration wizard
   if (!setupComplete) {
@@ -416,55 +488,20 @@ useEffect(() => {
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
-            <p>Paso 1: Selecciona la carpeta "gestor"</p>
-            <input
-              type="file"
-              // @ts-expect-error webkitdirectory es no estándar
-              webkitdirectory=""
-              onChange={(e) => {
-                const rawFiles = Array.from(e.target.files || [])
-                const files = filterSystemFiles(rawFiles)
-                setDirFiles(files)
-                void restoreCheckHistory(rawFiles)
-                setStep(1)
-              }}
-            />
+            <p>Paso 1: Selecciona la carpeta "gestor" (Enter para abrir)</p>
+            <button
+              className="px-4 py-2 border rounded"
+              onClick={() => void pickDirectory()}
+            >
+              Cargar carpeta
+            </button>
           </main>
         )
       }
       case 1: {
         return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            {configFound === null && <p>Buscando configuración previa...</p>}
-            {configFound === true && (
-              <>
-                <p>Configuración encontrada. Bienvenido.</p>
-                <button
-                  className="px-4 py-2 border rounded"
-                  onClick={() => {
-                    localStorage.setItem("setupComplete", "1")
-                    setSetupComplete(true)
-                    setStarted(false)
-                  }}
-                >
-                  Continuar
-                </button>
-              </>
-            )}
-            {configFound === false && (
-              <>
-                <p>No se encontró configuración previa.</p>
-                <button
-                  className="px-4 py-2 border rounded"
-                  onClick={() => {
-                    setSetupComplete(true)
-                    setStarted(false)
-                  }}
-                >
-                  Continuar
-                </button>
-              </>
-            )}
+          <main className="min-h-screen flex items-center justify-center p-4">
+            <p>Buscando configuración previa...</p>
           </main>
         )
       }
@@ -899,16 +936,8 @@ useEffect(() => {
       <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
-          <button onClick={triggerReselect}>Reseleccionar carpeta</button>
+          <button onClick={() => void pickDirectory()}>Reseleccionar carpeta</button>
           <button onClick={unlockNextWeek}>Unlock Next Semana</button>
-          <input
-            type="file"
-            ref={folderInputRef}
-            style={{ display: "none" }}
-            // @ts-expect-error webkitdirectory no estándar
-            webkitdirectory=""
-            onChange={handleReselect}
-          />
         </div>
       )}
     </div>
