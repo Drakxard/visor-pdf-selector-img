@@ -48,6 +48,22 @@ export default function Home() {
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
+  const objectUrlCache = useRef<Record<string, string>>({})
+  const getObjectUrl = (p: PdfFile) => {
+    if (!objectUrlCache.current[p.path]) {
+      objectUrlCache.current[p.path] = URL.createObjectURL(p.file)
+    }
+    return objectUrlCache.current[p.path]
+  }
+
+  useEffect(() => {
+    return () => {
+      Object.values(objectUrlCache.current).forEach((u) =>
+        URL.revokeObjectURL(u),
+      )
+    }
+  }, [])
+
   const filterSystemFiles = (files: File[]) =>
     files.filter(
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
@@ -704,13 +720,19 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
-                          <span
+                          <a
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
-                            onClick={() => handleSelectFile(p)}
+                            href={getObjectUrl(p)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              handleSelectFile(p)
+                            }}
                           >
                             {p.file.name}
-                          </span>
+                          </a>
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
                           </button>
@@ -736,13 +758,19 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
-                          <span
+                          <a
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
-                            onClick={() => handleSelectFile(p)}
+                            href={getObjectUrl(p)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              handleSelectFile(p)
+                            }}
                           >
                             {p.file.name}
-                          </span>
+                          </a>
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
                           </button>
