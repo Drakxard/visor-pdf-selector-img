@@ -785,7 +785,8 @@ useEffect(() => {
           className={`flex flex-col flex-1 md:h-screen ${viewerOpen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900' : ''}`}
         >
           {viewerOpen ? (
-            <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
+            !pdfFullscreen && (
+              <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
               <span className="truncate" title={currentPdf?.file.name}>
                 {currentPdf?.file.name}
               </span>
@@ -827,7 +828,7 @@ useEffect(() => {
                   ✕
                 </button>
               </div>
-            </div>
+            )
           ) : (
             <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
               <div className="flex items-center gap-2">
