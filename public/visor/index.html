@@ -2186,18 +2186,20 @@
         document.body.appendChild(overlay);
 
         const octx = drawOverlay.getContext('2d');
+        const scaleX = drawOverlay.width / drawOverlay.offsetWidth;
+        const scaleY = drawOverlay.height / drawOverlay.offsetHeight;
         let drawing = false;
         function start(e) {
           drawing = true;
           octx.strokeStyle = brushColor;
-          octx.lineWidth = brushWidth;
+          octx.lineWidth = brushWidth * scaleX;
           octx.lineCap = 'round';
           octx.beginPath();
-          octx.moveTo(e.offsetX, e.offsetY);
+          octx.moveTo(e.offsetX * scaleX, e.offsetY * scaleY);
         }
         function move(e) {
           if (!drawing) return;
-          octx.lineTo(e.offsetX, e.offsetY);
+          octx.lineTo(e.offsetX * scaleX, e.offsetY * scaleY);
           octx.stroke();
         }
         function end() { drawing = false; }

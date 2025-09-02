@@ -785,49 +785,51 @@ useEffect(() => {
           className={`flex flex-col flex-1 md:h-screen ${viewerOpen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900' : ''}`}
         >
           {viewerOpen ? (
-            <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
-              <span className="truncate" title={currentPdf?.file.name}>
-                {currentPdf?.file.name}
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <span>
-                  Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
+            !pdfFullscreen && (
+              <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
+                <span className="truncate" title={currentPdf?.file.name}>
+                  {currentPdf?.file.name}
                 </span>
-                <button
-                  onClick={() =>
-                    viewerRef.current?.contentWindow?.postMessage(
-                      { type: 'toggleFullscreen' },
-                      '*'
-                    )
-                  }
-                >
-                  {pdfFullscreen ? '🗗' : '⛶'}
-                </button>
-                <button
-                  onClick={() => {
-                    setTheme(theme === 'light' ? 'dark' : 'light')
-                    viewerRef.current?.contentWindow?.postMessage(
-                      { type: 'toggleTheme' },
-                      '*'
-                    )
-                  }}
-                >
-                  {theme === 'light' ? '🌞' : '🌙'}
-                </button>
-                <button
-                  onClick={() => {
-                    setViewerOpen(false)
-                    setPdfFullscreen(false)
-                    viewerRef.current?.contentWindow?.postMessage(
-                      { type: 'resetZoom' },
-                      '*'
-                    )
-                  }}
-                >
-                  ✕
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>
+                    Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
+                  </span>
+                  <button
+                    onClick={() =>
+                      viewerRef.current?.contentWindow?.postMessage(
+                        { type: 'toggleFullscreen' },
+                        '*'
+                      )
+                    }
+                  >
+                    {pdfFullscreen ? '🗗' : '⛶'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setTheme(theme === 'light' ? 'dark' : 'light')
+                      viewerRef.current?.contentWindow?.postMessage(
+                        { type: 'toggleTheme' },
+                        '*'
+                      )
+                    }}
+                  >
+                    {theme === 'light' ? '🌞' : '🌙'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setViewerOpen(false)
+                      setPdfFullscreen(false)
+                      viewerRef.current?.contentWindow?.postMessage(
+                        { type: 'resetZoom' },
+                        '*'
+                      )
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-            </div>
+            )
           ) : (
             <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
               <div className="flex items-center gap-2">
