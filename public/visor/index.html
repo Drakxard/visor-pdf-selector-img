@@ -394,6 +394,22 @@
       text-align: center;
       display: inline-block;
     }
+    #reuse-banner {
+      display: none;
+      position: fixed;
+      top: 64px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #323639;
+      color: #e8eaed;
+      padding: 8px 16px;
+      border-radius: 8px;
+      z-index: 1000;
+    }
+    body.light-mode #reuse-banner {
+      background: #f1f3f4;
+      color: #202124;
+    }
   </style>
 </head>
 <body>
@@ -423,6 +439,8 @@
       <button class="control-btn" id="info-btn" title="Ayuda">ℹ️</button>
     </div>
   </header>
+
+  <div id="reuse-banner">Presiona Enter para cargar carpeta previa o Esc para elegir otra</div>
 
   <div id="drop-zone">
     <div class="upload-area" id="upload-area">
@@ -686,11 +704,96 @@
       const pdfFolderBtn = document.getElementById('pdf-folder-btn');
       const startBtn = document.getElementById('start-btn');
       const pdfFolderInput = document.getElementById('pdf-folder-input');
+      const reuseBanner = document.getElementById('reuse-banner');
       let pdfDirectoryHandle = null;
       let pdfEntries = [];
       let currentPdfIndex = -1;
       let currentObjectUrl = null;
       let pendingAfterLoadGoTo = null; // 'first' | 'last' | null
+      let savedPdfDirHandle = null;
+
+      async function verifyPermission(handle) {
+        const opts = { mode: 'read' };
+        if ((await handle.queryPermission(opts)) === 'granted') return true;
+        return (await handle.requestPermission(opts)) === 'granted';
+      }
+
+      function saveDirHandle(handle) {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open('pdf-viewer', 1);
+          req.onupgradeneeded = () => req.result.createObjectStore('handles');
+          req.onsuccess = () => {
+            const db = req.result;
+            const tx = db.transaction('handles', 'readwrite');
+            tx.objectStore('handles').put(handle, 'last');
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+          };
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      function loadDirHandle() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open('pdf-viewer', 1);
+          req.onupgradeneeded = () => req.result.createObjectStore('handles');
+          req.onsuccess = () => {
+            const db = req.result;
+            const tx = db.transaction('handles', 'readonly');
+            const getReq = tx.objectStore('handles').get('last');
+            getReq.onsuccess = () => resolve(getReq.result || null);
+            getReq.onerror = () => reject(getReq.error);
+          };
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      function showPrompt(message, onEnter) {
+        reuseBanner.textContent = message;
+        reuseBanner.style.display = 'block';
+        function handler(e) {
+          if (e.key === 'Enter') {
+            cleanup();
+            onEnter();
+          } else if (e.key === 'Escape') {
+            cleanup();
+          }
+        }
+        function cleanup() {
+          reuseBanner.style.display = 'none';
+          document.removeEventListener('keydown', handler);
+        }
+        document.addEventListener('keydown', handler);
+      }
+
+      async function handleDirectory(dirHandle) {
+        if (!(await verifyPermission(dirHandle))) return;
+        pdfDirectoryHandle = dirHandle;
+        const list = [];
+        // @ts-ignore
+        for await (const [name, handle] of dirHandle.entries()) {
+          if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
+        }
+        if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
+        list.sort((a,b) => naturalCompare(a.name,b.name));
+        pdfEntries = list; startBtn.disabled = false;
+        showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
+        await saveDirHandle(dirHandle);
+      }
+
+      loadDirHandle().then((h) => {
+        if (h) {
+          savedPdfDirHandle = h;
+          updateFileStatus('saved', `Carpeta: ${h.name}`);
+          showPrompt(`¿Acceso "${h.name}"? Presiona Enter para usarla o Esc para elegir otra`, () => handleDirectory(savedPdfDirHandle));
+        } else {
+          updateFileStatus('no-access', 'Sin carpeta previa');
+          showPrompt('No se encontró carpeta previa. Presiona Enter para seleccionar una', () => pdfFolderBtn.click());
+        }
+      }).catch(() => {
+        updateFileStatus('error', 'Error cargando carpeta');
+        showPrompt('Error cargando carpeta previa. Presiona Enter para seleccionar una', () => pdfFolderBtn.click());
+      });
 
       // Capturas (Teoría / Práctica)
       const categoryModal = document.getElementById('category-modal');
@@ -1392,16 +1495,8 @@
         try {
           if (!supportsDirPicker()) { pdfFolderInput.click(); return; }
           const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
-          pdfDirectoryHandle = dirHandle;
-          const list = [];
-          // @ts-ignore
-          for await (const [name, handle] of dirHandle.entries()) {
-            if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
-          }
-          if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
-          list.sort((a,b) => naturalCompare(a.name,b.name));
-          pdfEntries = list; startBtn.disabled = false;
-          showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
+          savedPdfDirHandle = dirHandle;
+          await handleDirectory(dirHandle);
         } catch (e) {
           if (e && e.name === 'AbortError') return;
           showToast('No se pudo acceder a la carpeta de PDFs', 'error');
