@@ -134,11 +134,10 @@ export default function Home() {
   // theme and setup flag
   useEffect(() => {
     setMounted(true)
-    const hour = new Date().getHours()
-    if (hour >= 19 || hour < 6) {
-      setTheme("dark")
-    } else {
-      setTheme("light")
+    const storedTheme = localStorage.getItem("theme")
+    if (!storedTheme || storedTheme === "system") {
+      const hour = new Date().getHours()
+      setTheme(hour >= 19 || hour < 6 ? "dark" : "light")
     }
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
@@ -334,6 +333,7 @@ useEffect(() => {
       setCurrentPdf(null)
       setQueueIndex(0)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileTree, completed, theory, practice])
 
   const toEmbedUrl = (url: string) => {
@@ -416,7 +416,7 @@ useEffect(() => {
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
-            <p>Paso 1: Selecciona la carpeta "gestor"</p>
+            <p>Paso 1: Selecciona la carpeta &quot;gestor&quot;</p>
             <input
               type="file"
               // @ts-expect-error webkitdirectory es no estándar
