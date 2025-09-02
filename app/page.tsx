@@ -111,6 +111,21 @@ export default function Home() {
 
   const triggerReselect = () => folderInputRef.current?.click()
 
+  useEffect(() => {
+    if (viewWeek) localStorage.setItem("lastWeek", String(viewWeek))
+    if (viewSubject) localStorage.setItem("lastSubject", viewSubject)
+  }, [viewWeek, viewSubject])
+
+  useEffect(() => {
+    if (!setupComplete && step === 0) {
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === "Enter") triggerReselect()
+      }
+      document.addEventListener("keydown", handler)
+      return () => document.removeEventListener("keydown", handler)
+    }
+  }, [setupComplete, step])
+
   const unlockNextWeek = () => {
     setUnlockedWeeks((prev) => {
       const next = Math.min(weeks, prev + 1)
@@ -135,19 +150,39 @@ export default function Home() {
   useEffect(() => {
     setMounted(true)
     const hour = new Date().getHours()
-    if (hour >= 19 || hour < 6) {
-      setTheme("dark")
-    } else {
-      setTheme("light")
-    }
+    const initTheme = hour >= 19 || hour < 6 ? "dark" : "light"
+    setTheme(initTheme)
+    viewerRef.current?.contentWindow?.postMessage(
+      { type: "setTheme", theme: initTheme },
+      "*",
+    )
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
     } else {
       const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
       setWeeks(storedWeeks)
-      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
-      setUnlockedWeeks(storedUnlocked)
+      const storedUnlocked = parseInt(
+        localStorage.getItem("unlockedWeeks") || "1",
+      )
+      const lastUnlock = parseInt(
+        localStorage.getItem("lastUnlock") || String(Date.now()),
+      )
+      const now = Date.now()
+      const diffWeeks = Math.floor(
+        (now - lastUnlock) / (7 * 24 * 60 * 60 * 1000),
+      )
+      const newUnlocked = Math.min(
+        storedWeeks,
+        storedUnlocked + Math.max(0, diffWeeks),
+      )
+      setUnlockedWeeks(newUnlocked)
+      localStorage.setItem("unlockedWeeks", String(newUnlocked))
+      localStorage.setItem("lastUnlock", String(now))
+      const lastWeek = parseInt(localStorage.getItem("lastWeek") || "0")
+      const lastSubject = localStorage.getItem("lastSubject")
+      if (lastWeek) setViewWeek(lastWeek)
+      if (lastSubject) setViewSubject(lastSubject)
     }
   }, [setTheme])
 
@@ -417,16 +452,27 @@ useEffect(() => {
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
             <p>Paso 1: Selecciona la carpeta "gestor"</p>
+            <p>Presiona Enter para seleccionar carpeta</p>
             <input
               type="file"
+              ref={folderInputRef}
+              style={{ display: "none" }}
               // @ts-expect-error webkitdirectory es no estándar
               webkitdirectory=""
-              onChange={(e) => {
+              onChange={async (e) => {
                 const rawFiles = Array.from(e.target.files || [])
                 const files = filterSystemFiles(rawFiles)
                 setDirFiles(files)
-                void restoreCheckHistory(rawFiles)
-                setStep(1)
+                await restoreCheckHistory(rawFiles)
+                const ok = await loadConfig(files)
+                if (ok) {
+                  localStorage.setItem("setupComplete", "1")
+                  setSetupComplete(true)
+                  setStarted(false)
+                } else {
+                  setConfigFound(false)
+                  setStep(1)
+                }
               }}
             />
           </main>
@@ -855,7 +901,20 @@ useEffect(() => {
                     onChange={toggleComplete}
                   />
                 )}
-                {currentPdf && <button onClick={() => setViewerOpen(true)}>Abrir</button>}
+                {currentPdf && (
+                  <button
+                    onClick={() => {
+                      setViewerOpen(true)
+                      setPdfFullscreen(true)
+                      viewerRef.current?.contentWindow?.postMessage(
+                        { type: 'toggleFullscreen' },
+                        '*',
+                      )
+                    }}
+                  >
+                    Abrir
+                  </button>
+                )}
               </div>
             </div>
           )}

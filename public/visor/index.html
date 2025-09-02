@@ -236,7 +236,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.9);
+      background: #000;
       z-index: 2000;
     }
     #focus-overlay .canvas-wrapper { position: relative; }
@@ -252,7 +252,7 @@
       top: 0;
       border: none;
     }
-    body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
+    body.light-mode #focus-overlay { background: #fff; }
     body.light-mode #focus-overlay canvas { border-color: #000; }
     body:not(.light-mode) #focus-overlay canvas {
       filter: invert(1) hue-rotate(180deg);
@@ -582,6 +582,8 @@
           applyZoom();
         } else if (e.data.type === 'toggleTheme') {
           toggleTheme();
+        } else if (e.data.type === 'setTheme') {
+          setTheme(e.data.theme);
         } else if (e.data.type === 'toggleFullscreen') {
           toggleFullscreen();
         }
@@ -667,11 +669,15 @@
       let creatingNote = false;
       const MQ = MathQuill.getInterface(2);
 
-      function toggleTheme() {
-        document.body.classList.toggle('light-mode');
+      function setTheme(mode) {
+        const isLight = mode === 'light';
+        document.body.classList.toggle('light-mode', isLight);
         if (themeToggleBtn) {
-          themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
+          themeToggleBtn.textContent = isLight ? '🌞' : '🌙';
         }
+      }
+      function toggleTheme() {
+        setTheme(document.body.classList.contains('light-mode') ? 'dark' : 'light');
       }
       themeToggleBtn?.addEventListener('click', toggleTheme);
 
@@ -2189,28 +2195,53 @@
         const scaleX = drawOverlay.width / drawOverlay.offsetWidth;
         const scaleY = drawOverlay.height / drawOverlay.offsetHeight;
         let drawing = false;
+        let dragging = false;
+        let focusDrawMode = false;
+        let dragStartX = 0, dragStartY = 0, offsetX = 0, offsetY = 0;
+        drawOverlay.style.cursor = 'move';
+
         function start(e) {
-          drawing = true;
-          octx.strokeStyle = brushColor;
-          octx.lineWidth = brushWidth * scaleX;
-          octx.lineCap = 'round';
-          octx.beginPath();
-          octx.moveTo(e.offsetX * scaleX, e.offsetY * scaleY);
+          if (focusDrawMode) {
+            drawing = true;
+            octx.strokeStyle = brushColor;
+            octx.lineWidth = brushWidth * scaleX;
+            octx.lineCap = 'round';
+            octx.beginPath();
+            octx.moveTo(e.offsetX * scaleX, e.offsetY * scaleY);
+          } else {
+            dragging = true;
+            dragStartX = e.clientX - offsetX;
+            dragStartY = e.clientY - offsetY;
+          }
         }
         function move(e) {
-          if (!drawing) return;
-          octx.lineTo(e.offsetX * scaleX, e.offsetY * scaleY);
-          octx.stroke();
+          if (focusDrawMode) {
+            if (!drawing) return;
+            octx.lineTo(e.offsetX * scaleX, e.offsetY * scaleY);
+            octx.stroke();
+          } else if (dragging) {
+            offsetX = e.clientX - dragStartX;
+            offsetY = e.clientY - dragStartY;
+            wrap.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+          }
         }
-        function end() { drawing = false; }
+        function end() { drawing = false; dragging = false; }
         drawOverlay.addEventListener('mousedown', start);
-        drawOverlay.addEventListener('mousemove', move);
-        drawOverlay.addEventListener('mouseup', end);
-        drawOverlay.addEventListener('mouseleave', end);
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', end);
 
-        function exitFocus(e) {
-          e.preventDefault();
-          document.removeEventListener('keydown', exitFocus);
+        function handleFocusKey(e) {
+          if (e.key.toLowerCase() === 'l') {
+            focusDrawMode = !focusDrawMode;
+            drawOverlay.style.cursor = focusDrawMode ? 'crosshair' : 'move';
+          } else if (e.key === 'Escape') {
+            exitFocus();
+          }
+        }
+        document.addEventListener('keydown', handleFocusKey);
+
+        function exitFocus() {
+          document.removeEventListener('keydown', handleFocusKey);
           overlay.remove();
           if (drawCanvas) {
             const ctx2 = drawCanvas.getContext('2d');
@@ -2218,7 +2249,6 @@
             saveDrawing(drawCanvas);
           }
         }
-        document.addEventListener('keydown', exitFocus, { once: true });
       }
 
       function sanitizeName(name) {
