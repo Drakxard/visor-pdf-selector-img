@@ -16,7 +16,6 @@ type PdfFile = {
 
 export default function Home() {
   const { setTheme, theme } = useTheme()
-  const [started, setStarted] = useState(false)
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
   const [names, setNames] = useState<string[]>([])
@@ -131,6 +130,25 @@ export default function Home() {
     }
   }, [step, dirFiles])
 
+  // complete setup automatically when config is checked
+  useEffect(() => {
+    if (step === 1 && configFound !== null) {
+      if (configFound) localStorage.setItem("setupComplete", "1")
+      setSetupComplete(true)
+    }
+  }, [step, configFound])
+
+  // allow opening folder selector with Enter on initial screen
+  useEffect(() => {
+    if (!setupComplete && step === 0) {
+      const handler = (e: KeyboardEvent) => {
+        if (e.key === "Enter") folderInputRef.current?.click()
+      }
+      window.addEventListener("keydown", handler)
+      return () => window.removeEventListener("keydown", handler)
+    }
+  }, [setupComplete, step, folderInputRef])
+
   // theme and setup flag
   useEffect(() => {
     setMounted(true)
@@ -170,19 +188,6 @@ export default function Home() {
       } catch {}
     })()
   }, [])
-
-  // greeting handler
-  useEffect(() => {
-    const handler = () => setStarted(true)
-    if (!started) {
-      window.addEventListener("keydown", handler)
-      window.addEventListener("pointerdown", handler)
-      return () => {
-        window.removeEventListener("keydown", handler)
-        window.removeEventListener("pointerdown", handler)
-      }
-    }
-  }, [started])
 
   // load completed from storage
   useEffect(() => {
@@ -397,17 +402,7 @@ useEffect(() => {
     return () => window.removeEventListener('message', handler)
   }, [])
 
-  // greeting screen
   if (!mounted) return null
-  if (!started) {
-    const hour = new Date().getHours()
-    const greeting = hour >= 19 || hour < 6 ? "Buenas noches" : "Buenos días"
-    return (
-      <main className="min-h-screen flex items-center justify-center text-2xl">
-        <p>{greeting}. Toca la pantalla o presiona una tecla para continuar.</p>
-      </main>
-    )
-  }
 
   // configuration wizard
   if (!setupComplete) {
@@ -416,11 +411,12 @@ useEffect(() => {
         return (
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
-            <p>Paso 1: Selecciona la carpeta "gestor"</p>
+            <p>Paso 1: Selecciona la carpeta "gestor" (Enter para abrir)</p>
             <input
               type="file"
               // @ts-expect-error webkitdirectory es no estándar
               webkitdirectory=""
+              ref={folderInputRef}
               onChange={(e) => {
                 const rawFiles = Array.from(e.target.files || [])
                 const files = filterSystemFiles(rawFiles)
@@ -434,37 +430,8 @@ useEffect(() => {
       }
       case 1: {
         return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            {configFound === null && <p>Buscando configuración previa...</p>}
-            {configFound === true && (
-              <>
-                <p>Configuración encontrada. Bienvenido.</p>
-                <button
-                  className="px-4 py-2 border rounded"
-                  onClick={() => {
-                    localStorage.setItem("setupComplete", "1")
-                    setSetupComplete(true)
-                    setStarted(false)
-                  }}
-                >
-                  Continuar
-                </button>
-              </>
-            )}
-            {configFound === false && (
-              <>
-                <p>No se encontró configuración previa.</p>
-                <button
-                  className="px-4 py-2 border rounded"
-                  onClick={() => {
-                    setSetupComplete(true)
-                    setStarted(false)
-                  }}
-                >
-                  Continuar
-                </button>
-              </>
-            )}
+          <main className="min-h-screen flex items-center justify-center p-4">
+            <p>Buscando configuración previa...</p>
           </main>
         )
       }
