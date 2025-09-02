@@ -236,7 +236,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.9);
+      background: #000;
       z-index: 2000;
     }
     #focus-overlay .canvas-wrapper { position: relative; }
@@ -252,7 +252,7 @@
       top: 0;
       border: none;
     }
-    body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
+    body.light-mode #focus-overlay { background: #fff; }
     body.light-mode #focus-overlay canvas { border-color: #000; }
     body:not(.light-mode) #focus-overlay canvas {
       filter: invert(1) hue-rotate(180deg);
@@ -2171,9 +2171,14 @@
         const displayScale = Math.min(maxW / (canvas.width / ratio), maxH / (canvas.height / ratio));
         const wrap = document.createElement('div');
         wrap.className = 'canvas-wrapper';
-        canvas.style.width = (canvas.width / ratio * displayScale) + 'px';
-        canvas.style.height = (canvas.height / ratio * displayScale) + 'px';
+        const displayW = (canvas.width / ratio * displayScale);
+        const displayH = (canvas.height / ratio * displayScale);
+        canvas.style.width = displayW + 'px';
+        canvas.style.height = displayH + 'px';
         wrap.appendChild(canvas);
+        wrap.style.position = 'absolute';
+        wrap.style.left = ((window.innerWidth - displayW) / 2) + 'px';
+        wrap.style.top = ((window.innerHeight - displayH) / 2) + 'px';
 
         const drawOverlay = document.createElement('canvas');
         drawOverlay.width = canvas.width;
@@ -2188,8 +2193,10 @@
         const octx = drawOverlay.getContext('2d');
         const scaleX = drawOverlay.width / drawOverlay.offsetWidth;
         const scaleY = drawOverlay.height / drawOverlay.offsetHeight;
+        let drawEnabled = false;
         let drawing = false;
         function start(e) {
+          if (!drawEnabled) return;
           drawing = true;
           octx.strokeStyle = brushColor;
           octx.lineWidth = brushWidth * scaleX;
@@ -2208,9 +2215,26 @@
         drawOverlay.addEventListener('mouseup', end);
         drawOverlay.addEventListener('mouseleave', end);
 
+        function handleKey(e) {
+          if (e.key.toLowerCase() === 'l') {
+            drawEnabled = !drawEnabled;
+            drawOverlay.style.cursor = drawEnabled ? 'crosshair' : 'default';
+            return;
+          }
+          if (!drawEnabled) {
+            const step = 10;
+            if (e.key === 'ArrowUp') wrap.style.top = (wrap.offsetTop - step) + 'px';
+            if (e.key === 'ArrowDown') wrap.style.top = (wrap.offsetTop + step) + 'px';
+            if (e.key === 'ArrowLeft') wrap.style.left = (wrap.offsetLeft - step) + 'px';
+            if (e.key === 'ArrowRight') wrap.style.left = (wrap.offsetLeft + step) + 'px';
+          }
+        }
+
         function exitFocus(e) {
+          if (e.key !== 'Escape') return;
           e.preventDefault();
           document.removeEventListener('keydown', exitFocus);
+          document.removeEventListener('keydown', handleKey);
           overlay.remove();
           if (drawCanvas) {
             const ctx2 = drawCanvas.getContext('2d');
@@ -2218,7 +2242,9 @@
             saveDrawing(drawCanvas);
           }
         }
-        document.addEventListener('keydown', exitFocus, { once: true });
+
+        document.addEventListener('keydown', handleKey);
+        document.addEventListener('keydown', exitFocus);
       }
 
       function sanitizeName(name) {
