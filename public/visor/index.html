@@ -2186,11 +2186,24 @@
         document.body.appendChild(overlay);
 
         let offsetY = 0;
+        function applyOffset() {
+          wrap.style.transform = `translateY(${offsetY}px)`;
+        }
         overlay.addEventListener('wheel', (e) => {
           e.preventDefault();
           offsetY = Math.max(-200, Math.min(200, offsetY + e.deltaY));
-          wrap.style.transform = `translateY(${offsetY}px)`;
+          applyOffset();
         });
+        overlay.tabIndex = 0;
+        overlay.addEventListener('keydown', (e) => {
+          if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            const delta = e.key === 'ArrowUp' ? -40 : 40;
+            offsetY = Math.max(-200, Math.min(200, offsetY + delta));
+            applyOffset();
+          }
+        });
+        overlay.focus();
 
         const octx = drawOverlay.getContext('2d');
         const scaleX = drawOverlay.width / drawOverlay.offsetWidth;
