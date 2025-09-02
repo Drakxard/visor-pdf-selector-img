@@ -14,6 +14,70 @@ type PdfFile = {
   isPdf: boolean
 }
 
+const DB_NAME = "folder-handle-db"
+const STORE_NAME = "handles"
+
+const openHandleDB = () =>
+  new Promise<IDBDatabase>((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1)
+    req.onupgradeneeded = () => {
+      req.result.createObjectStore(STORE_NAME)
+    }
+    req.onerror = () => reject(req.error)
+    req.onsuccess = () => resolve(req.result)
+  })
+
+const saveHandle = async (handle: FileSystemDirectoryHandle) => {
+  const db = await openHandleDB()
+  const tx = db.transaction(STORE_NAME, "readwrite")
+  tx.objectStore(STORE_NAME).put(handle, "dir")
+  await new Promise<void>((res, rej) => {
+    tx.oncomplete = () => res()
+    tx.onerror = () => rej(tx.error)
+  })
+  db.close()
+}
+
+const loadHandle = async (): Promise<FileSystemDirectoryHandle | null> => {
+  const db = await openHandleDB()
+  const tx = db.transaction(STORE_NAME, "readonly")
+  const req = tx.objectStore(STORE_NAME).get("dir")
+  const handle = await new Promise<FileSystemDirectoryHandle | null>((res, rej) => {
+    req.onsuccess = () => res(req.result || null)
+    req.onerror = () => rej(req.error)
+  })
+  db.close()
+  return handle
+}
+
+const verifyPermission = async (handle: FileSystemDirectoryHandle) => {
+  if ((await handle.queryPermission({ mode: "read" })) === "granted") return true
+  if ((await handle.requestPermission({ mode: "read" })) === "granted") return true
+  return false
+}
+
+const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
+  const files: File[] = []
+  const traverse = async (
+    directory: FileSystemDirectoryHandle,
+    path: string,
+  ): Promise<void> => {
+    for await (const [name, handle] of (directory as any).entries()) {
+      if (handle.kind === "file") {
+        const file = await handle.getFile()
+        Object.defineProperty(file, "webkitRelativePath", {
+          value: `${path}${name}`,
+        })
+        files.push(file)
+      } else if (handle.kind === "directory") {
+        await traverse(handle, `${path}${name}/`)
+      }
+    }
+  }
+  await traverse(dir, `${dir.name}/`)
+  return files
+}
+
 export default function Home() {
   const { setTheme, theme } = useTheme()
   const [setupComplete, setSetupComplete] = useState(true)
@@ -40,7 +104,6 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
-  const folderInputRef = useRef<HTMLInputElement>(null)
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
@@ -99,16 +162,20 @@ export default function Home() {
     }
   }
 
-  const handleReselect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawFiles = Array.from(e.target.files || [])
-    const files = filterSystemFiles(rawFiles)
-    setNames([])
-    setDirFiles(files)
-    loadConfig(files)
-    void restoreCheckHistory(rawFiles)
+  const selectDirectory = async () => {
+    try {
+      const handle = await (window as any).showDirectoryPicker()
+      await saveHandle(handle)
+      const rawFiles = await readAllFiles(handle)
+      const files = filterSystemFiles(rawFiles)
+      setNames([])
+      setDirFiles(files)
+      void restoreCheckHistory(rawFiles)
+      setStep(1)
+    } catch (err) {
+      console.warn("Directory selection cancelled", err)
+    }
   }
-
-  const triggerReselect = () => folderInputRef.current?.click()
 
   const unlockNextWeek = () => {
     setUnlockedWeeks((prev) => {
@@ -142,12 +209,12 @@ export default function Home() {
   useEffect(() => {
     if (!setupComplete && step === 0) {
       const handler = (e: KeyboardEvent) => {
-        if (e.key === "Enter") folderInputRef.current?.click()
+        if (e.key === "Enter") selectDirectory()
       }
       window.addEventListener("keydown", handler)
       return () => window.removeEventListener("keydown", handler)
     }
-  }, [setupComplete, step, folderInputRef])
+  }, [setupComplete, step])
 
   // theme and setup flag
   useEffect(() => {
@@ -168,6 +235,25 @@ export default function Home() {
       setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const handle = await loadHandle()
+        if (handle && (await verifyPermission(handle))) {
+          const raw = await readAllFiles(handle)
+          const files = filterSystemFiles(raw)
+          setDirFiles(files)
+          void restoreCheckHistory(raw)
+          setStep(1)
+          setSetupComplete(true)
+          return
+        }
+      } catch {}
+      setSetupComplete(false)
+      setStep(0)
+    })()
+  }, [])
 
   // cleanup toast timer on unmount
   useEffect(() => {
@@ -412,19 +498,7 @@ useEffect(() => {
           <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
             <h1 className="text-xl">Comencemos a configurar el entorno</h1>
             <p>Paso 1: Selecciona la carpeta "gestor" (Enter para abrir)</p>
-            <input
-              type="file"
-              // @ts-expect-error webkitdirectory es no estándar
-              webkitdirectory=""
-              ref={folderInputRef}
-              onChange={(e) => {
-                const rawFiles = Array.from(e.target.files || [])
-                const files = filterSystemFiles(rawFiles)
-                setDirFiles(files)
-                void restoreCheckHistory(rawFiles)
-                setStep(1)
-              }}
-            />
+            <button onClick={selectDirectory}>Cargar carpeta</button>
           </main>
         )
       }
@@ -866,16 +940,8 @@ useEffect(() => {
       <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
-          <button onClick={triggerReselect}>Reseleccionar carpeta</button>
+          <button onClick={selectDirectory}>Reseleccionar carpeta</button>
           <button onClick={unlockNextWeek}>Unlock Next Semana</button>
-          <input
-            type="file"
-            ref={folderInputRef}
-            style={{ display: "none" }}
-            // @ts-expect-error webkitdirectory no estándar
-            webkitdirectory=""
-            onChange={handleReselect}
-          />
         </div>
       )}
     </div>
