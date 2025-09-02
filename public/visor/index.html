@@ -766,6 +766,24 @@
         document.addEventListener('keydown', handler);
       }
 
+      function showSelectPrompt() {
+        reuseBanner.textContent = 'Presiona Enter para seleccionar una carpeta';
+        reuseBanner.style.display = 'block';
+        function handler(e) {
+          if (e.key === 'Enter') {
+            cleanup();
+            pdfFolderBtn.click();
+          } else if (e.key === 'Escape') {
+            cleanup();
+          }
+        }
+        function cleanup() {
+          reuseBanner.style.display = 'none';
+          document.removeEventListener('keydown', handler);
+        }
+        document.addEventListener('keydown', handler);
+      }
+
       async function handleDirectory(dirHandle) {
         if (!(await verifyPermission(dirHandle))) return;
         pdfDirectoryHandle = dirHandle;
@@ -786,10 +804,10 @@
           savedPdfDirHandle = h;
           showReusePrompt(h.name);
         } else {
-          showToast('No se encontró carpeta previa', 'info');
+          showSelectPrompt();
         }
       }).catch(() => {
-        showToast('No se pudo cargar carpeta previa', 'error');
+        showSelectPrompt();
       });
 
       // Capturas (Teoría / Práctica)
