@@ -236,7 +236,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.9);
+      background: #000;
       z-index: 2000;
     }
     #focus-overlay .canvas-wrapper { position: relative; }
@@ -252,7 +252,7 @@
       top: 0;
       border: none;
     }
-    body.light-mode #focus-overlay { background: rgba(255,255,255,0.95); }
+    body.light-mode #focus-overlay { background: #fff; }
     body.light-mode #focus-overlay canvas { border-color: #000; }
     body:not(.light-mode) #focus-overlay canvas {
       filter: invert(1) hue-rotate(180deg);
@@ -673,6 +673,18 @@
           themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
         }
       }
+      function applyAutoTheme() {
+        const hour = new Date().getHours();
+        if (hour >= 6 && hour < 18) {
+          document.body.classList.add('light-mode');
+        } else {
+          document.body.classList.remove('light-mode');
+        }
+        if (themeToggleBtn) {
+          themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
+        }
+      }
+      applyAutoTheme();
       themeToggleBtn?.addEventListener('click', toggleTheme);
 
       // Persistencia de notas
@@ -1104,6 +1116,7 @@
 
           // Cargar notas siempre desde localStorage
           setTimeout(loadNotesFromFile, 300);
+          if (!isFullscreen) toggleFullscreen();
         } catch (error) {
           console.error('Error cargando PDF:', error);
           showToast('Error cargando PDF: ' + (error?.message || ''), 'error');
@@ -1402,6 +1415,8 @@
           list.sort((a,b) => naturalCompare(a.name,b.name));
           pdfEntries = list; startBtn.disabled = false;
           showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
+          const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
+          await loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
         } catch (e) {
           if (e && e.name === 'AbortError') return;
           showToast('No se pudo acceder a la carpeta de PDFs', 'error');
@@ -1419,6 +1434,8 @@
         pdfEntries = list; pdfDirectoryHandle = null;
         startBtn.disabled = false;
         showToast(`Listados ${pdfEntries.length} PDFs (fallback)`, 'success');
+        const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
+        loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
       });
 
       startBtn.addEventListener('click', async () => {
@@ -1449,6 +1466,8 @@
           pendingAfterLoadGoTo = after;
           await loadPdf(url, entry.name, uniqueKey);
           currentPdfIndex = index;
+          localStorage.setItem('lastPdfIndex', String(index));
+          localStorage.setItem('lastPdfName', entry.name);
           showNavIndicator(`PDF ${index + 1}/${pdfEntries.length}: ${entry.name}`);
         } catch (e) {
           console.error(e);
@@ -2185,11 +2204,15 @@
         overlay.appendChild(wrap);
         document.body.appendChild(overlay);
 
+        const prevDrawMode = drawMode;
+        drawMode = false;
         const octx = drawOverlay.getContext('2d');
         const scaleX = drawOverlay.width / drawOverlay.offsetWidth;
         const scaleY = drawOverlay.height / drawOverlay.offsetHeight;
         let drawing = false;
         function start(e) {
+          if (!drawMode) return;
+          e.stopPropagation();
           drawing = true;
           octx.strokeStyle = brushColor;
           octx.lineWidth = brushWidth * scaleX;
@@ -2199,6 +2222,7 @@
         }
         function move(e) {
           if (!drawing) return;
+          e.stopPropagation();
           octx.lineTo(e.offsetX * scaleX, e.offsetY * scaleY);
           octx.stroke();
         }
@@ -2208,17 +2232,47 @@
         drawOverlay.addEventListener('mouseup', end);
         drawOverlay.addEventListener('mouseleave', end);
 
-        function exitFocus(e) {
-          e.preventDefault();
-          document.removeEventListener('keydown', exitFocus);
+        let dragging = false, dragOffsetX = 0, dragOffsetY = 0;
+        function startDrag(e) {
+          if (drawMode) return;
+          dragging = true;
+          const rect = wrap.getBoundingClientRect();
+          dragOffsetX = e.clientX - rect.left;
+          dragOffsetY = e.clientY - rect.top;
+          document.addEventListener('mousemove', dragMove);
+          document.addEventListener('mouseup', endDrag);
+        }
+        function dragMove(e) {
+          if (!dragging) return;
+          wrap.style.position = 'absolute';
+          wrap.style.left = (e.clientX - dragOffsetX) + 'px';
+          wrap.style.top = (e.clientY - dragOffsetY) + 'px';
+        }
+        function endDrag() {
+          dragging = false;
+          document.removeEventListener('mousemove', dragMove);
+          document.removeEventListener('mouseup', endDrag);
+        }
+        wrap.addEventListener('mousedown', startDrag);
+
+        function exitFocus() {
+          document.removeEventListener('keydown', handleKey);
           overlay.remove();
+          drawMode = prevDrawMode;
+          updateDrawMode();
           if (drawCanvas) {
             const ctx2 = drawCanvas.getContext('2d');
             ctx2.drawImage(drawOverlay, 0, 0, drawOverlay.width, drawOverlay.height, sx2, sy2, sw2, sh2);
             saveDrawing(drawCanvas);
           }
         }
-        document.addEventListener('keydown', exitFocus, { once: true });
+        function handleKey(e) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            exitFocus();
+          }
+        }
+        document.addEventListener('keydown', handleKey);
       }
 
       function sanitizeName(name) {
