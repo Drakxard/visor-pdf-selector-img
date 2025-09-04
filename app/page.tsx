@@ -327,6 +327,10 @@ useEffect(() => {
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
       if (parts.length >= 5) {
+        const ext = file.name.toLowerCase().split(".").pop() || ""
+        const isPdf = ext === "pdf"
+        const isLink = ext === "lnk" || ext === "url"
+        if (!isPdf && !isLink) continue
         const weekPart = parts[1]
         const subject = parts[2]
         const table = parts[3].toLowerCase().includes("pract")
@@ -341,7 +345,7 @@ useEffect(() => {
           week,
           subject,
           tableType: table,
-          isPdf: file.name.toLowerCase().endsWith(".pdf"),
+          isPdf,
         })
       }
     }
