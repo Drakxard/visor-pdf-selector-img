@@ -403,11 +403,11 @@
     </div>
     <div class="header-center" id="file-info">Visor PDF</div>
     <div class="header-right">
-       NUEVOS: carpeta de PDFs e iniciar 
-      <button class="control-btn" id="pdf-folder-btn" title="Seleccionar carpeta de PDFs">📂 PDFs</button>
+       NUEVOS: carpeta de archivos e iniciar
+      <button class="control-btn" id="pdf-folder-btn" title="Seleccionar carpeta de archivos">📂 Archivos</button>
       <button class="control-btn" id="start-btn" title="Abrir primer PDF" disabled>▶ iniciar →</button>
       <input type="file" id="pdf-folder-input" class="hidden" style="display:none"
-        accept="application/pdf" multiple webkitdirectory directory />
+        accept=".pdf,.lnk,.url" multiple webkitdirectory directory />
 
       <button class="control-btn" id="fullscreen-btn">⛶</button>
 
@@ -427,10 +427,10 @@
   <div id="drop-zone">
     <div class="upload-area" id="upload-area">
       <div class="upload-icon">📄</div>
-      <div class="upload-text">Seleccionar PDF</div>
-      <div class="upload-subtext">Arrastra un archivo aquí o haz clic para seleccionar</div>
+      <div class="upload-text">Seleccionar archivo</div>
+      <div class="upload-subtext">Arrastra un PDF o acceso directo (.lnk/.url) aquí o haz clic para seleccionar</div>
     </div>
-    <input type="file" id="file-input" accept="application/pdf">
+    <input type="file" id="file-input" accept=".pdf,.lnk,.url">
   </div>
 
   <div id="pdf-container">
@@ -1361,34 +1361,70 @@
       // ========================================
       // DRAG & DROP / ARCHIVO INDIVIDUAL
       // ========================================
+      async function getShortcutUrl(file) {
+        const name = file.name.toLowerCase();
+        try {
+          if (name.endsWith('.url')) {
+            const text = await file.text();
+            const match = text.match(/https?:\/\/[^\s]+/);
+            return match ? match[0] : null;
+          } else if (name.endsWith('.lnk')) {
+            const buffer = await file.arrayBuffer();
+            const decoders = [new TextDecoder('utf-16le'), new TextDecoder('utf-8')];
+            for (const dec of decoders) {
+              const text = dec.decode(buffer);
+              const match = text.match(/https?:\/\/[^\s\x00]+/);
+              if (match) return match[0];
+            }
+          }
+        } catch {}
+        return null;
+      }
+
       uploadArea.addEventListener('click', () => fileInput.click());
       uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
       uploadArea.addEventListener('dragleave', () => { uploadArea.classList.remove('dragover'); });
-      uploadArea.addEventListener('drop', (e) => {
+      uploadArea.addEventListener('drop', async (e) => {
         e.preventDefault(); uploadArea.classList.remove('dragover');
         const files = e.dataTransfer.files;
         if (files.length > 0) {
           const file = files[0];
-          if (file.type === 'application/pdf') {
+          const name = file.name.toLowerCase();
+          if (name.endsWith('.pdf')) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
+          } else if (name.endsWith('.lnk') || name.endsWith('.url')) {
+            const url = await getShortcutUrl(file);
+            if (url) {
+              window.open(url, '_blank');
+            } else {
+              showToast('Enlace no válido', 'error');
+            }
           } else {
-            showToast('Por favor selecciona un archivo PDF', 'error');
+            showToast('Por favor selecciona un archivo PDF o acceso directo válido', 'error');
           }
         }
       });
-      fileInput.addEventListener('change', (e) => {
+      fileInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (file) {
-          if (file.type === 'application/pdf') {
+          const name = file.name.toLowerCase();
+          if (name.endsWith('.pdf')) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
+          } else if (name.endsWith('.lnk') || name.endsWith('.url')) {
+            const url = await getShortcutUrl(file);
+            if (url) {
+              window.open(url, '_blank');
+            } else {
+              showToast('Enlace no válido', 'error');
+            }
           } else {
-            showToast('Por favor selecciona un archivo PDF', 'error');
+            showToast('Por favor selecciona un archivo PDF o acceso directo válido', 'error');
           }
         }
       });
@@ -1397,7 +1433,7 @@
       // CARPETA DE PDFs + NAVEGACIÓN ENTRE PDFs
       // ========================================
       function naturalCompare(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
-      function isPdf(name) { return name.toLowerCase().endsWith('.pdf'); }
+      function isSupported(name) { return /(\.pdf|\.lnk|\.url)$/i.test(name); }
       function supportsDirPicker() { return 'showDirectoryPicker' in window; }
       function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
 
@@ -1409,39 +1445,39 @@
           const list = [];
           // @ts-ignore
           for await (const [name, handle] of dirHandle.entries()) {
-            if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
+            if (handle.kind === 'file' && isSupported(name)) list.push({ name, handle });
           }
-          if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
+          if (!list.length) { showToast('La carpeta no contiene archivos compatibles', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
           list.sort((a,b) => naturalCompare(a.name,b.name));
           pdfEntries = list; startBtn.disabled = false;
-          showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
+          showToast(`Listados ${pdfEntries.length} archivos`, 'success');
           const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
           await loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
         } catch (e) {
           if (e && e.name === 'AbortError') return;
-          showToast('No se pudo acceder a la carpeta de PDFs', 'error');
+          showToast('No se pudo acceder a la carpeta de archivos', 'error');
         }
       });
 
       pdfFolderInput.addEventListener('change', (e) => {
-        const files = Array.from(e.target.files || []).filter(f => isPdf(f.name));
+        const files = Array.from(e.target.files || []).filter(f => isSupported(f.name));
         if (!files.length) {
-          showToast('La carpeta seleccionada no contiene PDFs', 'error');
+          showToast('La carpeta seleccionada no contiene archivos compatibles', 'error');
           startBtn.disabled = true; pdfEntries = []; return;
         }
         const list = files.map(f => ({ name: f.name, file: f }));
         list.sort((a,b) => naturalCompare(a.name,b.name));
         pdfEntries = list; pdfDirectoryHandle = null;
         startBtn.disabled = false;
-        showToast(`Listados ${pdfEntries.length} PDFs (fallback)`, 'success');
+        showToast(`Listados ${pdfEntries.length} archivos (fallback)`, 'success');
         const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
         loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
       });
 
-      startBtn.addEventListener('click', async () => {
-        if (!pdfEntries.length) { showToast('Primero selecciona una carpeta de PDFs', 'info'); return; }
-        await loadPdfFromEntry(0, 'first');
-      });
+        startBtn.addEventListener('click', async () => {
+          if (!pdfEntries.length) { showToast('Primero selecciona una carpeta de archivos', 'info'); return; }
+          await loadPdfFromEntry(0, 'first');
+        });
 
       async function loadPdfFromEntry(index, after='first') {
         if (index < 0 || index >= pdfEntries.length) return;
@@ -1449,16 +1485,30 @@
           let arrayBuffer;
           let uniqueKey;
           const entry = pdfEntries[index];
+          let file;
           if (entry.handle) {
-            const file = await entry.handle.getFile();
-            arrayBuffer = await file.arrayBuffer();
-            uniqueKey = file.lastModified;
+            file = await entry.handle.getFile();
           } else if (entry.file) {
-            arrayBuffer = await entry.file.arrayBuffer();
-            uniqueKey = entry.file.lastModified;
+            file = entry.file;
           } else {
             throw new Error('Entrada inválida');
           }
+          if (currentObjectUrl) { try { URL.revokeObjectURL(currentObjectUrl); } catch {} currentObjectUrl = null; }
+          if (/\.(lnk|url)$/i.test(entry.name)) {
+            const url = await getShortcutUrl(file);
+            if (url) {
+              window.open(url, '_blank');
+              currentPdfIndex = index;
+              localStorage.setItem('lastPdfIndex', String(index));
+              localStorage.setItem('lastPdfName', entry.name);
+              showNavIndicator(`ENLACE ${index + 1}/${pdfEntries.length}: ${entry.name}`);
+            } else {
+              showToast('Enlace no válido', 'error');
+            }
+            return;
+          }
+          arrayBuffer = await file.arrayBuffer();
+          uniqueKey = file.lastModified;
           if (currentObjectUrl) { try { URL.revokeObjectURL(currentObjectUrl); } catch {} currentObjectUrl = null; }
           const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
           const url = URL.createObjectURL(blob);
@@ -1471,18 +1521,18 @@
           showNavIndicator(`PDF ${index + 1}/${pdfEntries.length}: ${entry.name}`);
         } catch (e) {
           console.error(e);
-          showToast('No se pudo abrir el PDF.', 'error');
+          showToast('No se pudo abrir el archivo.', 'error');
         }
       }
       async function goToNextPdf() {
         const idx = currentPdfIndex + 1;
         if (idx < pdfEntries.length) await loadPdfFromEntry(idx, 'first');
-        else showToast('No hay siguiente PDF', 'info');
+        else showToast('No hay siguiente archivo', 'info');
       }
       async function goToPrevPdf() {
         const idx = currentPdfIndex - 1;
         if (idx >= 0) await loadPdfFromEntry(idx, 'last');
-        else showToast('No hay PDF anterior', 'info');
+        else showToast('No hay archivo anterior', 'info');
       }
 
       // ========================================
