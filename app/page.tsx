@@ -449,6 +449,31 @@ useEffect(() => {
     }
   }
 
+  const extractUrl = async (file: File) => {
+    const buf = await file.arrayBuffer()
+    const bytes = new Uint8Array(buf)
+    const toAscii = (arr: Uint8Array) => {
+      let s = ""
+      for (const b of arr) {
+        s += b >= 32 && b <= 126 ? String.fromCharCode(b) : "\x00"
+      }
+      return s
+    }
+    const toUtf16 = (arr: Uint8Array) => {
+      let s = ""
+      for (let i = 0; i + 1 < arr.length; i += 2) {
+        const code = arr[i] | (arr[i + 1] << 8)
+        s += code >= 32 && code <= 126 ? String.fromCharCode(code) : "\x00"
+      }
+      return s
+    }
+    const findUrl = (txt: string) => {
+      const m = txt.match(/https?:\/\/[^\s"]+/)
+      return m ? m[0] : null
+    }
+    return findUrl(toAscii(bytes)) || findUrl(toUtf16(bytes))
+  }
+
   // object url or embed link for viewer
   useEffect(() => {
     if (!currentPdf) {
@@ -465,10 +490,7 @@ useEffect(() => {
     setPdfUrl(null)
     ;(async () => {
       try {
-        const buf = await currentPdf.file.arrayBuffer()
-        const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const raw = await extractUrl(currentPdf.file)
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
