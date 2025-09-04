@@ -407,7 +407,7 @@
       <button class="control-btn" id="pdf-folder-btn" title="Seleccionar carpeta de archivos">📂 Archivos</button>
       <button class="control-btn" id="start-btn" title="Abrir primer PDF" disabled>▶ iniciar →</button>
       <input type="file" id="pdf-folder-input" class="hidden" style="display:none"
-        accept=".pdf,.lnk" multiple webkitdirectory directory />
+        accept=".pdf,.lnk,.url" multiple webkitdirectory directory />
 
       <button class="control-btn" id="fullscreen-btn">⛶</button>
 
@@ -427,10 +427,10 @@
   <div id="drop-zone">
     <div class="upload-area" id="upload-area">
       <div class="upload-icon">📄</div>
-      <div class="upload-text">Seleccionar PDF</div>
-      <div class="upload-subtext">Arrastra un archivo aquí o haz clic para seleccionar</div>
+      <div class="upload-text">Seleccionar archivo</div>
+      <div class="upload-subtext">Arrastra un PDF o acceso directo (.lnk/.url) aquí o haz clic para seleccionar</div>
     </div>
-    <input type="file" id="file-input" accept="application/pdf">
+    <input type="file" id="file-input" accept=".pdf,.lnk,.url">
   </div>
 
   <div id="pdf-container">
@@ -1364,31 +1364,49 @@
       uploadArea.addEventListener('click', () => fileInput.click());
       uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
       uploadArea.addEventListener('dragleave', () => { uploadArea.classList.remove('dragover'); });
-      uploadArea.addEventListener('drop', (e) => {
+      uploadArea.addEventListener('drop', async (e) => {
         e.preventDefault(); uploadArea.classList.remove('dragover');
         const files = e.dataTransfer.files;
         if (files.length > 0) {
           const file = files[0];
-          if (file.type === 'application/pdf') {
+          const name = file.name.toLowerCase();
+          if (name.endsWith('.pdf')) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
+          } else if (name.endsWith('.lnk') || name.endsWith('.url')) {
+            const text = await file.text();
+            const match = text.match(/https?:\/\/[^\s]+/);
+            if (match) {
+              window.open(match[0], '_blank');
+            } else {
+              showToast('Enlace no válido', 'error');
+            }
           } else {
-            showToast('Por favor selecciona un archivo PDF', 'error');
+            showToast('Por favor selecciona un archivo PDF o acceso directo válido', 'error');
           }
         }
       });
-      fileInput.addEventListener('change', (e) => {
+      fileInput.addEventListener('change', async (e) => {
         const file = e.target.files[0];
         if (file) {
-          if (file.type === 'application/pdf') {
+          const name = file.name.toLowerCase();
+          if (name.endsWith('.pdf')) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
+          } else if (name.endsWith('.lnk') || name.endsWith('.url')) {
+            const text = await file.text();
+            const match = text.match(/https?:\/\/[^\s]+/);
+            if (match) {
+              window.open(match[0], '_blank');
+            } else {
+              showToast('Enlace no válido', 'error');
+            }
           } else {
-            showToast('Por favor selecciona un archivo PDF', 'error');
+            showToast('Por favor selecciona un archivo PDF o acceso directo válido', 'error');
           }
         }
       });
@@ -1397,7 +1415,7 @@
       // CARPETA DE PDFs + NAVEGACIÓN ENTRE PDFs
       // ========================================
       function naturalCompare(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
-      function isSupported(name) { return /(\.pdf|\.lnk)$/i.test(name); }
+      function isSupported(name) { return /(\.pdf|\.lnk|\.url)$/i.test(name); }
       function supportsDirPicker() { return 'showDirectoryPicker' in window; }
       function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
 
@@ -1458,7 +1476,7 @@
             throw new Error('Entrada inválida');
           }
           if (currentObjectUrl) { try { URL.revokeObjectURL(currentObjectUrl); } catch {} currentObjectUrl = null; }
-          if (entry.name.toLowerCase().endsWith('.lnk')) {
+          if (/\.(lnk|url)$/i.test(entry.name)) {
             const text = await file.text();
             const match = text.match(/https?:\/\/[^\s]+/);
             if (match) {
