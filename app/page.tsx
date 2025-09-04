@@ -579,13 +579,13 @@ useEffect(() => {
       return
     }
     const category = dragCategory || 'theory'
-    const suggested = data.includes('youtube') ? 'video.lnk' : 'enlace.lnk'
+    const suggested = data.includes('youtube') ? 'video.url' : 'enlace.url'
     const name = prompt('Nombre del enlace:', suggested)
     if (!name) {
       setDragCategory(null)
       return
     }
-    const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const fileName = name.endsWith('.url') ? name : `${name}.url`
     const content = `[InternetShortcut]\nURL=${data}\n`
     const file = new File([content], fileName, { type: 'text/plain' })
     Object.defineProperty(file, 'webkitRelativePath', {
