@@ -1361,6 +1361,25 @@
       // ========================================
       // DRAG & DROP / ARCHIVO INDIVIDUAL
       // ========================================
+      async function extractShortcutUrl(file) {
+        const name = file.name.toLowerCase();
+        if (name.endsWith('.url')) {
+          const text = await file.text();
+          const match = text.match(/^URL=(.+)$/m);
+          return match ? match[1].trim() : null;
+        }
+        if (name.endsWith('.lnk')) {
+          const buffer = await file.arrayBuffer();
+          const decoders = [new TextDecoder('utf-16le'), new TextDecoder('utf-8')];
+          for (const dec of decoders) {
+            const text = dec.decode(buffer);
+            const match = text.match(/https?:\/\/[^\s]+/);
+            if (match) return match[0];
+          }
+          return null;
+        }
+        return null;
+      }
       uploadArea.addEventListener('click', () => fileInput.click());
       uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('dragover'); });
       uploadArea.addEventListener('dragleave', () => { uploadArea.classList.remove('dragover'); });
@@ -1376,10 +1395,9 @@
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
           } else if (name.endsWith('.lnk') || name.endsWith('.url')) {
-            const text = await file.text();
-            const match = text.match(/https?:\/\/[^\s]+/);
-            if (match) {
-              window.open(match[0], '_blank');
+            const url = await extractShortcutUrl(file);
+            if (url) {
+              window.open(url, '_blank');
             } else {
               showToast('Enlace no válido', 'error');
             }
@@ -1398,10 +1416,9 @@
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
           } else if (name.endsWith('.lnk') || name.endsWith('.url')) {
-            const text = await file.text();
-            const match = text.match(/https?:\/\/[^\s]+/);
-            if (match) {
-              window.open(match[0], '_blank');
+            const url = await extractShortcutUrl(file);
+            if (url) {
+              window.open(url, '_blank');
             } else {
               showToast('Enlace no válido', 'error');
             }
@@ -1477,10 +1494,9 @@
           }
           if (currentObjectUrl) { try { URL.revokeObjectURL(currentObjectUrl); } catch {} currentObjectUrl = null; }
           if (/\.(lnk|url)$/i.test(entry.name)) {
-            const text = await file.text();
-            const match = text.match(/https?:\/\/[^\s]+/);
-            if (match) {
-              window.open(match[0], '_blank');
+            const linkUrl = await extractShortcutUrl(file);
+            if (linkUrl) {
+              window.open(linkUrl, '_blank');
               currentPdfIndex = index;
               localStorage.setItem('lastPdfIndex', String(index));
               localStorage.setItem('lastPdfName', entry.name);
