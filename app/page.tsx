@@ -466,8 +466,17 @@ useEffect(() => {
     ;(async () => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
-        const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
+        const bytes = new Uint8Array(buf)
+        const ascii = Array.from(bytes, (b) =>
+          b >= 32 && b <= 126 ? String.fromCharCode(b) : "\x00",
+        ).join("")
+        let utf16 = ""
+        for (let i = 0; i + 1 < bytes.length; i += 2) {
+          const code = bytes[i] | (bytes[i + 1] << 8)
+          utf16 += code >= 32 && code <= 126 ? String.fromCharCode(code) : "\x00"
+        }
+        const match =
+          ascii.match(/https?:\/\/[^\s"']+/) || utf16.match(/https?:\/\/[^\s"']+/)
         const raw = match ? match[0] : null
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
