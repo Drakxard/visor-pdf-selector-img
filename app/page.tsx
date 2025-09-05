@@ -12,6 +12,7 @@ type PdfFile = {
   subject: string
   tableType: "theory" | "practice"
   isPdf: boolean
+  isLnk: boolean
 }
 
 const DB_NAME = "folder-handle-db"
@@ -114,6 +115,8 @@ export default function Home() {
     files.filter(
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
     )
+
+  const isDisplayable = (f: PdfFile) => f.isPdf || f.isLnk
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -342,6 +345,7 @@ useEffect(() => {
           subject,
           tableType: table,
           isPdf: file.name.toLowerCase().endsWith(".pdf"),
+          isLnk: file.name.toLowerCase().endsWith(".lnk"),
         })
       }
     }
@@ -386,10 +390,10 @@ useEffect(() => {
       Viernes: 5,
     }
     const today = new Date().getDay()
-    const stats: { subject: string; days: number; pdfs: PdfFile[] }[] = []
+    const stats: { subject: string; days: number; items: PdfFile[] }[] = []
     Object.values(fileTree).forEach((subjects) => {
       Object.entries(subjects).forEach(([subject, files]) => {
-        const remaining = files.filter((f) => !completed[f.path])
+        const remaining = files.filter((f) => !completed[f.path] && isDisplayable(f))
         if (!remaining.length) return
         let days = 7
         remaining.forEach((f) => {
@@ -402,17 +406,19 @@ useEffect(() => {
           if (diff === 0) diff = 7
           if (diff < days) days = diff
         })
-        stats.push({ subject, days, pdfs: remaining })
+        stats.push({ subject, days, items: remaining })
       })
     })
     stats.sort((a, b) => {
       if (a.days !== b.days) return a.days - b.days
-      return b.pdfs.length - a.pdfs.length
+      return b.items.length - a.items.length
     })
     const q: PdfFile[] = []
     stats.forEach((s) => {
       q.push(
-        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
+        ...s.items.sort((a, b) =>
+          a.week - b.week || a.file.name.localeCompare(b.file.name),
+        ),
       )
     })
     setQueue(q)
@@ -429,7 +435,8 @@ useEffect(() => {
 
   const toEmbedUrl = (url: string) => {
     try {
-      const u = new URL(url)
+      const clean = url.replace(/["']+$/g, "")
+      const u = new URL(clean)
       if (u.hostname.includes("youtube.com")) {
         const v = u.searchParams.get("v")
         if (v) return `https://www.youtube.com/embed/${v}`
@@ -443,9 +450,9 @@ useEffect(() => {
         const id = u.pathname.slice(1)
         if (id) return `https://www.youtube.com/embed/${id}`
       }
-      return url
+      return clean
     } catch {
-      return url
+      return url.replace(/["']+$/g, "")
     }
   }
 
@@ -467,8 +474,9 @@ useEffect(() => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
         const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const matches = text.match(/https?:\/\/[^\s"']+/g) || []
+        const raw =
+          matches.find((m) => m.includes("youtube")) || matches[0] || null
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
@@ -658,8 +666,12 @@ useEffect(() => {
 
   const selectedFiles =
     viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
-  const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
-  const practiceFiles = selectedFiles.filter((f) => f.tableType === "practice")
+  const theoryFiles = selectedFiles.filter(
+    (f) => f.tableType === "theory" && isDisplayable(f),
+  )
+  const practiceFiles = selectedFiles.filter(
+    (f) => f.tableType === "practice" && isDisplayable(f),
+  )
 
   // main interface
   return (
@@ -694,13 +706,13 @@ useEffect(() => {
             <h2 className="text-xl">Semana {viewWeek}</h2>
             <ul className="space-y-1">
               {Object.entries(fileTree[viewWeek] || {})
-                .filter(([, files]) => files.length > 0)
+                .filter(([, files]) => files.some(isDisplayable))
                 .map(([s, files]) => {
                   const theoryFiles = files.filter(
-                    (f) => f.tableType === "theory",
+                    (f) => f.tableType === "theory" && isDisplayable(f),
                   )
                   const practiceFiles = files.filter(
-                    (f) => f.tableType === "practice",
+                    (f) => f.tableType === "practice" && isDisplayable(f),
                   )
                   const doneTheory = theoryFiles.filter(
                     (f) => completed[f.path],
