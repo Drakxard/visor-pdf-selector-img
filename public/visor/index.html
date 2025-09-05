@@ -407,7 +407,7 @@
       <button class="control-btn" id="pdf-folder-btn" title="Seleccionar carpeta de PDFs">📂 PDFs</button>
       <button class="control-btn" id="start-btn" title="Abrir primer PDF" disabled>▶ iniciar →</button>
       <input type="file" id="pdf-folder-input" class="hidden" style="display:none"
-        accept="application/pdf" multiple webkitdirectory directory />
+        accept=".pdf,.lnk" multiple webkitdirectory directory />
 
       <button class="control-btn" id="fullscreen-btn">⛶</button>
 
@@ -430,7 +430,7 @@
       <div class="upload-text">Seleccionar PDF</div>
       <div class="upload-subtext">Arrastra un archivo aquí o haz clic para seleccionar</div>
     </div>
-    <input type="file" id="file-input" accept="application/pdf">
+    <input type="file" id="file-input" accept=".pdf,.lnk">
   </div>
 
   <div id="pdf-container">
@@ -1369,11 +1369,13 @@
         const files = e.dataTransfer.files;
         if (files.length > 0) {
           const file = files[0];
-          if (file.type === 'application/pdf') {
+          if (isPdf(file.name)) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
+          } else if (isLnk(file.name)) {
+            handleShortcutFile(file);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1382,11 +1384,13 @@
       fileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
-          if (file.type === 'application/pdf') {
+          if (isPdf(file.name)) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
+          } else if (isLnk(file.name)) {
+            handleShortcutFile(file);
           } else {
             showToast('Por favor selecciona un archivo PDF', 'error');
           }
@@ -1397,7 +1401,23 @@
       // CARPETA DE PDFs + NAVEGACIÓN ENTRE PDFs
       // ========================================
       function naturalCompare(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
-      function isPdf(name) { return name.toLowerCase().endsWith('.pdf'); }
+      function isPdf(name) {
+        return name.toLowerCase().endsWith('.pdf');
+      }
+      function isLnk(name) {
+        return name.toLowerCase().endsWith('.lnk');
+      }
+      function handleShortcutFile(file) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          showToast('Acceso directo (.lnk) cargado', 'success');
+          showToast('El visor no puede abrir accesos directos. Selecciona el PDF original.', 'error');
+        };
+        reader.onerror = () => {
+          showToast('No se pudo leer el acceso directo (.lnk)', 'error');
+        };
+        reader.readAsArrayBuffer(file);
+      }
       function supportsDirPicker() { return 'showDirectoryPicker' in window; }
       function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
 
@@ -1407,14 +1427,26 @@
           const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
           pdfDirectoryHandle = dirHandle;
           const list = [];
+          let ignoredShortcuts = 0;
           // @ts-ignore
           for await (const [name, handle] of dirHandle.entries()) {
-            if (handle.kind === 'file' && isPdf(name)) list.push({ name, handle });
+            if (handle.kind === 'file') {
+              if (isPdf(name)) list.push({ name, handle });
+              else if (isLnk(name)) ignoredShortcuts++;
+            }
           }
-          if (!list.length) { showToast('La carpeta no contiene PDFs', 'error'); startBtn.disabled = true; pdfEntries = []; return; }
+          if (!list.length) {
+            if (ignoredShortcuts) {
+              showToast('Solo se encontraron accesos directos (.lnk), que no pueden mostrarse', 'error');
+            } else {
+              showToast('La carpeta no contiene PDFs', 'error');
+            }
+            startBtn.disabled = true; pdfEntries = []; return;
+          }
           list.sort((a,b) => naturalCompare(a.name,b.name));
           pdfEntries = list; startBtn.disabled = false;
           showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
+          if (ignoredShortcuts) showToast(`${ignoredShortcuts} accesos directos ignorados`, 'info');
           const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
           await loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
         } catch (e) {
@@ -1424,16 +1456,23 @@
       });
 
       pdfFolderInput.addEventListener('change', (e) => {
-        const files = Array.from(e.target.files || []).filter(f => isPdf(f.name));
-        if (!files.length) {
-          showToast('La carpeta seleccionada no contiene PDFs', 'error');
+        const files = Array.from(e.target.files || []);
+        const pdfs = files.filter(f => isPdf(f.name));
+        const lnks = files.filter(f => isLnk(f.name));
+        if (!pdfs.length) {
+          if (lnks.length) {
+            showToast('La carpeta solo contiene accesos directos (.lnk) que no pueden mostrarse', 'error');
+          } else {
+            showToast('La carpeta seleccionada no contiene PDFs', 'error');
+          }
           startBtn.disabled = true; pdfEntries = []; return;
         }
-        const list = files.map(f => ({ name: f.name, file: f }));
+        const list = pdfs.map(f => ({ name: f.name, file: f }));
         list.sort((a,b) => naturalCompare(a.name,b.name));
         pdfEntries = list; pdfDirectoryHandle = null;
         startBtn.disabled = false;
         showToast(`Listados ${pdfEntries.length} PDFs (fallback)`, 'success');
+        if (lnks.length) showToast(`${lnks.length} accesos directos ignorados`, 'info');
         const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
         loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
       });
