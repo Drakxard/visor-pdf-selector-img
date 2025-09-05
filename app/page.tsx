@@ -539,7 +539,6 @@ useEffect(() => {
     } else {
       setCurrentPdf(pdf)
     }
-    if (!pdf.isPdf) setViewerOpen(false)
   }
 
   const prevPdf = () => {
@@ -547,7 +546,6 @@ useEffect(() => {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
 
@@ -556,7 +554,6 @@ useEffect(() => {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
 
