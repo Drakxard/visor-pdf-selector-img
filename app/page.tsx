@@ -59,6 +59,8 @@ const verifyPermission = async (
   return false
 }
 
+const sanitizePart = (name: string) => name.replace(/[<>:"/\\|?*]+/g, "_")
+
 const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
   const files: File[] = []
   const traverse = async (
@@ -68,7 +70,6 @@ const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
     for await (const [name, handle] of (directory as any).entries()) {
       if (handle.kind === "file") {
         try {
-          if (!(await verifyPermission(handle))) continue
           const file = await handle.getFile()
           Object.defineProperty(file, "webkitRelativePath", {
             value: `${path}${name}`,
@@ -128,7 +129,7 @@ export default function Home() {
     if (!dirHandle) return
     try {
       if (!(await verifyPermission(dirHandle, "readwrite"))) return
-      const parts = path.split("/")
+      const parts = path.split("/").map(sanitizePart)
       let dir = dirHandle
       for (let i = 0; i < parts.length - 1; i++) {
         dir = await dir.getDirectoryHandle(parts[i], { create: true })
@@ -610,14 +611,21 @@ useEffect(() => {
       f.name.toLowerCase().endsWith('.lnk'),
     )
     if (dropped) {
-      Object.defineProperty(dropped, 'webkitRelativePath', {
-        value: `root/Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`,
+      const safeName = sanitizePart(dropped.name)
+      let fileObj: File = dropped
+      if (safeName !== dropped.name) {
+        fileObj = new File([await dropped.arrayBuffer()], safeName, {
+          type: dropped.type,
+        })
+      }
+      Object.defineProperty(fileObj, 'webkitRelativePath', {
+        value: `root/Semana${viewWeek}/${viewSubject}/${category}/${safeName}`,
       })
-      const path = `Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`
-      await writeFile(path, dropped)
-      setDirFiles((prev) => [...prev, dropped])
+      const path = `Semana${viewWeek}/${viewSubject}/${category}/${safeName}`
+      await writeFile(path, fileObj)
+      setDirFiles((prev) => [...prev, fileObj])
       const pdf: PdfFile = {
-        file: dropped,
+        file: fileObj,
         path,
         week: viewWeek!,
         subject: viewSubject!,
@@ -641,7 +649,8 @@ useEffect(() => {
       setDragCategory(null)
       return
     }
-    const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const rawName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const fileName = sanitizePart(rawName)
     const content = `[InternetShortcut]\nURL=${data}\n`
     const file = new File([content], fileName, { type: 'text/plain' })
     Object.defineProperty(file, 'webkitRelativePath', {
