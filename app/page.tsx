@@ -64,11 +64,14 @@ const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
   ): Promise<void> => {
     for await (const [name, handle] of (directory as any).entries()) {
       if (handle.kind === "file") {
-        const file = await handle.getFile()
-        Object.defineProperty(file, "webkitRelativePath", {
-          value: `${path}${name}`,
-        })
-        files.push(file)
+        const lower = name.toLowerCase()
+        if (lower.endsWith(".pdf") || lower.endsWith(".lnk")) {
+          const file = await handle.getFile()
+          Object.defineProperty(file, "webkitRelativePath", {
+            value: `${path}${name}`,
+          })
+          files.push(file)
+        }
       } else if (handle.kind === "directory") {
         await traverse(handle, `${path}${name}/`)
       }
@@ -429,7 +432,8 @@ useEffect(() => {
 
   const toEmbedUrl = (url: string) => {
     try {
-      const u = new URL(url)
+      const clean = url.replace(/["']+$/g, "")
+      const u = new URL(clean)
       if (u.hostname.includes("youtube.com")) {
         const v = u.searchParams.get("v")
         if (v) return `https://www.youtube.com/embed/${v}`
@@ -443,9 +447,9 @@ useEffect(() => {
         const id = u.pathname.slice(1)
         if (id) return `https://www.youtube.com/embed/${id}`
       }
-      return url
+      return clean
     } catch {
-      return url
+      return url.replace(/["']+$/g, "")
     }
   }
 
@@ -467,8 +471,9 @@ useEffect(() => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
         const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const matches = text.match(/https?:\/\/[^\s"']+/g) || []
+        const raw =
+          matches.find((m) => m.includes("youtube")) || matches[0] || null
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
@@ -751,6 +756,7 @@ useEffect(() => {
                             onClick={() => handleSelectFile(p)}
                           >
                             {p.file.name}
+                            {!p.isPdf && " 🔗"}
                           </span>
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
@@ -783,6 +789,7 @@ useEffect(() => {
                             onClick={() => handleSelectFile(p)}
                           >
                             {p.file.name}
+                            {!p.isPdf && " 🔗"}
                           </span>
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
                             ↑
