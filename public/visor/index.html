@@ -407,7 +407,7 @@
       <button class="control-btn" id="pdf-folder-btn" title="Seleccionar carpeta de PDFs">📂 PDFs</button>
       <button class="control-btn" id="start-btn" title="Abrir primer PDF" disabled>▶ iniciar →</button>
       <input type="file" id="pdf-folder-input" class="hidden" style="display:none"
-        accept="application/pdf" multiple webkitdirectory directory />
+        accept=".pdf,.lnk" multiple webkitdirectory directory />
 
       <button class="control-btn" id="fullscreen-btn">⛶</button>
 
@@ -430,7 +430,7 @@
       <div class="upload-text">Seleccionar PDF</div>
       <div class="upload-subtext">Arrastra un archivo aquí o haz clic para seleccionar</div>
     </div>
-    <input type="file" id="file-input" accept="application/pdf">
+    <input type="file" id="file-input" accept=".pdf,.lnk">
   </div>
 
   <div id="pdf-container">
@@ -1369,26 +1369,26 @@
         const files = e.dataTransfer.files;
         if (files.length > 0) {
           const file = files[0];
-          if (file.type === 'application/pdf') {
+          if (isPdf(file.name)) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
           } else {
-            showToast('Por favor selecciona un archivo PDF', 'error');
+            showToast('Por favor selecciona un archivo PDF o acceso directo (.lnk)', 'error');
           }
         }
       });
       fileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
-          if (file.type === 'application/pdf') {
+          if (isPdf(file.name)) {
             const url = URL.createObjectURL(file);
             currentObjectUrl = url;
             currentPdfIndex = -1;
             loadPdf(url, file.name, file.lastModified);
           } else {
-            showToast('Por favor selecciona un archivo PDF', 'error');
+            showToast('Por favor selecciona un archivo PDF o acceso directo (.lnk)', 'error');
           }
         }
       });
@@ -1397,7 +1397,10 @@
       // CARPETA DE PDFs + NAVEGACIÓN ENTRE PDFs
       // ========================================
       function naturalCompare(a, b) { return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }); }
-      function isPdf(name) { return name.toLowerCase().endsWith('.pdf'); }
+      function isPdf(name) {
+        const lower = name.toLowerCase();
+        return lower.endsWith('.pdf') || lower.endsWith('.lnk');
+      }
       function supportsDirPicker() { return 'showDirectoryPicker' in window; }
       function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
 
