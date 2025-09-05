@@ -64,11 +64,15 @@ const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
   ): Promise<void> => {
     for await (const [name, handle] of (directory as any).entries()) {
       if (handle.kind === "file") {
-        const file = await handle.getFile()
-        Object.defineProperty(file, "webkitRelativePath", {
-          value: `${path}${name}`,
-        })
-        files.push(file)
+        try {
+          const file = await handle.getFile()
+          Object.defineProperty(file, "webkitRelativePath", {
+            value: `${path}${name}`,
+          })
+          files.push(file)
+        } catch (err) {
+          console.warn("Skipping file", name, err)
+        }
       } else if (handle.kind === "directory") {
         await traverse(handle, `${path}${name}/`)
       }
@@ -172,8 +176,12 @@ export default function Home() {
       setDirFiles(files)
       void restoreCheckHistory(rawFiles)
       setStep(1)
-    } catch (err) {
-      console.warn("Directory selection cancelled", err)
+    } catch (err: any) {
+      if (err?.name === "AbortError") {
+        console.warn("Directory selection cancelled", err)
+      } else {
+        console.error("Failed to read directory", err)
+      }
     }
   }
 
@@ -326,10 +334,11 @@ useEffect(() => {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 5) {
+      if (parts.length >= 4) {
         const weekPart = parts[1]
         const subject = parts[2]
-        const table = parts[3].toLowerCase().includes("pract")
+        const tableBase = parts.length > 4 ? parts[3] : "teoria"
+        const table = tableBase.toLowerCase().includes("pract")
           ? "practice"
           : "theory"
         const week = parseInt(weekPart.replace(/\D/g, ""))
@@ -429,7 +438,8 @@ useEffect(() => {
 
   const toEmbedUrl = (url: string) => {
     try {
-      const u = new URL(url)
+      const clean = url.replace(/["']+$/g, "")
+      const u = new URL(clean)
       if (u.hostname.includes("youtube.com")) {
         const v = u.searchParams.get("v")
         if (v) return `https://www.youtube.com/embed/${v}`
@@ -443,9 +453,9 @@ useEffect(() => {
         const id = u.pathname.slice(1)
         if (id) return `https://www.youtube.com/embed/${id}`
       }
-      return url
+      return clean
     } catch {
-      return url
+      return url.replace(/["']+$/g, "")
     }
   }
 
@@ -467,8 +477,9 @@ useEffect(() => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
         const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const matches = text.match(/https?:\/\/[^\s"']+/g) || []
+        const raw =
+          matches.find((m) => m.includes("youtube")) || matches[0] || null
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
@@ -571,6 +582,31 @@ useEffect(() => {
 
   const handleDropLink = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
+    const category = dragCategory || 'theory'
+
+    const files = Array.from(e.dataTransfer.files || []).filter((f) =>
+      f.name.toLowerCase().endsWith('.lnk') || f.name.toLowerCase().endsWith('.url'),
+    )
+    if (files.length) {
+      const file = files[0]
+      Object.defineProperty(file, 'webkitRelativePath', {
+        value: `root/Semana${viewWeek}/${viewSubject}/${category}/${file.name}`,
+      })
+      setDirFiles((prev) => [...prev, file])
+      const path = `Semana${viewWeek}/${viewSubject}/${category}/${file.name}`
+      const pdf: PdfFile = {
+        file,
+        path,
+        week: viewWeek!,
+        subject: viewSubject!,
+        tableType: category,
+        isPdf: false,
+      }
+      setCurrentPdf(pdf)
+      setDragCategory(null)
+      return
+    }
+
     const data =
       e.dataTransfer.getData('text/uri-list') ||
       e.dataTransfer.getData('text/plain')
@@ -578,7 +614,6 @@ useEffect(() => {
       setDragCategory(null)
       return
     }
-    const category = dragCategory || 'theory'
     const suggested = data.includes('youtube') ? 'video.lnk' : 'enlace.lnk'
     const name = prompt('Nombre del enlace:', suggested)
     if (!name) {
@@ -745,6 +780,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
@@ -777,6 +813,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
