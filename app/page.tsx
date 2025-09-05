@@ -449,6 +449,13 @@ useEffect(() => {
     }
   }
 
+  const extractUrlFromShortcut = async (file: File) => {
+    const buf = await file.arrayBuffer()
+    const text = new TextDecoder('utf-8').decode(buf).replace(/\u0000/g, '')
+    const match = text.match(/https?:\/\/[^\s"]+/i)
+    return match ? match[0] : null
+  }
+
   // object url or embed link for viewer
   useEffect(() => {
     if (!currentPdf) {
@@ -465,10 +472,7 @@ useEffect(() => {
     setPdfUrl(null)
     ;(async () => {
       try {
-        const buf = await currentPdf.file.arrayBuffer()
-        const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const raw = await extractUrlFromShortcut(currentPdf.file)
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
