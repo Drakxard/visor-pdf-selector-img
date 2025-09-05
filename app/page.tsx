@@ -462,19 +462,32 @@ useEffect(() => {
       setEmbedUrl(null)
       return () => URL.revokeObjectURL(url)
     }
+
     setPdfUrl(null)
+    let objUrl: string | null = null
+    let canceled = false
     ;(async () => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
         const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
         const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
-        const url = raw ? toEmbedUrl(raw) : null
-        setEmbedUrl(url)
+        if (!canceled && match && match[0]) {
+          setEmbedUrl(toEmbedUrl(match[0]))
+          return
+        }
       } catch {
-        setEmbedUrl(null)
+        // ignore text parsing errors and fallback to object URL below
+      }
+      if (!canceled) {
+        objUrl = URL.createObjectURL(currentPdf.file)
+        setEmbedUrl(objUrl)
       }
     })()
+
+    return () => {
+      canceled = true
+      if (objUrl) URL.revokeObjectURL(objUrl)
+    }
   }, [currentPdf])
 
   // listen for fullscreen messages from the PDF viewer
@@ -539,7 +552,6 @@ useEffect(() => {
     } else {
       setCurrentPdf(pdf)
     }
-    if (!pdf.isPdf) setViewerOpen(false)
   }
 
   const prevPdf = () => {
@@ -547,7 +559,6 @@ useEffect(() => {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
 
@@ -556,7 +567,6 @@ useEffect(() => {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
-      if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
 
