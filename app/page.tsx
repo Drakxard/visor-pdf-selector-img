@@ -50,32 +50,49 @@ const loadHandle = async (): Promise<FileSystemDirectoryHandle | null> => {
   return handle
 }
 
-const verifyPermission = async (handle: FileSystemDirectoryHandle) => {
-  if ((await handle.queryPermission({ mode: "read" })) === "granted") return true
-  if ((await handle.requestPermission({ mode: "read" })) === "granted") return true
+const verifyPermission = async (
+  handle: any,
+  mode: "read" | "readwrite" = "read",
+) => {
+  if ((await handle.queryPermission({ mode })) === "granted") return true
+  if ((await handle.requestPermission({ mode })) === "granted") return true
   return false
 }
 
 const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
   const files: File[] = []
+  const skipped: string[] = []
   const traverse = async (
     directory: FileSystemDirectoryHandle,
     path: string,
   ): Promise<void> => {
     for await (const [name, handle] of (directory as any).entries()) {
       if (handle.kind === "file") {
-        const file = await handle.getFile()
-        Object.defineProperty(file, "webkitRelativePath", {
-          value: `${path}${name}`,
-        })
-        files.push(file)
+        try {
+          if (!(await verifyPermission(handle))) continue
+          const file = await handle.getFile()
+          Object.defineProperty(file, "webkitRelativePath", {
+            value: `${path}${name}`,
+          })
+          files.push(file)
+        } catch (err: any) {
+          if (isLinkName(name)) {
+            const dummy = new File([], name, { type: 'text/plain' })
+            Object.defineProperty(dummy, 'webkitRelativePath', {
+              value: `${path}${name}`,
+            })
+            files.push(dummy)
+          }
+          console.warn('Skipping file', name, err)
+          skipped.push(name)
+        }
       } else if (handle.kind === "directory") {
         await traverse(handle, `${path}${name}/`)
       }
     }
   }
   await traverse(dir, `${dir.name}/`)
-  return files
+  return { files, skipped }
 }
 
 export default function Home() {
@@ -88,6 +105,7 @@ export default function Home() {
   const [weeks, setWeeks] = useState(1)
   const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
+  const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
@@ -100,6 +118,8 @@ export default function Home() {
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
+  const [newLink, setNewLink] = useState('')
+  const [linkCategory, setLinkCategory] = useState<'theory' | 'practice'>('theory')
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
@@ -114,6 +134,39 @@ export default function Home() {
     files.filter(
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
     )
+
+  const isLinkName = (name: string) =>
+    name.toLowerCase().endsWith('.lnk') || name.toLowerCase().endsWith('.url')
+
+  const writeFile = async (path: string, file: File): Promise<boolean> => {
+    if (!dirHandle) return false
+    try {
+      if (!(await verifyPermission(dirHandle, "readwrite"))) return false
+      const parts = path.split("/")
+      let dir = dirHandle
+      for (let i = 0; i < parts.length - 1; i++) {
+        dir = await dir.getDirectoryHandle(parts[i], { create: true })
+      }
+      const fh = await dir.getFileHandle(parts[parts.length - 1], {
+        create: true,
+      })
+      const writable = await fh.createWritable()
+      await writable.write(file)
+      await writable.close()
+      return true
+    } catch (err: any) {
+      console.warn("Failed to save file", err)
+      if (err?.message?.includes("Name is not allowed")) {
+        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+        setToast({
+          type: "error",
+          text: "El navegador bloquea archivos .lnk",
+        })
+        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+      }
+      return false
+    }
+  }
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -165,11 +218,17 @@ export default function Home() {
   const selectDirectory = async () => {
     try {
       const handle = await (window as any).showDirectoryPicker()
+      setDirHandle(handle)
       await saveHandle(handle)
-      const rawFiles = await readAllFiles(handle)
+      const { files: rawFiles, skipped } = await readAllFiles(handle)
       const files = filterSystemFiles(rawFiles)
       setNames([])
       setDirFiles(files)
+      if (skipped.some((n) => isLinkName(n))) {
+        setToast({ type: 'error', text: 'No se pudieron leer archivos de enlace' })
+        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+      }
       void restoreCheckHistory(rawFiles)
       setStep(1)
     } catch (err) {
@@ -241,9 +300,15 @@ export default function Home() {
       try {
         const handle = await loadHandle()
         if (handle && (await verifyPermission(handle))) {
-          const raw = await readAllFiles(handle)
+          setDirHandle(handle)
+          const { files: raw, skipped } = await readAllFiles(handle)
           const files = filterSystemFiles(raw)
           setDirFiles(files)
+          if (skipped.some((n) => isLinkName(n))) {
+            setToast({ type: 'error', text: 'No se pudieron leer archivos de enlace' })
+            if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+            toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+          }
           void restoreCheckHistory(raw)
           setStep(1)
           setSetupComplete(true)
@@ -326,10 +391,11 @@ useEffect(() => {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 5) {
+      if (parts.length >= 4) {
         const weekPart = parts[1]
         const subject = parts[2]
-        const table = parts[3].toLowerCase().includes("pract")
+        const tableBase = parts.length > 4 ? parts[3] : "teoria"
+        const table = tableBase.toLowerCase().includes("pract")
           ? "practice"
           : "theory"
         const week = parseInt(weekPart.replace(/\D/g, ""))
@@ -429,7 +495,8 @@ useEffect(() => {
 
   const toEmbedUrl = (url: string) => {
     try {
-      const u = new URL(url)
+      const clean = url.replace(/["']+$/g, "")
+      const u = new URL(clean)
       if (u.hostname.includes("youtube.com")) {
         const v = u.searchParams.get("v")
         if (v) return `https://www.youtube.com/embed/${v}`
@@ -443,9 +510,9 @@ useEffect(() => {
         const id = u.pathname.slice(1)
         if (id) return `https://www.youtube.com/embed/${id}`
       }
-      return url
+      return clean
     } catch {
-      return url
+      return url.replace(/["']+$/g, "")
     }
   }
 
@@ -467,11 +534,20 @@ useEffect(() => {
       try {
         const buf = await currentPdf.file.arrayBuffer()
         const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const matches = text.match(/https?:\/\/[^\s"']+/g) || []
+        const raw =
+          matches.find((m) => m.includes("youtube")) || matches[0] || null
         const url = raw ? toEmbedUrl(raw) : null
+        if (!url) {
+          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+          setToast({ type: 'error', text: 'No se pudo leer el enlace' })
+          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+        }
         setEmbedUrl(url)
       } catch {
+        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+        setToast({ type: 'error', text: 'No se pudo leer el enlace' })
+        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
         setEmbedUrl(null)
       }
     })()
@@ -569,8 +645,31 @@ useEffect(() => {
 
   const handleDragLeaveArea = () => setDragCategory(null)
 
-  const handleDropLink = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDropLink = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
+    const category = dragCategory || 'theory'
+    const dropped = Array.from(e.dataTransfer.files || []).find((f) =>
+      isLinkName(f.name),
+    )
+    if (dropped) {
+      Object.defineProperty(dropped, 'webkitRelativePath', {
+        value: `root/Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`,
+      })
+      const path = `Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`
+      await writeFile(path, dropped)
+      setDirFiles((prev) => [...prev, dropped])
+      const pdf: PdfFile = {
+        file: dropped,
+        path,
+        week: viewWeek!,
+        subject: viewSubject!,
+        tableType: category,
+        isPdf: false,
+      }
+      setCurrentPdf(pdf)
+      setDragCategory(null)
+      return
+    }
     const data =
       e.dataTransfer.getData('text/uri-list') ||
       e.dataTransfer.getData('text/plain')
@@ -578,21 +677,22 @@ useEffect(() => {
       setDragCategory(null)
       return
     }
-    const category = dragCategory || 'theory'
-    const suggested = data.includes('youtube') ? 'video.lnk' : 'enlace.lnk'
+    const suggested = data.includes('youtube') ? 'video.url' : 'enlace.url'
     const name = prompt('Nombre del enlace:', suggested)
     if (!name) {
       setDragCategory(null)
       return
     }
-    const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
+    const fileName =
+      name.endsWith('.lnk') || name.endsWith('.url') ? name : `${name}.url`
     const content = `[InternetShortcut]\nURL=${data}\n`
     const file = new File([content], fileName, { type: 'text/plain' })
     Object.defineProperty(file, 'webkitRelativePath', {
       value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
     })
-    setDirFiles((prev) => [...prev, file])
     const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    await writeFile(path, file)
+    setDirFiles((prev) => [...prev, file])
     const pdf: PdfFile = {
       file,
       path,
@@ -603,6 +703,33 @@ useEffect(() => {
     }
     setCurrentPdf(pdf)
     setDragCategory(null)
+  }
+
+  const handleAddLink = async () => {
+    if (!newLink.trim() || !viewWeek || !viewSubject) return
+    const url = newLink.trim()
+    const base = url.includes('youtube') ? 'video' : 'enlace'
+    const fileName = `${base}-${Date.now()}.url`
+    const content = `[InternetShortcut]\nURL=${url}\n`
+    const file = new File([content], fileName, { type: 'text/plain' })
+    Object.defineProperty(file, 'webkitRelativePath', {
+      value: `root/Semana${viewWeek}/${viewSubject}/${linkCategory}/${fileName}`,
+    })
+    const path = `Semana${viewWeek}/${viewSubject}/${linkCategory}/${fileName}`
+    const ok = await writeFile(path, file)
+    if (ok) {
+      setDirFiles((prev) => [...prev, file])
+      const pdf: PdfFile = {
+        file,
+        path,
+        week: viewWeek!,
+        subject: viewSubject!,
+        tableType: linkCategory,
+        isPdf: false,
+      }
+      setCurrentPdf(pdf)
+      setNewLink('')
+    }
   }
 
   const toggleComplete = async () => {
@@ -726,6 +853,30 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="flex flex-wrap gap-2 my-2">
+              <input
+                type="text"
+                value={newLink}
+                onChange={(e) => setNewLink(e.target.value)}
+                placeholder="Pega enlace de YouTube"
+                className="flex-1 min-w-0 px-2 py-1 border rounded"
+              />
+              <select
+                value={linkCategory}
+                onChange={(e) => setLinkCategory(e.target.value as 'theory' | 'practice')}
+                className="px-2 py-1 border rounded"
+              >
+                <option value="theory">Teoría</option>
+                <option value="practice">Práctica</option>
+              </select>
+              <button
+                onClick={handleAddLink}
+                className="px-3 py-1 text-white bg-blue-500 rounded disabled:opacity-50"
+                disabled={!newLink.trim()}
+              >
+                Agregar
+              </button>
+            </div>
             <div
               className="relative space-y-4"
               onDragOver={handleDragOverArea}
@@ -745,6 +896,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
@@ -777,6 +929,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
