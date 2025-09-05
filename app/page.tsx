@@ -119,6 +119,8 @@ export default function Home() {
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
+  const [newLink, setNewLink] = useState("")
+  const [linkCategory, setLinkCategory] = useState<'theory' | 'practice'>("theory")
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
@@ -699,6 +701,40 @@ useEffect(() => {
     setDragCategory(null)
   }
 
+  const addLinkFromInput = async () => {
+    if (!viewWeek || !viewSubject || !newLink.trim()) return
+    const url = newLink.trim()
+    let fileName = 'enlace.lnk'
+    try {
+      const resp = await fetch(
+        `https://noembed.com/embed?url=${encodeURIComponent(url)}`,
+      )
+      if (resp.ok) {
+        const data = await resp.json()
+        if (data.title) fileName = `${data.title}.lnk`
+      }
+    } catch {}
+    fileName = fileName.replace(/[\\/:*?"<>|]/g, '_')
+    const content = `[InternetShortcut]\nURL=${url}\n`
+    const file = new File([content], fileName, { type: 'text/plain' })
+    Object.defineProperty(file, 'webkitRelativePath', {
+      value: `root/Semana${viewWeek}/${viewSubject}/${linkCategory}/${fileName}`,
+    })
+    const path = `Semana${viewWeek}/${viewSubject}/${linkCategory}/${fileName}`
+    await writeFile(path, file)
+    setDirFiles((prev) => [...prev, file])
+    const pdf: PdfFile = {
+      file,
+      path,
+      week: viewWeek,
+      subject: viewSubject,
+      tableType: linkCategory,
+      isPdf: false,
+    }
+    setCurrentPdf(pdf)
+    setNewLink('')
+  }
+
   const toggleComplete = async () => {
     if (!currentPdf) return
     const key = currentPdf.path
@@ -820,6 +856,28 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="mb-4 flex flex-wrap gap-2">
+              <input
+                type="text"
+                value={newLink}
+                onChange={(e) => setNewLink(e.target.value)}
+                placeholder="Pega enlace de YouTube"
+                className="border p-1 flex-1"
+              />
+              <select
+                value={linkCategory}
+                onChange={(e) =>
+                  setLinkCategory(e.target.value as 'theory' | 'practice')
+                }
+                className="border p-1"
+              >
+                <option value="theory">Teoría</option>
+                <option value="practice">Práctica</option>
+              </select>
+              <button onClick={addLinkFromInput} className="border px-2">
+                Agregar
+              </button>
+            </div>
             <div
               className="relative space-y-4"
               onDragOver={handleDragOverArea}
