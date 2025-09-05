@@ -50,9 +50,13 @@ const loadHandle = async (): Promise<FileSystemDirectoryHandle | null> => {
   return handle
 }
 
-const verifyPermission = async (handle: FileSystemDirectoryHandle) => {
-  if ((await handle.queryPermission({ mode: "read" })) === "granted") return true
-  if ((await handle.requestPermission({ mode: "read" })) === "granted") return true
+const verifyPermission = async (
+  handle: FileSystemDirectoryHandle,
+  write = false,
+) => {
+  const opts = { mode: write ? "readwrite" : "read" } as const
+  if ((await handle.queryPermission(opts)) === "granted") return true
+  if ((await handle.requestPermission(opts)) === "granted") return true
   return false
 }
 
@@ -64,10 +68,17 @@ const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
   ): Promise<void> => {
     for await (const [name, handle] of (directory as any).entries()) {
       if (handle.kind === "file") {
-        const file = await handle.getFile()
+        let file: File
+        try {
+          file = await handle.getFile()
+        } catch (err) {
+          console.warn("Unreadable file", name, err)
+          file = new File([], name)
+        }
         Object.defineProperty(file, "webkitRelativePath", {
           value: `${path}${name}`,
         })
+        Object.defineProperty(file, "_handle", { value: handle })
         files.push(file)
       } else if (handle.kind === "directory") {
         await traverse(handle, `${path}${name}/`)
@@ -76,6 +87,23 @@ const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
   }
   await traverse(dir, `${dir.name}/`)
   return files
+}
+
+const writeFile = async (relativePath: string, content: Blob) => {
+  const root = await loadHandle()
+  if (!root) return null
+  if (!(await verifyPermission(root, true))) return null
+  const parts = relativePath.split("/")
+  const fileName = parts.pop() as string
+  let dir = root
+  for (const part of parts) {
+    dir = await dir.getDirectoryHandle(part, { create: true })
+  }
+  const fileHandle = await dir.getFileHandle(fileName, { create: true })
+  const writable = await fileHandle.createWritable()
+  await writable.write(content)
+  await writable.close()
+  return fileHandle
 }
 
 export default function Home() {
@@ -326,10 +354,11 @@ useEffect(() => {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 5) {
+      if (parts.length >= 4) {
         const weekPart = parts[1]
         const subject = parts[2]
-        const table = parts[3].toLowerCase().includes("pract")
+        const tableBase = parts.length > 4 ? parts[3] : "teoria"
+        const table = tableBase.toLowerCase().includes("pract")
           ? "practice"
           : "theory"
         const week = parseInt(weekPart.replace(/\D/g, ""))
@@ -429,7 +458,8 @@ useEffect(() => {
 
   const toEmbedUrl = (url: string) => {
     try {
-      const u = new URL(url)
+      const clean = url.replace(/["']+$/g, "")
+      const u = new URL(clean)
       if (u.hostname.includes("youtube.com")) {
         const v = u.searchParams.get("v")
         if (v) return `https://www.youtube.com/embed/${v}`
@@ -443,9 +473,9 @@ useEffect(() => {
         const id = u.pathname.slice(1)
         if (id) return `https://www.youtube.com/embed/${id}`
       }
-      return url
+      return clean
     } catch {
-      return url
+      return url.replace(/["']+$/g, "")
     }
   }
 
@@ -465,10 +495,25 @@ useEffect(() => {
     setPdfUrl(null)
     ;(async () => {
       try {
-        const buf = await currentPdf.file.arrayBuffer()
+        let blob: Blob = currentPdf.file
+        const h = (currentPdf.file as any)._handle as
+          | FileSystemFileHandle
+          | undefined
+        if (blob.size === 0 && h) {
+          try {
+            if ((await h.queryPermission({ mode: "read" })) !== "granted") {
+              await h.requestPermission({ mode: "read" })
+            }
+            blob = await h.getFile()
+          } catch {
+            /* ignore */
+          }
+        }
+        const buf = await blob.arrayBuffer()
         const text = new TextDecoder().decode(buf).replace(/\u0000/g, "")
-        const match = text.match(/https?:\/\/[^\s]+/)
-        const raw = match ? match[0] : null
+        const matches = text.match(/https?:\/\/[^\s"']+/g) || []
+        const raw =
+          matches.find((m) => m.includes("youtube")) || matches[0] || null
         const url = raw ? toEmbedUrl(raw) : null
         setEmbedUrl(url)
       } catch {
@@ -569,8 +614,32 @@ useEffect(() => {
 
   const handleDragLeaveArea = () => setDragCategory(null)
 
-  const handleDropLink = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDropLink = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
+    const category = dragCategory || 'theory'
+    const dropped = Array.from(e.dataTransfer.files || []).find((f) =>
+      f.name.toLowerCase().endsWith('.lnk'),
+    )
+    if (dropped) {
+      const rel = `Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`
+      const handle = await writeFile(rel, dropped)
+      Object.defineProperty(dropped, 'webkitRelativePath', {
+        value: `root/${rel}`,
+      })
+      if (handle) Object.defineProperty(dropped, '_handle', { value: handle })
+      setDirFiles((prev) => [...prev, dropped])
+      const pdf: PdfFile = {
+        file: dropped,
+        path: rel,
+        week: viewWeek!,
+        subject: viewSubject!,
+        tableType: category,
+        isPdf: false,
+      }
+      setCurrentPdf(pdf)
+      setDragCategory(null)
+      return
+    }
     const data =
       e.dataTransfer.getData('text/uri-list') ||
       e.dataTransfer.getData('text/plain')
@@ -578,7 +647,6 @@ useEffect(() => {
       setDragCategory(null)
       return
     }
-    const category = dragCategory || 'theory'
     const suggested = data.includes('youtube') ? 'video.lnk' : 'enlace.lnk'
     const name = prompt('Nombre del enlace:', suggested)
     if (!name) {
@@ -588,14 +656,16 @@ useEffect(() => {
     const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
     const content = `[InternetShortcut]\nURL=${data}\n`
     const file = new File([content], fileName, { type: 'text/plain' })
+    const rel = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    const handle = await writeFile(rel, file)
     Object.defineProperty(file, 'webkitRelativePath', {
-      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
+      value: `root/${rel}`,
     })
+    if (handle) Object.defineProperty(file, '_handle', { value: handle })
     setDirFiles((prev) => [...prev, file])
-    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
     const pdf: PdfFile = {
       file,
-      path,
+      path: rel,
       week: viewWeek!,
       subject: viewSubject!,
       tableType: category,
@@ -745,6 +815,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
@@ -777,6 +848,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
