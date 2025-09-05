@@ -50,9 +50,12 @@ const loadHandle = async (): Promise<FileSystemDirectoryHandle | null> => {
   return handle
 }
 
-const verifyPermission = async (handle: FileSystemDirectoryHandle) => {
-  if ((await handle.queryPermission({ mode: "read" })) === "granted") return true
-  if ((await handle.requestPermission({ mode: "read" })) === "granted") return true
+const verifyPermission = async (
+  handle: any,
+  mode: "read" | "readwrite" = "read",
+) => {
+  if ((await handle.queryPermission({ mode })) === "granted") return true
+  if ((await handle.requestPermission({ mode })) === "granted") return true
   return false
 }
 
@@ -65,6 +68,7 @@ const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
     for await (const [name, handle] of (directory as any).entries()) {
       if (handle.kind === "file") {
         try {
+          if (!(await verifyPermission(handle))) continue
           const file = await handle.getFile()
           Object.defineProperty(file, "webkitRelativePath", {
             value: `${path}${name}`,
@@ -92,6 +96,7 @@ export default function Home() {
   const [weeks, setWeeks] = useState(1)
   const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
+  const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
@@ -118,6 +123,26 @@ export default function Home() {
     files.filter(
       (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
     )
+
+  const writeFile = async (path: string, file: File) => {
+    if (!dirHandle) return
+    try {
+      if (!(await verifyPermission(dirHandle, "readwrite"))) return
+      const parts = path.split("/")
+      let dir = dirHandle
+      for (let i = 0; i < parts.length - 1; i++) {
+        dir = await dir.getDirectoryHandle(parts[i], { create: true })
+      }
+      const fh = await dir.getFileHandle(parts[parts.length - 1], {
+        create: true,
+      })
+      const writable = await fh.createWritable()
+      await writable.write(file)
+      await writable.close()
+    } catch (err) {
+      console.warn("Failed to save file", err)
+    }
+  }
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -169,6 +194,7 @@ export default function Home() {
   const selectDirectory = async () => {
     try {
       const handle = await (window as any).showDirectoryPicker()
+      setDirHandle(handle)
       await saveHandle(handle)
       const rawFiles = await readAllFiles(handle)
       const files = filterSystemFiles(rawFiles)
@@ -245,6 +271,7 @@ export default function Home() {
       try {
         const handle = await loadHandle()
         if (handle && (await verifyPermission(handle))) {
+          setDirHandle(handle)
           const raw = await readAllFiles(handle)
           const files = filterSystemFiles(raw)
           setDirFiles(files)
@@ -576,7 +603,7 @@ useEffect(() => {
 
   const handleDragLeaveArea = () => setDragCategory(null)
 
-  const handleDropLink = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDropLink = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     const category = dragCategory || 'theory'
     const dropped = Array.from(e.dataTransfer.files || []).find((f) =>
@@ -586,8 +613,9 @@ useEffect(() => {
       Object.defineProperty(dropped, 'webkitRelativePath', {
         value: `root/Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`,
       })
-      setDirFiles((prev) => [...prev, dropped])
       const path = `Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`
+      await writeFile(path, dropped)
+      setDirFiles((prev) => [...prev, dropped])
       const pdf: PdfFile = {
         file: dropped,
         path,
@@ -619,8 +647,9 @@ useEffect(() => {
     Object.defineProperty(file, 'webkitRelativePath', {
       value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
     })
-    setDirFiles((prev) => [...prev, file])
     const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    await writeFile(path, file)
+    setDirFiles((prev) => [...prev, file])
     const pdf: PdfFile = {
       file,
       path,
