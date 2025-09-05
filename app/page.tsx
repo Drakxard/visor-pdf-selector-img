@@ -326,10 +326,11 @@ useEffect(() => {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 5) {
+      if (parts.length >= 4) {
         const weekPart = parts[1]
         const subject = parts[2]
-        const table = parts[3].toLowerCase().includes("pract")
+        const tableBase = parts.length > 4 ? parts[3] : "teoria"
+        const table = tableBase.toLowerCase().includes("pract")
           ? "practice"
           : "theory"
         const week = parseInt(weekPart.replace(/\D/g, ""))
@@ -747,6 +748,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
@@ -779,6 +781,7 @@ useEffect(() => {
                             completed[p.path] ? "line-through text-gray-400" : ""
                           }`}
                         >
+                          <span>{p.isPdf ? "📄" : "🔗"}</span>
                           <span
                             className="flex-1 truncate cursor-pointer"
                             title={p.file.name}
