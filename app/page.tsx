@@ -75,8 +75,15 @@ const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
             value: `${path}${name}`,
           })
           files.push(file)
-        } catch (err) {
-          console.warn("Skipping file", name, err)
+        } catch (err: any) {
+          if (name.toLowerCase().endsWith('.lnk')) {
+            const dummy = new File([], name, { type: 'text/plain' })
+            Object.defineProperty(dummy, 'webkitRelativePath', {
+              value: `${path}${name}`,
+            })
+            files.push(dummy)
+          }
+          console.warn('Skipping file', name, err)
           skipped.push(name)
         }
       } else if (handle.kind === "directory") {
@@ -526,8 +533,16 @@ useEffect(() => {
         const raw =
           matches.find((m) => m.includes("youtube")) || matches[0] || null
         const url = raw ? toEmbedUrl(raw) : null
+        if (!url) {
+          if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+          setToast({ type: 'error', text: 'No se pudo leer el enlace' })
+          toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+        }
         setEmbedUrl(url)
       } catch {
+        if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+        setToast({ type: 'error', text: 'No se pudo leer el enlace' })
+        toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
         setEmbedUrl(null)
       }
     })()
@@ -636,19 +651,17 @@ useEffect(() => {
         value: `root/Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`,
       })
       const path = `Semana${viewWeek}/${viewSubject}/${category}/${dropped.name}`
-      const ok = await writeFile(path, dropped)
-      if (ok) {
-        setDirFiles((prev) => [...prev, dropped])
-        const pdf: PdfFile = {
-          file: dropped,
-          path,
-          week: viewWeek!,
-          subject: viewSubject!,
-          tableType: category,
-          isPdf: false,
-        }
-        setCurrentPdf(pdf)
+      await writeFile(path, dropped)
+      setDirFiles((prev) => [...prev, dropped])
+      const pdf: PdfFile = {
+        file: dropped,
+        path,
+        week: viewWeek!,
+        subject: viewSubject!,
+        tableType: category,
+        isPdf: false,
       }
+      setCurrentPdf(pdf)
       setDragCategory(null)
       return
     }
@@ -672,19 +685,17 @@ useEffect(() => {
       value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
     })
     const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
-    const ok = await writeFile(path, file)
-    if (ok) {
-      setDirFiles((prev) => [...prev, file])
-      const pdf: PdfFile = {
-        file,
-        path,
-        week: viewWeek!,
-        subject: viewSubject!,
-        tableType: category,
-        isPdf: false,
-      }
-      setCurrentPdf(pdf)
+    await writeFile(path, file)
+    setDirFiles((prev) => [...prev, file])
+    const pdf: PdfFile = {
+      file,
+      path,
+      week: viewWeek!,
+      subject: viewSubject!,
+      tableType: category,
+      isPdf: false,
     }
+    setCurrentPdf(pdf)
     setDragCategory(null)
   }
 
