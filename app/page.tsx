@@ -101,12 +101,15 @@ export default function Home() {
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
+  const [newVideoUrl, setNewVideoUrl] = useState("")
+  const [newVideoCat, setNewVideoCat] = useState<'theory' | 'practice'>("theory")
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const videosLoadedRef = useRef(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
@@ -307,6 +310,33 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("practice", JSON.stringify(practice))
   }, [practice])
+
+  // load stored youtube links once directory files are available
+  useEffect(() => {
+    if (videosLoadedRef.current) return
+    if (!dirFiles.length) return
+    const stored = JSON.parse(localStorage.getItem("youtubeLinks") || "[]") as {
+      path: string
+      url: string
+    }[]
+    if (stored.length) {
+      const existing = new Set(
+        dirFiles.map((f) => (f as any).webkitRelativePath || ""),
+      )
+      const newFiles: File[] = []
+      for (const { path, url } of stored) {
+        const rel = `root/${path}`
+        if (existing.has(rel)) continue
+        const name = path.split("/").pop() || "video.lnk"
+        const content = `[InternetShortcut]\nURL=${url}\n`
+        const file = new File([content], name, { type: "text/plain" })
+        Object.defineProperty(file, "webkitRelativePath", { value: rel })
+        newFiles.push(file)
+      }
+      if (newFiles.length) setDirFiles((prev) => [...prev, ...newFiles])
+    }
+    videosLoadedRef.current = true
+  }, [dirFiles])
 
 
 // load orders
@@ -605,6 +635,40 @@ useEffect(() => {
     setDragCategory(null)
   }
 
+  const addYoutubeLink = () => {
+    if (!viewWeek || !viewSubject) return
+    const url = newVideoUrl.trim()
+    if (!url) return
+    const category = newVideoCat
+    const existing = dirFiles.filter((f) => {
+      const rel = (f as any).webkitRelativePath || ""
+      return (
+        rel.includes(`Semana${viewWeek}/${viewSubject}/${category}/`) &&
+        !f.name.toLowerCase().endsWith('.pdf')
+      )
+    }).length
+    const fileName = `Video ${existing + 1}.lnk`
+    const content = `[InternetShortcut]\nURL=${url}\n`
+    const file = new File([content], fileName, { type: 'text/plain' })
+    const rel = `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    Object.defineProperty(file, 'webkitRelativePath', { value: rel })
+    setDirFiles((prev) => [...prev, file])
+    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    const pdf: PdfFile = {
+      file,
+      path,
+      week: viewWeek,
+      subject: viewSubject,
+      tableType: category,
+      isPdf: false,
+    }
+    setCurrentPdf(pdf)
+    const stored = JSON.parse(localStorage.getItem('youtubeLinks') || '[]')
+    stored.push({ path, url })
+    localStorage.setItem('youtubeLinks', JSON.stringify(stored))
+    setNewVideoUrl('')
+  }
+
   const toggleComplete = async () => {
     if (!currentPdf) return
     const key = currentPdf.path
@@ -732,6 +796,31 @@ useEffect(() => {
               onDragLeave={handleDragLeaveArea}
               onDrop={handleDropLink}
             >
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="url"
+                  placeholder="https://www.youtube.com/..."
+                  className="border px-2 py-1 flex-1 min-w-[200px]"
+                  value={newVideoUrl}
+                  onChange={(e) => setNewVideoUrl(e.target.value)}
+                />
+                <select
+                  className="border px-2 py-1"
+                  value={newVideoCat}
+                  onChange={(e) =>
+                    setNewVideoCat(e.target.value as 'theory' | 'practice')
+                  }
+                >
+                  <option value="theory">Teoría</option>
+                  <option value="practice">Práctica</option>
+                </select>
+                <button
+                  className="border px-2 py-1"
+                  onClick={addYoutubeLink}
+                >
+                  Agregar video
+                </button>
+              </div>
               {theoryFiles.length > 0 && (
                 <div>
                   <h3 className="font-semibold">Teoría:</h3>
