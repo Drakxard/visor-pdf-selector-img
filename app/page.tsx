@@ -119,6 +119,9 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
+  const [deadlines, setDeadlines] = useState<
+    Record<string, { total: number; remaining: number }>
+  >({})
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
@@ -296,6 +299,12 @@ export default function Home() {
     if (stored) setCompleted(JSON.parse(stored))
   }, [])
 
+  // load deadlines from storage
+  useEffect(() => {
+    const stored = localStorage.getItem("deadlines")
+    if (stored) setDeadlines(JSON.parse(stored))
+  }, [])
+
   // load subjects from storage
   useEffect(() => {
     const storedNames = localStorage.getItem("names")
@@ -341,6 +350,10 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("completed", JSON.stringify(completed))
   }, [completed])
+
+  useEffect(() => {
+    localStorage.setItem("deadlines", JSON.stringify(deadlines))
+  }, [deadlines])
 
   useEffect(() => {
     localStorage.setItem("names", JSON.stringify(names))
@@ -636,6 +649,16 @@ useEffect(() => {
     }
   }
 
+  useEffect(() => {
+    if (currentPdf && !deadlines[currentPdf.path]) {
+      const d = daysUntil(currentPdf)
+      setDeadlines((prev) => ({
+        ...prev,
+        [currentPdf.path]: { total: d, remaining: d },
+      }))
+    }
+  }, [currentPdf])
+
   const handleDragOverArea = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     const rect = e.currentTarget.getBoundingClientRect()
@@ -681,28 +704,32 @@ useEffect(() => {
     setDragCategory(null)
   }
 
-  const toggleComplete = async () => {
-    if (!currentPdf) return
-    const key = currentPdf.path
+  const updateCompletion = async (pdf: PdfFile, newState: boolean) => {
+    const key = pdf.path
     const wasCompleted = !!completed[key]
-    setCompleted((prev) => ({ ...prev, [key]: !wasCompleted }))
+    if (wasCompleted === newState) return
+    setCompleted((prev) => ({ ...prev, [key]: newState }))
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     setToast({ type: 'success', text: 'Guardado en localStorage' })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
     try {
-      const norm = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
-      const canonical = canonicalSubjects.find(s => norm(s) === norm(currentPdf.subject)) || currentPdf.subject
+      const norm = (s: string) =>
+        s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
+      const canonical =
+        canonicalSubjects.find((s) => norm(s) === norm(pdf.subject)) || pdf.subject
       const resp = await fetch("/api/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           subject: canonical,
-          tableType: currentPdf.tableType,
-          delta: wasCompleted ? -1 : 1,
+          tableType: pdf.tableType,
+          delta: newState ? 1 : -1,
         }),
       })
       let body: any = null
-      try { body = await resp.json() } catch {}
+      try {
+        body = await resp.json()
+      } catch {}
       if (toastTimerRef.current) {
         window.clearTimeout(toastTimerRef.current)
       }
@@ -720,6 +747,35 @@ useEffect(() => {
       setToast({ type: 'error', text: 'Error de red al guardar el progreso' })
       toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
     }
+  }
+
+  const toggleComplete = () => {
+    if (!currentPdf) return
+    void updateCompletion(currentPdf, !completed[currentPdf.path])
+  }
+
+  const remainingDays = (pdf: PdfFile) =>
+    deadlines[pdf.path]?.remaining ?? daysUntil(pdf)
+
+  const barWidth = (pdf: PdfFile) => {
+    const info = deadlines[pdf.path]
+    if (!info) return 0
+    return info.total > 0 ? (info.remaining / info.total) * 100 : 0
+  }
+
+  const editDeadline = (pdf: PdfFile) => {
+    const info = deadlines[pdf.path]
+    const current = info?.remaining ?? daysUntil(pdf)
+    const input = prompt('Días restantes:', String(current))
+    if (input === null) return
+    let value = parseInt(input, 10)
+    if (isNaN(value) || value < 0) value = 0
+    const total = info?.total ?? current
+    setDeadlines((prev) => ({
+      ...prev,
+      [pdf.path]: { total, remaining: value },
+    }))
+    void updateCompletion(pdf, value === 0)
   }
 
   const parseVideoLines = (text: string) => {
@@ -960,13 +1016,28 @@ useEffect(() => {
           {viewerOpen ? (
             !pdfFullscreen && (
               <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
-                <span className="truncate" title={currentPdf?.file.name}>
-                  {currentPdf?.file.name}
-                </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span>
-                    Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
+                <div className="flex flex-col flex-1 gap-1">
+                  <span className="truncate" title={currentPdf?.file.name}>
+                    {currentPdf?.file.name}
                   </span>
+                  {currentPdf && (
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="cursor-pointer select-none"
+                        onClick={() => editDeadline(currentPdf)}
+                      >
+                        Días restantes: {remainingDays(currentPdf)}d
+                      </span>
+                      <div className="flex-1 h-2 bg-gray-200 rounded">
+                        <div
+                          className="h-full rounded bg-gradient-to-r from-green-200 to-green-600"
+                          style={{ width: `${barWidth(currentPdf)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() =>
                       viewerRef.current?.contentWindow?.postMessage(
