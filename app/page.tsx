@@ -770,6 +770,25 @@ useEffect(() => {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }
 
+  const removeVideo = (path: string) => {
+    const match = path.match(/^video-(\d+)-(.+)-(theory|practice)-(\d+)$/)
+    if (!match) return
+    const [, wkStr, subject, table, idxStr] = match
+    const week = Number(wkStr)
+    const idx = Number(idxStr)
+    setVideos((prev) => {
+      const v = { ...prev }
+      const arr = v[week]?.[subject]?.[table as 'theory' | 'practice']
+      if (arr) arr.splice(idx, 1)
+      return v
+    })
+    const key = `${week}-${subject}`
+    setOrders((prev) => {
+      const arr = prev[key]?.filter((p) => p !== path)
+      return { ...prev, [key]: arr || [] }
+    })
+  }
+
   const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
     const arr = [...(fileTree[week]?.[subject] || [])]
     const target = index + delta
@@ -882,6 +901,9 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
+                          {!p.isPdf && (
+                            <button onClick={() => removeVideo(p.path)}>✕</button>
+                          )}
                         </li>
                       )
                     })}
@@ -914,6 +936,9 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
+                          {!p.isPdf && (
+                            <button onClick={() => removeVideo(p.path)}>✕</button>
+                          )}
                         </li>
                       )
                     })}
