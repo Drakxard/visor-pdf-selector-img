@@ -96,6 +96,7 @@ export default function Home() {
   const [queueIndex, setQueueIndex] = useState(0)
   const [viewWeek, setViewWeek] = useState<number | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
+  const [subjectDays, setSubjectDays] = useState<Record<string, { total: number; remaining: number }>>({})
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
@@ -124,6 +125,38 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    const stored = localStorage.getItem('subjectDays')
+    if (stored) setSubjectDays(JSON.parse(stored))
+  }, [])
+
+  const updateSubjectDays = (subject: string, data: { total: number; remaining: number }) => {
+    setSubjectDays((prev) => {
+      const next = { ...prev, [subject]: data }
+      localStorage.setItem('subjectDays', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const handleEditDays = () => {
+    if (!viewSubject) return
+    const current = subjectDays[viewSubject]?.remaining ?? 0
+    const input = prompt('Días restantes:', String(current))
+    if (input === null) return
+    const num = Math.max(0, Math.round(Number(input)))
+    if (Number.isNaN(num)) return
+    const prev = subjectDays[viewSubject] || { total: 0, remaining: 0 }
+    let total = prev.total
+    if (total === 0 || prev.remaining === 0 || num > total) total = num
+    updateSubjectDays(viewSubject, { total, remaining: num })
+  }
+
+  const currentSubjectDays = viewSubject ? subjectDays[viewSubject] : undefined
+  const currentProgress =
+    currentSubjectDays && currentSubjectDays.total > 0
+      ? ((currentSubjectDays.total - currentSubjectDays.remaining) / currentSubjectDays.total) * 100
+      : 0
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -850,6 +883,21 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
+            <div className="my-2 cursor-pointer select-none" onClick={handleEditDays}>
+              <p>
+                {currentSubjectDays && currentSubjectDays.remaining > 0
+                  ? `Días restantes: ${currentSubjectDays.remaining}d`
+                  : 'Finalizado'}
+              </p>
+              {currentSubjectDays && currentSubjectDays.total > 0 && (
+                <div className="mt-1 h-3 w-full rounded bg-gray-200">
+                  <div
+                    className="h-full rounded bg-gradient-to-r from-green-200 to-green-600"
+                    style={{ width: `${currentProgress}%` }}
+                  />
+                </div>
+              )}
+            </div>
             <div
               className="relative space-y-4"
               onDragOver={handleDragOverArea}
