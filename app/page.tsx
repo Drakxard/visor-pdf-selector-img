@@ -12,6 +12,7 @@ type PdfFile = {
   subject: string
   tableType: "theory" | "practice"
   isPdf: boolean
+  url?: string
 }
 
 const DB_NAME = "folder-handle-db"
@@ -98,6 +99,20 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
+  const [videos, setVideos] = useState<
+    Record<
+      number,
+      Record<
+        string,
+        { theory: { name: string; url: string }[]; practice: { name: string; url: string }[] }
+      >
+    >
+  >({})
+  const [videoModalOpen, setVideoModalOpen] = useState(false)
+  const [videoModalText, setVideoModalText] = useState("")
+  const [videoModalTarget, setVideoModalTarget] = useState<
+    { week: number; subject: string; table: 'theory' | 'practice' } | null
+  >(null)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
@@ -289,6 +304,37 @@ export default function Home() {
     if (storedTheory) setTheory(JSON.parse(storedTheory))
     const storedPractice = localStorage.getItem("practice")
     if (storedPractice) setPractice(JSON.parse(storedPractice))
+    const storedVideos = localStorage.getItem("videos")
+    if (storedVideos) {
+      try {
+        const parsed = JSON.parse(storedVideos)
+        const norm: Record<
+          number,
+          Record<string, { theory: { name: string; url: string }[]; practice: { name: string; url: string }[] }>
+        > = {}
+        for (const w in parsed) {
+          norm[w as any] = {}
+          for (const s in parsed[w]) {
+            const obj = parsed[w][s]
+            const fix = (arr: any[]) =>
+              Array.isArray(arr)
+                ? arr.map((v: any, i: number) =>
+                    typeof v === "string"
+                      ? { name: `Video ${i + 1}`, url: v }
+                      : v,
+                  )
+                : []
+            norm[w as any][s] = {
+              theory: fix(obj.theory),
+              practice: fix(obj.practice),
+            }
+          }
+        }
+        setVideos(norm)
+      } catch {
+        setVideos({})
+      }
+    }
   }, [])
 
   // persist completed
@@ -307,6 +353,10 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("practice", JSON.stringify(practice))
   }, [practice])
+
+  useEffect(() => {
+    localStorage.setItem("videos", JSON.stringify(videos))
+  }, [videos])
 
 
 // load orders
@@ -345,6 +395,27 @@ useEffect(() => {
         })
       }
     }
+    for (const w in videos) {
+      const wk = Number(w)
+      if (!tree[wk]) tree[wk] = {}
+      for (const s in videos[wk]) {
+        if (!tree[wk][s]) tree[wk][s] = []
+        ;(["theory", "practice"] as const).forEach((cat) => {
+          videos[wk][s][cat].forEach((vid, idx) => {
+            const file = new File([], vid.name || `Video ${idx + 1}`)
+            tree[wk][s].push({
+              file,
+              path: `video-${wk}-${s}-${cat}-${idx}`,
+              week: wk,
+              subject: s,
+              tableType: cat,
+              isPdf: false,
+              url: vid.url,
+            })
+          })
+        })
+      }
+    }
     for (const w in tree) {
       for (const s in tree[w]) {
         const key = `${w}-${s}`
@@ -364,7 +435,7 @@ useEffect(() => {
       })
     }
     setFileTree(tree)
-  }, [dirFiles, orders, weeks, names])
+  }, [dirFiles, orders, weeks, names, videos])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -461,6 +532,11 @@ useEffect(() => {
       setPdfUrl(url)
       setEmbedUrl(null)
       return () => URL.revokeObjectURL(url)
+    }
+    if (currentPdf.url) {
+      setPdfUrl(null)
+      setEmbedUrl(toEmbedUrl(currentPdf.url))
+      return
     }
     setPdfUrl(null)
     ;(async () => {
@@ -646,6 +722,54 @@ useEffect(() => {
     }
   }
 
+  const parseVideoLines = (text: string) => {
+    const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean)
+    return lines
+      .map((line, idx) => {
+        const match = line.match(/https?:\/\/\S+/)
+        if (!match) return null
+        const url = match[0]
+        const name = line
+          .slice(0, match.index)
+          .trim()
+          .replace(/[:\s]+$/, '') || `Video ${idx + 1}`
+        return { name, url }
+      })
+      .filter(Boolean) as { name: string; url: string }[]
+  }
+
+  const openVideoModal = (
+    week: number,
+    subject: string,
+    table: 'theory' | 'practice',
+  ) => {
+    setVideoModalTarget({ week, subject, table })
+    setVideoModalText('')
+    setVideoModalOpen(true)
+  }
+
+  const confirmVideoModal = () => {
+    if (!videoModalTarget) return
+    const entries = parseVideoLines(videoModalText)
+    if (!entries.length) {
+      setVideoModalOpen(false)
+      return
+    }
+    const { week, subject, table } = videoModalTarget
+    setVideos((prev) => {
+      const v = { ...prev }
+      if (!v[week]) v[week] = {}
+      if (!v[week][subject])
+        v[week][subject] = { theory: [], practice: [] }
+      v[week][subject][table].push(...entries)
+      return v
+    })
+    setVideoModalOpen(false)
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    setToast({ type: 'success', text: 'Videos agregados' })
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+  }
+
   const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
     const arr = [...(fileTree[week]?.[subject] || [])]
     const target = index + delta
@@ -796,6 +920,14 @@ useEffect(() => {
                   </ul>
                 </div>
               )}
+              <div className="flex gap-2">
+                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'theory')}>
+                  + Video teoría
+                </button>
+                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'practice')}>
+                  + Video práctica
+                </button>
+              </div>
               {dragCategory && (
                 <div className="absolute inset-0 flex flex-col bg-white/90 dark:bg-gray-800/90 pointer-events-none">
                   <div
@@ -924,6 +1056,38 @@ useEffect(() => {
           </div>
         </section>
       </main>
+    {videoModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white dark:bg-gray-800 p-4 rounded shadow max-w-lg w-full space-y-2">
+          <h2 className="text-lg font-semibold">Agregar videos</h2>
+          <textarea
+            className="w-full border p-2 dark:bg-gray-700"
+            placeholder="Nombre: URL"
+            value={videoModalText}
+            onChange={(e) => setVideoModalText(e.target.value)}
+          />
+          <div className="max-h-40 overflow-y-auto">
+            <h3 className="font-medium">Preview</h3>
+            <ul className="list-disc pl-5 space-y-1">
+              {parseVideoLines(videoModalText).map((v, i) => (
+                <li key={i} className="truncate">
+                  {v.name} - {v.url}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setVideoModalOpen(false)}>Cancelar</button>
+            <button
+              onClick={confirmVideoModal}
+              disabled={!parseVideoLines(videoModalText).length}
+            >
+              Agregar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     {/* Toast banner */}
     {toast && (
       <div
