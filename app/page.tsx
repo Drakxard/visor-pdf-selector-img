@@ -12,6 +12,7 @@ type PdfFile = {
   subject: string
   tableType: "theory" | "practice"
   isPdf: boolean
+  url?: string
 }
 
 const DB_NAME = "folder-handle-db"
@@ -98,6 +99,9 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
+  const [videos, setVideos] = useState<
+    Record<number, Record<string, { theory: string[]; practice: string[] }>>
+  >({})
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
@@ -289,6 +293,8 @@ export default function Home() {
     if (storedTheory) setTheory(JSON.parse(storedTheory))
     const storedPractice = localStorage.getItem("practice")
     if (storedPractice) setPractice(JSON.parse(storedPractice))
+    const storedVideos = localStorage.getItem("videos")
+    if (storedVideos) setVideos(JSON.parse(storedVideos))
   }, [])
 
   // persist completed
@@ -307,6 +313,10 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("practice", JSON.stringify(practice))
   }, [practice])
+
+  useEffect(() => {
+    localStorage.setItem("videos", JSON.stringify(videos))
+  }, [videos])
 
 
 // load orders
@@ -345,6 +355,27 @@ useEffect(() => {
         })
       }
     }
+    for (const w in videos) {
+      const wk = Number(w)
+      if (!tree[wk]) tree[wk] = {}
+      for (const s in videos[wk]) {
+        if (!tree[wk][s]) tree[wk][s] = []
+        ;(["theory", "practice"] as const).forEach((cat) => {
+          videos[wk][s][cat].forEach((url, idx) => {
+            const file = new File([], `Video ${idx + 1}`)
+            tree[wk][s].push({
+              file,
+              path: `video-${wk}-${s}-${cat}-${idx}`,
+              week: wk,
+              subject: s,
+              tableType: cat,
+              isPdf: false,
+              url,
+            })
+          })
+        })
+      }
+    }
     for (const w in tree) {
       for (const s in tree[w]) {
         const key = `${w}-${s}`
@@ -364,7 +395,7 @@ useEffect(() => {
       })
     }
     setFileTree(tree)
-  }, [dirFiles, orders, weeks, names])
+  }, [dirFiles, orders, weeks, names, videos])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -461,6 +492,11 @@ useEffect(() => {
       setPdfUrl(url)
       setEmbedUrl(null)
       return () => URL.revokeObjectURL(url)
+    }
+    if (currentPdf.url) {
+      setPdfUrl(null)
+      setEmbedUrl(toEmbedUrl(currentPdf.url))
+      return
     }
     setPdfUrl(null)
     ;(async () => {
@@ -646,6 +682,22 @@ useEffect(() => {
     }
   }
 
+  const addVideoLink = (
+    week: number,
+    subject: string,
+    table: 'theory' | 'practice',
+  ) => {
+    const url = window.prompt('URL de YouTube')
+    if (!url) return
+    setVideos((prev) => {
+      const v = { ...prev }
+      if (!v[week]) v[week] = {}
+      if (!v[week][subject]) v[week][subject] = { theory: [], practice: [] }
+      v[week][subject][table].push(url)
+      return v
+    })
+  }
+
   const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
     const arr = [...(fileTree[week]?.[subject] || [])]
     const target = index + delta
@@ -796,6 +848,14 @@ useEffect(() => {
                   </ul>
                 </div>
               )}
+              <div className="flex gap-2">
+                <button onClick={() => addVideoLink(viewWeek!, viewSubject!, 'theory')}>
+                  + Video teoría
+                </button>
+                <button onClick={() => addVideoLink(viewWeek!, viewSubject!, 'practice')}>
+                  + Video práctica
+                </button>
+              </div>
               {dragCategory && (
                 <div className="absolute inset-0 flex flex-col bg-white/90 dark:bg-gray-800/90 pointer-events-none">
                   <div
