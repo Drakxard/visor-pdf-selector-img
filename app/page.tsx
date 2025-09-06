@@ -780,6 +780,31 @@ useEffect(() => {
     setOrders({ ...orders, [key]: arr.map((p) => p.path) })
   }
 
+  const removeVideo = (
+    week: number,
+    subject: string,
+    table: 'theory' | 'practice',
+    index: number,
+    path: string,
+  ) => {
+    const v = { ...videos }
+    if (v[week] && v[week][subject]) {
+      const arr = [...v[week][subject][table]]
+      if (index >= 0 && index < arr.length) {
+        arr.splice(index, 1)
+        v[week] = { ...v[week], [subject]: { ...v[week][subject], [table]: arr } }
+        setVideos(v)
+        const key = `${week}-${subject}`
+        if (orders[key]) {
+          setOrders({
+            ...orders,
+            [key]: orders[key].filter((p) => p !== path),
+          })
+        }
+      }
+    }
+  }
+
   const selectedFiles =
     viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
   const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
@@ -882,6 +907,21 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
+                          {!p.isPdf && (
+                            <button
+                              onClick={() =>
+                                removeVideo(
+                                  p.week,
+                                  p.subject,
+                                  p.tableType,
+                                  parseInt(p.path.split('-').pop() || '0'),
+                                  p.path,
+                                )
+                              }
+                            >
+                              x
+                            </button>
+                          )}
                         </li>
                       )
                     })}
@@ -914,6 +954,21 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
+                          {!p.isPdf && (
+                            <button
+                              onClick={() =>
+                                removeVideo(
+                                  p.week,
+                                  p.subject,
+                                  p.tableType,
+                                  parseInt(p.path.split('-').pop() || '0'),
+                                  p.path,
+                                )
+                              }
+                            >
+                              x
+                            </button>
+                          )}
                         </li>
                       )
                     })}
