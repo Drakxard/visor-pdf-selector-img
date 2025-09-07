@@ -394,6 +394,65 @@
       text-align: center;
       display: inline-block;
     }
+
+    /* Notas auxiliares */
+    #aux-toggle-btn {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      z-index: 1000;
+      padding: 8px 12px;
+      border-radius: 6px;
+      background: #4285f4;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    #aux-notes-panel {
+      position: fixed;
+      bottom: 60px;
+      right: 16px;
+      width: 300px;
+      height: 200px;
+      background: #323639;
+      color: #e8eaed;
+      border: 1px solid #5f6368;
+      border-radius: 8px;
+      display: none;
+      flex-direction: column;
+      z-index: 1000;
+    }
+    body.light-mode #aux-notes-panel {
+      background: #f8f9fa;
+      color: #202124;
+      border-color: #dadce0;
+    }
+    #aux-notes-panel.show { display: flex; }
+    #aux-notes-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 8px;
+      border-bottom: 1px solid #5f6368;
+    }
+    body.light-mode #aux-notes-header { border-bottom: 1px solid #dadce0; }
+    #aux-notes-header .left { display: flex; align-items: center; gap: 4px; }
+    #aux-notes-header button {
+      background: none;
+      border: none;
+      color: inherit;
+      cursor: pointer;
+      padding: 4px;
+      font-size: 14px;
+    }
+    #aux-editor {
+      flex: 1;
+      padding: 8px;
+      overflow: auto;
+      outline: none;
+      font-size: 16px;
+    }
   </style>
 </head>
 <body>
@@ -528,6 +587,20 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <button id="aux-toggle-btn" title="Notas auxiliares">Notas aux</button>
+  <div id="aux-notes-panel">
+    <div id="aux-notes-header">
+      <div class="left">
+        <button id="aux-info-btn" title="Biblioteca">i</button>
+      </div>
+      <div class="right">
+        <button id="aux-font-dec" title="Reducir fuente">-</button>
+        <button id="aux-font-inc" title="Aumentar fuente">+</button>
+      </div>
+    </div>
+    <div id="aux-editor" contenteditable="true"></div>
   </div>
 
   <script src="https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
@@ -2586,6 +2659,66 @@
         ctx.putImageData(imageData, 0, 0);
         saveDrawing(currentCanvas);
       }
+
+      // Notas auxiliares
+      const auxToggleBtn = document.getElementById('aux-toggle-btn');
+      const auxPanel = document.getElementById('aux-notes-panel');
+      const auxEditor = document.getElementById('aux-editor');
+      const auxInfoBtn = document.getElementById('aux-info-btn');
+      const auxFontInc = document.getElementById('aux-font-inc');
+      const auxFontDec = document.getElementById('aux-font-dec');
+      let auxFontSize = 16;
+
+      function updateAuxFont() {
+        auxEditor.style.fontSize = auxFontSize + 'px';
+      }
+
+      auxToggleBtn.addEventListener('click', () => {
+        auxPanel.classList.toggle('show');
+        if (auxPanel.classList.contains('show')) {
+          auxEditor.focus();
+          initMathFields(auxEditor);
+        }
+      });
+
+      auxInfoBtn.addEventListener('click', () => {
+        alert('Biblioteca: MathQuill');
+      });
+
+      auxFontInc.addEventListener('click', () => {
+        auxFontSize = Math.min(40, auxFontSize + 2);
+        updateAuxFont();
+      });
+
+      auxFontDec.addEventListener('click', () => {
+        auxFontSize = Math.max(8, auxFontSize - 2);
+        updateAuxFont();
+      });
+
+      auxEditor.addEventListener('keydown', (ev) => {
+        if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const sel = window.getSelection();
+          if (!sel.rangeCount) return;
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          const span = document.createElement('span');
+          span.className = 'math-field';
+          span.setAttribute('contenteditable', 'false');
+          range.insertNode(span);
+          range.setStartAfter(span);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          enhanceMathField(span);
+          setTimeout(() => {
+            span._mqInstance.focus();
+          }, 10);
+        }
+      });
+
+      updateAuxFont();
 
       // cargar pdf inicial si viene por query
       const params = new URLSearchParams(window.location.search);
