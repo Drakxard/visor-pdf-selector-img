@@ -394,6 +394,29 @@
       text-align: center;
       display: inline-block;
     }
+    .aux-notes-btn {
+      position: fixed; bottom: 20px; right: 20px; z-index: 2000;
+      width: 48px; height: 48px; border-radius: 50%;
+      background: #4285f4; color: #fff; border: none;
+      cursor: pointer; font-size: 24px;
+    }
+    .aux-notes-panel {
+      position: fixed; inset: 0; z-index: 1999;
+      display: flex; flex-direction: column;
+      background: #fff; color: #333;
+    }
+    .aux-notes-panel.hidden { display: none; }
+    .aux-notes-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px; background: #f8f9fa; border-bottom: 1px solid #ddd;
+    }
+    .aux-notes-header button {
+      background: transparent; border: none; cursor: pointer;
+    }
+    .aux-notes-editor {
+      flex: 1; padding: 8px; overflow: auto; outline: none;
+      font-size: 14px; line-height: 1.4; color: #333;
+    }
   </style>
 </head>
 <body>
@@ -529,6 +552,18 @@
       </div>
     </div>
   </div>
+
+  <div id="aux-notes-panel" class="aux-notes-panel hidden">
+    <div class="aux-notes-header">
+      <button id="aux-notes-info" title="Biblioteca">(i)</button>
+      <div>
+        <button id="aux-font-plus">+</button>
+        <button id="aux-font-minus">-</button>
+      </div>
+    </div>
+    <div id="aux-notes-editor" class="aux-notes-editor" contenteditable="true"></div>
+  </div>
+  <button id="aux-notes-btn" class="aux-notes-btn">📝</button>
 
   <script src="https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
   <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.worker.min.js';</script>
@@ -2586,6 +2621,53 @@
         ctx.putImageData(imageData, 0, 0);
         saveDrawing(currentCanvas);
       }
+      // ===============================
+      // NOTAS AUXILIARES
+      // ===============================
+      const auxBtn = document.getElementById('aux-notes-btn');
+      const auxPanel = document.getElementById('aux-notes-panel');
+      const auxEditor = document.getElementById('aux-notes-editor');
+      const auxPlus = document.getElementById('aux-font-plus');
+      const auxMinus = document.getElementById('aux-font-minus');
+      const auxInfo = document.getElementById('aux-notes-info');
+      let auxFontSize = 14;
+      auxEditor.style.fontSize = auxFontSize + 'px';
+      auxBtn.addEventListener('click', () => {
+        auxPanel.classList.toggle('hidden');
+        if (!auxPanel.classList.contains('hidden')) {
+          initMathFields(auxEditor);
+          auxEditor.focus();
+        }
+      });
+      auxPlus.addEventListener('click', () => {
+        auxFontSize = Math.min(40, auxFontSize + 2);
+        auxEditor.style.fontSize = auxFontSize + 'px';
+      });
+      auxMinus.addEventListener('click', () => {
+        auxFontSize = Math.max(10, auxFontSize - 2);
+        auxEditor.style.fontSize = auxFontSize + 'px';
+      });
+      auxInfo.addEventListener('click', () => {
+        alert('Editor de fórmulas basado en MathQuill');
+      });
+      auxEditor.addEventListener('keydown', (ev) => {
+        if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
+          ev.preventDefault(); ev.stopPropagation();
+          const sel = window.getSelection();
+          if (!sel.rangeCount) return;
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          const span = document.createElement('span');
+          span.className = 'math-field';
+          span.setAttribute('contenteditable', 'false');
+          range.insertNode(span);
+          range.setStartAfter(span);
+          range.collapse(true);
+          sel.removeAllRanges(); sel.addRange(range);
+          enhanceMathField(span);
+          setTimeout(() => { span._mqInstance.focus(); }, 10);
+        }
+      });
 
       // cargar pdf inicial si viene por query
       const params = new URLSearchParams(window.location.search);
