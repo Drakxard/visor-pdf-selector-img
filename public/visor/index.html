@@ -2634,7 +2634,9 @@
       const auxPlus = document.getElementById('aux-font-plus');
       const auxMinus = document.getElementById('aux-font-minus');
       const auxInfo = document.getElementById('aux-notes-info');
-      let auxFontSize = 14;
+      let auxFontSize = parseInt(localStorage.getItem('auxFontSize'), 10);
+      if (isNaN(auxFontSize)) auxFontSize = 14;
+      auxFontSize = Math.min(100, Math.max(10, auxFontSize));
       auxEditor.style.fontSize = auxFontSize + 'px';
       auxBtn.addEventListener('click', () => {
         auxPanel.classList.toggle('hidden');
@@ -2644,12 +2646,14 @@
         }
       });
       auxPlus.addEventListener('click', () => {
-        auxFontSize = Math.min(40, auxFontSize + 2);
+        auxFontSize = Math.min(100, auxFontSize + 2);
         auxEditor.style.fontSize = auxFontSize + 'px';
+        localStorage.setItem('auxFontSize', auxFontSize);
       });
       auxMinus.addEventListener('click', () => {
         auxFontSize = Math.max(10, auxFontSize - 2);
         auxEditor.style.fontSize = auxFontSize + 'px';
+        localStorage.setItem('auxFontSize', auxFontSize);
       });
       auxInfo.addEventListener('click', () => {
         alert('Editor de fórmulas basado en MathQuill');
