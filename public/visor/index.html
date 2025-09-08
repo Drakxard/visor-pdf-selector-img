@@ -766,6 +766,7 @@
       let focusMode = false;
       let focusStart = null;
       let focusPreview = null;
+      let focusCancelTipShown = false;
 
       function updateFocusPreview(e) {
         if (!focusMode || !focusStart || !focusPreview) return;
@@ -1668,8 +1669,11 @@
             focusPreview?.remove();
             focusPreview = null;
             document.removeEventListener('mousemove', updateFocusPreview);
-            showToast('Selección cancelada. Modo enfoque activo ("o" para salir)', 'info');
-            showNavIndicator('Haz dos clics para enfocar');
+            if (!focusCancelTipShown) {
+              showToast('Selección cancelada. Modo enfoque activo ("o" para salir)', 'info');
+              showNavIndicator('Haz dos clics para enfocar');
+              focusCancelTipShown = true;
+            }
           }
           const fo = document.getElementById('focus-overlay');
           if (fo) fo.remove();
