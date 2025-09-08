@@ -415,7 +415,7 @@
     }
     .aux-notes-editor {
       flex: 1; padding: 8px; overflow: auto; outline: none;
-      font-size: 14px; line-height: 1.4; color: #333;
+      font-size: 14pt; line-height: 1.4; color: #333;
     }
   </style>
 </head>
@@ -2634,8 +2634,9 @@
       const auxPlus = document.getElementById('aux-font-plus');
       const auxMinus = document.getElementById('aux-font-minus');
       const auxInfo = document.getElementById('aux-notes-info');
-      let auxFontSize = 14;
-      auxEditor.style.fontSize = auxFontSize + 'px';
+      const AUX_FONT_SIZE_KEY = 'aux-note-font-size';
+      let auxFontSize = parseInt(localStorage.getItem(AUX_FONT_SIZE_KEY) || '14', 10);
+      auxEditor.style.fontSize = auxFontSize + 'pt';
       auxBtn.addEventListener('click', () => {
         auxPanel.classList.toggle('hidden');
         if (!auxPanel.classList.contains('hidden')) {
@@ -2644,12 +2645,14 @@
         }
       });
       auxPlus.addEventListener('click', () => {
-        auxFontSize = Math.min(40, auxFontSize + 2);
-        auxEditor.style.fontSize = auxFontSize + 'px';
+        auxFontSize = Math.min(100, auxFontSize + 2);
+        auxEditor.style.fontSize = auxFontSize + 'pt';
+        localStorage.setItem(AUX_FONT_SIZE_KEY, String(auxFontSize));
       });
       auxMinus.addEventListener('click', () => {
-        auxFontSize = Math.max(10, auxFontSize - 2);
-        auxEditor.style.fontSize = auxFontSize + 'px';
+        auxFontSize = Math.max(1, auxFontSize - 2);
+        auxEditor.style.fontSize = auxFontSize + 'pt';
+        localStorage.setItem(AUX_FONT_SIZE_KEY, String(auxFontSize));
       });
       auxInfo.addEventListener('click', () => {
         alert('Editor de fórmulas basado en MathQuill');
