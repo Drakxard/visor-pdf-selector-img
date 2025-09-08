@@ -124,6 +124,8 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+  const [darkModalOpen, setDarkModalOpen] = useState(false)
+  const [darkModeHour, setDarkModeHour] = useState(18)
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -234,12 +236,8 @@ export default function Home() {
   // theme and setup flag
   useEffect(() => {
     setMounted(true)
-    const hour = new Date().getHours()
-    if (hour >= 19 || hour < 6) {
-      setTheme("dark")
-    } else {
-      setTheme("light")
-    }
+    const storedHour = parseInt(localStorage.getItem("darkModeHour") || "18")
+    setDarkModeHour(storedHour)
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
@@ -249,7 +247,22 @@ export default function Home() {
       const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
       setUnlockedWeeks(storedUnlocked)
     }
-  }, [setTheme])
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem("darkModeHour", String(darkModeHour))
+    const checkTheme = () => {
+      const hour = new Date().getHours()
+      if (hour >= darkModeHour || hour < 6) {
+        setTheme("dark")
+      } else {
+        setTheme("light")
+      }
+    }
+    checkTheme()
+    const id = window.setInterval(checkTheme, 60000)
+    return () => window.clearInterval(id)
+  }, [darkModeHour, setTheme])
 
   useEffect(() => {
     ;(async () => {
@@ -1155,12 +1168,51 @@ useEffect(() => {
         {toast.text}
       </div>
     )}
+    {darkModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="w-64 rounded bg-white p-4 text-black shadow dark:bg-gray-800 dark:text-white">
+          <div className="mb-4 flex justify-between">
+            <span>Modo oscuro</span>
+            <button
+              className="rounded border px-2 py-1"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            >
+              {theme === 'dark' ? 'Desactivar' : 'Activar'}
+            </button>
+          </div>
+          <div className="mb-2 flex flex-col items-center">
+            <div className="mx-auto h-0 w-0 border-l-4 border-r-4 border-b-4 border-transparent border-b-current" />
+            <div className="h-3 w-3 rounded-full bg-current" />
+            <div className="mt-1 text-sm">
+              {String(darkModeHour).padStart(2, '0')}:00
+            </div>
+          </div>
+          <input
+            type="range"
+            min="18"
+            max="23"
+            value={darkModeHour}
+            onChange={(e) => setDarkModeHour(parseInt(e.target.value, 10))}
+            className="w-full"
+          />
+          <div className="mt-4 flex justify-end">
+            <button
+              className="rounded border px-2 py-1"
+              onClick={() => setDarkModalOpen(false)}
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     <div className="fixed top-2 right-2">
       <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
       {showSettings && (
-        <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
+        <div className="absolute right-0 mt-2 space-y-2 rounded border border-gray-300 bg-white p-2 text-black dark:border-gray-700 dark:bg-gray-800 dark:text-white">
           <button onClick={selectDirectory}>Reseleccionar carpeta</button>
           <button onClick={unlockNextWeek}>Unlock Next Semana</button>
+          <button onClick={() => setDarkModalOpen(true)}>Modo oscuro</button>
         </div>
       )}
     </div>
