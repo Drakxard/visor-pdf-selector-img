@@ -1664,12 +1664,12 @@
             showToast('Captura cancelada', 'info');
           }
           if (focusMode) {
-            focusMode = false;
             focusStart = null;
             focusPreview?.remove();
             focusPreview = null;
             document.removeEventListener('mousemove', updateFocusPreview);
-            showToast('Enfoque cancelado', 'info');
+            showToast('Selección cancelada. Modo enfoque activo ("o" para salir)', 'info');
+            showNavIndicator('Haz dos clics para enfocar');
           }
           const fo = document.getElementById('focus-overlay');
           if (fo) fo.remove();
