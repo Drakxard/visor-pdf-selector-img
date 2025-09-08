@@ -117,6 +117,8 @@ export default function Home() {
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [showDarkModal, setShowDarkModal] = useState(false)
+  const [darkModeStart, setDarkModeStart] = useState(19)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
   const viewerRef = useRef<HTMLIFrameElement>(null)
@@ -124,6 +126,15 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  const applyTheme = (start: number) => {
+    const hour = new Date().getHours()
+    if (hour >= start || hour < 6) {
+      setTheme('dark')
+    } else {
+      setTheme('light')
+    }
+  }
 
   const filterSystemFiles = (files: File[]) =>
     files.filter(
@@ -234,12 +245,9 @@ export default function Home() {
   // theme and setup flag
   useEffect(() => {
     setMounted(true)
-    const hour = new Date().getHours()
-    if (hour >= 19 || hour < 6) {
-      setTheme("dark")
-    } else {
-      setTheme("light")
-    }
+    const storedStart = parseInt(localStorage.getItem('darkModeStart') || '19')
+    setDarkModeStart(storedStart)
+    applyTheme(storedStart)
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
@@ -250,6 +258,12 @@ export default function Home() {
       setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
+
+  useEffect(() => {
+    if (!mounted) return
+    localStorage.setItem('darkModeStart', darkModeStart.toString())
+    applyTheme(darkModeStart)
+  }, [darkModeStart, mounted])
 
   useEffect(() => {
     ;(async () => {
@@ -1158,12 +1172,44 @@ useEffect(() => {
     <div className="fixed top-2 right-2">
       <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
       {showSettings && (
-        <div className="absolute right-0 mt-2 bg-white border p-2 space-y-2">
-          <button onClick={selectDirectory}>Reseleccionar carpeta</button>
-          <button onClick={unlockNextWeek}>Unlock Next Semana</button>
+        <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
+          <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
+          <button className="block w-full text-left" onClick={unlockNextWeek}>Unlock Next Semana</button>
+          <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
       )}
     </div>
+
+    {showDarkModal && (
+      <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
+        <div className="bg-white dark:bg-gray-800 p-4 rounded shadow space-y-4 w-72 text-gray-800 dark:text-gray-200">
+          <div className="text-center text-lg">Horario modo oscuro</div>
+          <div className="flex flex-col items-center space-y-2">
+            <div className="text-xl font-mono">
+              {`${darkModeStart.toString().padStart(2, '0')}:00`}
+            </div>
+            <div className="relative w-full">
+              <div className="absolute w-full flex justify-center -top-5 pointer-events-none">
+                <span>↓</span>
+              </div>
+              <input
+                type="range"
+                min="18"
+                max="24"
+                value={darkModeStart === 0 ? 24 : darkModeStart}
+                onChange={(e) =>
+                  setDarkModeStart(parseInt(e.target.value) === 24 ? 0 : parseInt(e.target.value))
+                }
+                className="w-full"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={() => setShowDarkModal(false)} className="px-3 py-1 border rounded dark:border-gray-600">Cerrar</button>
+          </div>
+        </div>
+      </div>
+    )}
   </>
   )
 }
