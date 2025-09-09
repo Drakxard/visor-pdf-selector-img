@@ -289,6 +289,8 @@
       color: #333; font-size: 14px; line-height: 1.4; outline: none; overflow: auto;
     }
     .note-textarea:focus { border-color: #4285f4; }
+    .matrix-editor table { border-collapse: collapse; display: inline-table; }
+    .matrix-editor td { border: 1px solid #aaa; padding: 2px 4px; min-width: 20px; text-align: center; }
     .mq-editable-field, .mq-editable-field .mq-root-block {
       border: 1px solid #ddd !important; background: #f8f9fa !important; border-radius: 4px !important;
       padding: 4px !important; margin: 2px !important;
@@ -1715,6 +1717,62 @@
           MathJax.typesetPromise([element]);
         }
       }
+      function createMatrixEditor(rows, cols, values = []) {
+        const span = document.createElement('span');
+        span.className = 'matrix-editor';
+        span.dataset.rows = String(rows);
+        span.dataset.cols = String(cols);
+        const table = document.createElement('table');
+        for (let r = 0; r < rows; r++) {
+          const tr = document.createElement('tr');
+          for (let c = 0; c < cols; c++) {
+            const td = document.createElement('td');
+            td.contentEditable = 'true';
+            td.className = 'matrix-cell';
+            const val = (values[r] && values[r][c]) ? values[r][c] : '';
+            td.textContent = val;
+            tr.appendChild(td);
+          }
+          table.appendChild(tr);
+        }
+        span.appendChild(table);
+        span.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            ev.preventDefault();
+            finalizeMatrix(span);
+          }
+        });
+        return span;
+      }
+      function matrixEditorToLatex(span) {
+        const rows = parseInt(span.dataset.rows, 10);
+        const cols = parseInt(span.dataset.cols, 10);
+        const values = [];
+        span.querySelectorAll('tr').forEach(tr => {
+          const row = [];
+          tr.querySelectorAll('td').forEach(td => row.push(td.textContent.trim()));
+          values.push(row);
+        });
+        const body = values.map(row => row.join(' & ')).join('\\');
+        return `\begin{pmatrix}${body}\end{pmatrix}`;
+      }
+      function finalizeMatrix(span) {
+        const latex = matrixEditorToLatex(span);
+        const textNode = document.createTextNode(`$${latex}$`);
+        span.replaceWith(textNode);
+        const sel = window.getSelection();
+        if (sel) {
+          const range = document.createRange();
+          range.setStartAfter(textNode);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }
+      function parseMatrixLatex(latex) {
+        const inner = latex.replace(/^\\begin\{pmatrix\}/, '').replace(/\\end\{pmatrix\}$/, '');
+        return inner.split('\\').map(row => row.split('&').map(c => c.trim()));
+      }
       function createTextarea(x, y, icon, targetLayer) {
         const textarea = document.createElement('div');
         textarea.contentEditable = 'true';
@@ -1732,6 +1790,28 @@
         textarea.focus();
 
         textarea.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount && sel.anchorNode && sel.anchorNode.nodeType === Node.TEXT_NODE) {
+              const text = sel.anchorNode.textContent || '';
+              const before = text.slice(0, sel.anchorOffset);
+              const match = before.match(/m(\d+)x(\d+)$/i);
+              if (match) {
+                ev.preventDefault();
+                const rows = parseInt(match[1], 10);
+                const cols = parseInt(match[2], 10);
+                sel.anchorNode.textContent = before.slice(0, before.length - match[0].length) + text.slice(sel.anchorOffset);
+                const span = createMatrixEditor(rows, cols);
+                const range = sel.getRangeAt(0);
+                range.setStart(sel.anchorNode, before.length - match[0].length);
+                range.collapse(true);
+                range.insertNode(span);
+                const firstCell = span.querySelector('td');
+                if (firstCell) firstCell.focus();
+                return;
+              }
+            }
+          }
           if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
             ev.preventDefault(); ev.stopPropagation();
             const sel = window.getSelection();
@@ -1761,6 +1841,12 @@
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
             cloneSpans[idx].textContent = `$${latex}$`;
+          });
+          const origMatrices = textarea.querySelectorAll('span.matrix-editor');
+          const cloneMatrices = tempDiv.querySelectorAll('span.matrix-editor');
+          origMatrices.forEach((orig, idx) => {
+            const latex = matrixEditorToLatex(orig);
+            cloneMatrices[idx].replaceWith(document.createTextNode(`$${latex}$`));
           });
           const rawContent = tempDiv.innerHTML.trim();
           const content = rawContent.replace(/\\n/g, '<span class="note-sep"></span>');
@@ -1808,7 +1894,11 @@
 
         tempDiv.querySelectorAll('span.math-field').forEach(span => {
           const textContent = span.textContent || '';
-          if (stripDelimiters && textContent.startsWith('$') && textContent.endsWith('$')) {
+          if (stripDelimiters && textContent.startsWith('\\begin{pmatrix}') && textContent.endsWith('\\end{pmatrix}')) {
+            const values = parseMatrixLatex(textContent);
+            const matrixSpan = createMatrixEditor(values.length, values[0].length, values);
+            span.replaceWith(matrixSpan);
+          } else if (stripDelimiters && textContent.startsWith('$') && textContent.endsWith('$')) {
             span.textContent = textContent.substring(1, textContent.length - 1);
           }
         });
