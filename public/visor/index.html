@@ -669,6 +669,12 @@
             scheduleRender(p);
           }
           localStorage.setItem('lastPage-' + currentPdfKey, String(p));
+          try {
+            window.parent.postMessage(
+              { type: 'viewerPage', page: p, key: currentPdfKey },
+              '*'
+            );
+          } catch {}
         }
       });
 
@@ -2681,8 +2687,9 @@
       const params = new URLSearchParams(window.location.search);
       const urlParam = params.get('url');
       const nameParam = params.get('name');
+      const keyParam = params.get('key');
       if (urlParam && nameParam) {
-        loadPdf(urlParam, nameParam);
+        loadPdf(urlParam, nameParam, keyParam || '');
       }
 
       // ========================================
