@@ -124,6 +124,7 @@ export default function Home() {
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const restoredLastPdf = useRef(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
@@ -567,6 +568,38 @@ useEffect(() => {
     })()
   }, [currentPdf])
 
+  // persist last opened file
+  useEffect(() => {
+    if (restoredLastPdf.current && currentPdf) {
+      localStorage.setItem('lastFile', currentPdf.path)
+    }
+  }, [currentPdf])
+
+  // restore last opened file
+  useEffect(() => {
+    if (restoredLastPdf.current) return
+    const last = localStorage.getItem('lastFile')
+    if (!last) {
+      restoredLastPdf.current = true
+      return
+    }
+    for (const w in fileTree) {
+      for (const s in fileTree[w]) {
+        const found = fileTree[w][s].find((f) => f.path === last)
+        if (found) {
+          setCurrentPdf(found)
+          setViewWeek(found.week)
+          setViewSubject(found.subject)
+          const idx = queue.findIndex((f) => f.path === found.path)
+          if (idx >= 0) setQueueIndex(idx)
+          restoredLastPdf.current = true
+          return
+        }
+      }
+    }
+    restoredLastPdf.current = true
+  }, [fileTree, queue])
+
   // listen for fullscreen messages from the PDF viewer
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -829,6 +862,17 @@ useEffect(() => {
     <>
       <main className="flex flex-col md:grid md:grid-cols-2 min-h-screen">
         <aside className="border-b md:border-r p-4 space-y-2">
+        {viewWeek !== null && (
+          <button
+            className="mb-2 underline"
+            onClick={() => {
+              setViewWeek(null)
+              setViewSubject(null)
+            }}
+          >
+            Inicio
+          </button>
+        )}
         {!viewWeek && (
           <>
             <h2 className="text-xl">Semanas</h2>
@@ -851,9 +895,6 @@ useEffect(() => {
         )}
         {viewWeek && !viewSubject && (
           <>
-            <button className="mb-2 underline" onClick={() => setViewWeek(null)}>
-              ← Volver
-            </button>
             <h2 className="text-xl">Semana {viewWeek}</h2>
             <ul className="space-y-1">
               {Object.entries(fileTree[viewWeek] || {})
@@ -1056,6 +1097,20 @@ useEffect(() => {
                     }}
                   >
                     {theme === 'light' ? '🌞' : '🌙'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setViewerOpen(false)
+                      setPdfFullscreen(false)
+                      setViewWeek(null)
+                      setViewSubject(null)
+                      viewerRef.current?.contentWindow?.postMessage(
+                        { type: 'resetZoom' },
+                        '*'
+                      )
+                    }}
+                  >
+                    Inicio
                   </button>
                   <button
                     onClick={() => {
