@@ -124,6 +124,7 @@ export default function Home() {
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
@@ -512,6 +513,24 @@ useEffect(() => {
     }
   }, [fileTree, completed, theory, practice])
 
+  // restore last opened file when queue is ready
+  useEffect(() => {
+    if (!restored && queue.length) {
+      const last = localStorage.getItem('lastPath')
+      if (last) {
+        const idx = queue.findIndex((f) => f.path === last)
+        if (idx >= 0) {
+          const pdf = queue[idx]
+          setCurrentPdf(pdf)
+          setQueueIndex(idx)
+          setViewWeek(pdf.week)
+          setViewSubject(pdf.subject)
+        }
+      }
+      setRestored(true)
+    }
+  }, [queue, restored])
+
   const toEmbedUrl = (url: string) => {
     try {
       const u = new URL(url)
@@ -567,11 +586,23 @@ useEffect(() => {
     })()
   }, [currentPdf])
 
-  // listen for fullscreen messages from the PDF viewer
+  // remember last opened file
+  useEffect(() => {
+    if (currentPdf) {
+      localStorage.setItem('lastPath', currentPdf.path)
+      localStorage.setItem('lastWeek', String(currentPdf.week))
+      localStorage.setItem('lastSubject', currentPdf.subject)
+    }
+  }, [currentPdf])
+
+  // listen for messages from the PDF viewer
   useEffect(() => {
     const handler = (e: MessageEvent) => {
       if (e.data?.type === 'viewerFullscreen') {
         setPdfFullscreen(!!e.data.value)
+      }
+      if (e.data?.type === 'viewerPage') {
+        localStorage.setItem('lastPage', String(e.data.page))
       }
     }
     window.addEventListener('message', handler)
@@ -829,6 +860,11 @@ useEffect(() => {
     <>
       <main className="flex flex-col md:grid md:grid-cols-2 min-h-screen">
         <aside className="border-b md:border-r p-4 space-y-2">
+        {viewWeek !== null && (
+          <button className="mb-2 underline" onClick={() => { setViewWeek(null); setViewSubject(null); }}>
+            Inicio
+          </button>
+        )}
         {!viewWeek && (
           <>
             <h2 className="text-xl">Semanas</h2>
@@ -1033,6 +1069,16 @@ useEffect(() => {
                   {currentPdf?.file.name}
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setViewerOpen(false)
+                      setPdfFullscreen(false)
+                      setViewWeek(null)
+                      setViewSubject(null)
+                    }}
+                  >
+                    Inicio
+                  </button>
                   <span>
                     Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
                   </span>
@@ -1110,7 +1156,7 @@ useEffect(() => {
                   currentPdf.isPdf
                     ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
                         currentPdf.file.name,
-                      )}`
+                      )}&key=${encodeURIComponent(currentPdf.path)}`
                     : embedUrl!
                 }
                 className="w-full h-full border-0"
