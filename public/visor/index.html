@@ -1819,6 +1819,28 @@
         if (span._mqInstance) return;
         const initialLatex = span.textContent; span.textContent = '';
         const mf = MQ.MathField(span, { spaceBehavesLikeTab: true, handlers: { edit: () => {} } });
+        span.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            const text = mf.latex().trim();
+            const match = /^m(\d+)x(\d+)$/.exec(text);
+            if (match) {
+              ev.preventDefault();
+              const rows = parseInt(match[1], 10);
+              const cols = parseInt(match[2], 10);
+              let matrix = '\\begin{bmatrix}';
+              for (let r = 0; r < rows; r++) {
+                if (r > 0) matrix += ' \\\\ ';
+                matrix += Array(cols).fill('').join(' & ');
+              }
+              matrix += '\\end{bmatrix}';
+              mf.latex(matrix);
+              setTimeout(() => {
+                mf.moveToLeftEnd();
+                mf.keystroke('Right');
+              }, 0);
+            }
+          }
+        });
         span._mqInstance = mf;
         if (initialLatex) mf.latex(initialLatex);
       }
