@@ -295,6 +295,18 @@
     }
     .mq-editable-field:focus { border-color: #4285f4 !important; box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.2) !important; }
 
+    .matrix-editor {
+      border-collapse: collapse;
+      display: inline-table;
+      margin: 2px;
+    }
+    .matrix-editor td {
+      border: 1px solid #888;
+      min-width: 20px;
+      padding: 2px;
+      text-align: center;
+    }
+
     .info-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 3000;
       display: flex; align-items: center; justify-content: center;
     }
@@ -1715,6 +1727,87 @@
           MathJax.typesetPromise([element]);
         }
       }
+
+      function createMatrixTable(rows, cols, values = []) {
+        const table = document.createElement('table');
+        table.className = 'matrix-editor';
+        table.dataset.rows = rows;
+        table.dataset.cols = cols;
+        const tbody = document.createElement('tbody');
+        for (let r = 0; r < rows; r++) {
+          const tr = document.createElement('tr');
+          for (let c = 0; c < cols; c++) {
+            const td = document.createElement('td');
+            td.contentEditable = 'true';
+            td.textContent = values[r] && values[r][c] ? values[r][c] : '';
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        table.addEventListener('focusout', (ev) => {
+          if (!table.contains(ev.relatedTarget)) finalizeMatrixTable(table);
+        });
+        return table;
+      }
+
+      function finalizeMatrixTable(table) {
+        const rows = parseInt(table.dataset.rows, 10);
+        const cols = parseInt(table.dataset.cols, 10);
+        const values = [];
+        const latexRows = Array.from(table.querySelectorAll('tr')).map(tr => {
+          const row = Array.from(tr.querySelectorAll('td')).map(td => {
+            const val = td.textContent.trim();
+            return val;
+          });
+          values.push(row);
+          return row.join(' & ');
+        }).join(' \\\\ ');
+        const span = document.createElement('span');
+        span.className = 'matrix';
+        span.dataset.rows = rows;
+        span.dataset.cols = cols;
+        span.dataset.values = values.map(r => r.join(',')).join('|');
+        const latex = `\\left(\\begin{matrix}${latexRows}\\end{matrix}\\right)`;
+        span.textContent = `$${latex}$`;
+        table.replaceWith(span);
+        if (window.MathJax && window.MathJax.typesetPromise) {
+          MathJax.typesetPromise([span]);
+        }
+      }
+
+      function tryInsertMatrix(ev, container) {
+        if (ev.key !== 'Enter' || ev.shiftKey) return false;
+        const sel = window.getSelection();
+        if (!sel.rangeCount) return false;
+        const range = sel.getRangeAt(0);
+        if (!container.contains(range.startContainer)) return false;
+        if (range.startContainer.parentElement && range.startContainer.parentElement.closest('table.matrix-editor')) return false;
+        const preRange = range.cloneRange();
+        preRange.setStart(container, 0);
+        const preceding = preRange.toString();
+        const match = preceding.match(/m(\d+)x(\d+)$/i);
+        if (!match) return false;
+        ev.preventDefault(); ev.stopPropagation();
+        const rows = parseInt(match[1], 10);
+        const cols = parseInt(match[2], 10);
+        const start = range.startOffset - match[0].length;
+        if (range.startContainer.nodeType === Node.TEXT_NODE && start >= 0) {
+          range.setStart(range.startContainer, start);
+        }
+        range.deleteContents();
+        const table = createMatrixTable(rows, cols);
+        range.insertNode(table);
+        const first = table.querySelector('td');
+        if (first) {
+          const newRange = document.createRange();
+          newRange.selectNodeContents(first);
+          newRange.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(newRange);
+        }
+        return true;
+      }
       function createTextarea(x, y, icon, targetLayer) {
         const textarea = document.createElement('div');
         textarea.contentEditable = 'true';
@@ -1730,6 +1823,26 @@
         }
         document.body.appendChild(textarea);
         textarea.focus();
+
+        textarea.addEventListener('click', (ev) => {
+          const span = ev.target.closest('span.matrix');
+          if (span) {
+            const rows = parseInt(span.dataset.rows, 10);
+            const cols = parseInt(span.dataset.cols, 10);
+            const values = (span.dataset.values || '').split('|').map(r => r.split(','));
+            const table = createMatrixTable(rows, cols, values);
+            span.replaceWith(table);
+            const first = table.querySelector('td');
+            if (first) {
+              const sel = window.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(first);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
+          }
+        });
 
         textarea.addEventListener('keydown', (ev) => {
           if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
@@ -1748,6 +1861,7 @@
             setTimeout(() => { span._mqInstance.focus(); }, 10);
             return;
           }
+          if (tryInsertMatrix(ev, textarea)) return;
           if (ev.key === 'Escape') {
             ev.preventDefault(); ev.stopPropagation(); document.body.removeChild(textarea); return;
           }
@@ -1755,6 +1869,7 @@
 
         textarea.addEventListener('blur', (ev) => {
           if (ev.relatedTarget && ev.relatedTarget.closest('.note-textarea')) return;
+          textarea.querySelectorAll('table.matrix-editor').forEach(tbl => finalizeMatrixTable(tbl));
           const tempDiv = textarea.cloneNode(true);
           const origSpans = textarea.querySelectorAll('span.math-field');
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
@@ -1783,6 +1898,14 @@
         tempDiv.innerHTML = content;
 
         if (stripDelimiters) {
+          tempDiv.querySelectorAll('span.matrix').forEach(span => {
+            const rows = parseInt(span.dataset.rows, 10);
+            const cols = parseInt(span.dataset.cols, 10);
+            const values = (span.dataset.values || '').split('|').map(r => r.split(','));
+            const table = createMatrixTable(rows, cols, values);
+            span.replaceWith(table);
+          });
+
           // Convert $...$ into editable math-field spans
           const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT);
           const textNodes = [];
@@ -2683,6 +2806,25 @@
       auxInfo.addEventListener('click', () => {
         alert('Editor de fórmulas basado en MathQuill');
       });
+      auxEditor.addEventListener('click', (ev) => {
+        const span = ev.target.closest('span.matrix');
+        if (span) {
+          const rows = parseInt(span.dataset.rows, 10);
+          const cols = parseInt(span.dataset.cols, 10);
+          const values = (span.dataset.values || '').split('|').map(r => r.split(','));
+          const table = createMatrixTable(rows, cols, values);
+          span.replaceWith(table);
+          const first = table.querySelector('td');
+          if (first) {
+            const sel = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(first);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        }
+      });
       auxEditor.addEventListener('keydown', (ev) => {
         if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
           ev.preventDefault(); ev.stopPropagation();
@@ -2699,6 +2841,8 @@
           sel.removeAllRanges(); sel.addRange(range);
           enhanceMathField(span);
           setTimeout(() => { span._mqInstance.focus(); }, 10);
+        } else {
+          tryInsertMatrix(ev, auxEditor);
         }
       });
 
