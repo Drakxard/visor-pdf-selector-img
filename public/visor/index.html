@@ -1821,6 +1821,25 @@
         const mf = MQ.MathField(span, { spaceBehavesLikeTab: true, handlers: { edit: () => {} } });
         span._mqInstance = mf;
         if (initialLatex) mf.latex(initialLatex);
+
+        span.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            const current = mf.latex();
+            const match = current.match(/^m(\d+)x(\d+)$/i);
+            if (match) {
+              ev.preventDefault();
+              const rows = parseInt(match[1], 10);
+              const cols = parseInt(match[2], 10);
+              if (rows > 0 && cols > 0) {
+                const rowStr = Array.from({ length: cols }, () => '').join(' & ');
+                const matrixBody = Array.from({ length: rows }, () => rowStr).join(' \\\\ ');
+                mf.latex(`\\begin{bmatrix}${matrixBody}\\end{bmatrix}`);
+                mf.focus();
+                mf.moveToLeftEnd();
+              }
+            }
+          }
+        });
       }
       function initMathFields(root = document) {
         root.querySelectorAll('span.math-field').forEach(enhanceMathField);
