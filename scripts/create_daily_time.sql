@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS daily_time (
+  date DATE PRIMARY KEY,
+  weekday TEXT NOT NULL,
+  minutes INTEGER NOT NULL DEFAULT 0
+);
