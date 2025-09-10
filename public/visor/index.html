@@ -1454,6 +1454,15 @@
       function isPdf(name) { return name.toLowerCase().endsWith('.pdf'); }
       function supportsDirPicker() { return 'showDirectoryPicker' in window; }
       function supportsFileSystemAccess() { return 'showDirectoryPicker' in window; }
+      function getLastPdfIndex(entries) {
+        const lastName = localStorage.getItem('lastPdfName');
+        if (lastName) {
+          const found = entries.findIndex(e => e.name === lastName);
+          if (found >= 0) return found;
+        }
+        const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
+        return !isNaN(lastIdx) && lastIdx < entries.length ? lastIdx : 0;
+      }
 
       pdfFolderBtn.addEventListener('click', async () => {
         try {
@@ -1469,8 +1478,8 @@
           list.sort((a,b) => naturalCompare(a.name,b.name));
           pdfEntries = list; startBtn.disabled = false;
           showToast(`Listados ${pdfEntries.length} PDFs`, 'success');
-          const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
-          await loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
+          const idxToLoad = getLastPdfIndex(pdfEntries);
+          await loadPdfFromEntry(idxToLoad, 'first');
         } catch (e) {
           if (e && e.name === 'AbortError') return;
           showToast('No se pudo acceder a la carpeta de PDFs', 'error');
@@ -1488,8 +1497,8 @@
         pdfEntries = list; pdfDirectoryHandle = null;
         startBtn.disabled = false;
         showToast(`Listados ${pdfEntries.length} PDFs (fallback)`, 'success');
-        const lastIdx = parseInt(localStorage.getItem('lastPdfIndex') || '0', 10);
-        loadPdfFromEntry(!isNaN(lastIdx) && lastIdx < pdfEntries.length ? lastIdx : 0, 'first');
+        const idxToLoad = getLastPdfIndex(pdfEntries);
+        loadPdfFromEntry(idxToLoad, 'first');
       });
 
       startBtn.addEventListener('click', async () => {
