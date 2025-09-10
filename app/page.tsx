@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
@@ -121,12 +121,109 @@ export default function Home() {
   const [darkModeStart, setDarkModeStart] = useState(19)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
+  const [timerRunning, setTimerRunning] = useState(false)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [todaySeconds, setTodaySeconds] = useState(0)
+  const [currentDate, setCurrentDate] = useState(
+    new Date().toISOString().split('T')[0],
+  )
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  const formatTime = (sec: number) => {
+    const h = Math.floor(sec / 3600)
+      .toString()
+      .padStart(2, '0')
+    const m = Math.floor((sec % 3600) / 60)
+      .toString()
+      .padStart(2, '0')
+    return `${h}:${m}`
+  }
+
+  const sendTime = async (sec: number) => {
+    if (sec <= 0) return
+    try {
+      const res = await fetch('/api/time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seconds: sec }),
+      })
+      const data = await res.json()
+      if (typeof data.seconds === 'number') {
+        setTodaySeconds(data.seconds)
+      }
+    } catch (err) {
+      console.error('sendTime error', err)
+    }
+  }
+
+  const pauseTimer = useCallback(() => {
+    setTimerRunning(false)
+    if (elapsedSeconds > 0) {
+      sendTime(elapsedSeconds)
+      setElapsedSeconds(0)
+    }
+  }, [elapsedSeconds])
+
+  useEffect(() => {
+    const fetchToday = async () => {
+      try {
+        const res = await fetch('/api/time')
+        const data = await res.json()
+        if (typeof data.seconds === 'number') setTodaySeconds(data.seconds)
+      } catch (err) {
+        console.error('fetchToday error', err)
+      }
+    }
+    fetchToday()
+  }, [])
+
+  useEffect(() => {
+    if (!timerRunning || document.visibilityState !== 'visible') return
+    const id = window.setInterval(() => {
+      setElapsedSeconds((s) => s + 1)
+      setTodaySeconds((s) => s + 1)
+    }, 1000)
+    return () => window.clearInterval(id)
+  }, [timerRunning])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'c' && viewerOpen) {
+        e.preventDefault()
+        if (timerRunning) {
+          pauseTimer()
+        } else {
+          const todayStr = new Date().toISOString().split('T')[0]
+          if (todayStr !== currentDate) {
+            setCurrentDate(todayStr)
+            setTodaySeconds(0)
+          }
+          setTimerRunning(true)
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [viewerOpen, timerRunning, currentDate, pauseTimer])
+
+  useEffect(() => {
+    const vis = () => {
+      if (document.visibilityState !== 'visible' && timerRunning) {
+        pauseTimer()
+      }
+    }
+    document.addEventListener('visibilitychange', vis)
+    return () => document.removeEventListener('visibilitychange', vis)
+  }, [timerRunning, pauseTimer])
+
+  useEffect(() => {
+    if (!viewerOpen && timerRunning) pauseTimer()
+  }, [viewerOpen, timerRunning, pauseTimer])
 
   const applyTheme = (start: number) => {
     const hour = new Date().getHours()
@@ -1065,9 +1162,12 @@ useEffect(() => {
           {viewerOpen ? (
             !pdfFullscreen && (
               <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
-                <span className="truncate" title={currentPdf?.file.name}>
-                  {currentPdf?.file.name}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="truncate" title={currentPdf?.file.name}>
+                    {currentPdf?.file.name}
+                  </span>
+                  <span>{formatTime(elapsedSeconds)}</span>
+                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={() => {
@@ -1115,6 +1215,7 @@ useEffect(() => {
                   >
                     ✕
                   </button>
+                  <span>Hoy: {formatTime(todaySeconds)}</span>
                 </div>
               </div>
             )
