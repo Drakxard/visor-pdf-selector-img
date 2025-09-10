@@ -134,7 +134,7 @@ export default function Home() {
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
-  const formatTime = (sec: number) => {
+  const formatHM = (sec: number) => {
     const h = Math.floor(sec / 3600)
       .toString()
       .padStart(2, '0')
@@ -142,6 +142,19 @@ export default function Home() {
       .toString()
       .padStart(2, '0')
     return `${h}:${m}`
+  }
+
+  const formatHMS = (sec: number) => {
+    const h = Math.floor(sec / 3600)
+      .toString()
+      .padStart(2, '0')
+    const m = Math.floor((sec % 3600) / 60)
+      .toString()
+      .padStart(2, '0')
+    const s = Math.floor(sec % 60)
+      .toString()
+      .padStart(2, '0')
+    return `${h}:${m}:${s}`
   }
 
   const sendTime = async (sec: number) => {
@@ -172,6 +185,7 @@ export default function Home() {
   const toggleTimer = useCallback(() => {
     if (timerRunning) {
       pauseTimer()
+      setToast({ type: 'success', text: 'Cronómetro pausado' })
     } else {
       const todayStr = new Date().toISOString().split('T')[0]
       if (todayStr !== currentDate) {
@@ -179,7 +193,10 @@ export default function Home() {
         setTodaySeconds(0)
       }
       setTimerRunning(true)
+      setToast({ type: 'success', text: 'Cronómetro iniciado' })
     }
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [timerRunning, pauseTimer, currentDate])
 
   useEffect(() => {
@@ -1180,7 +1197,7 @@ useEffect(() => {
                   <span className="truncate" title={currentPdf?.file.name}>
                     {currentPdf?.file.name}
                   </span>
-                  <span>{formatTime(elapsedSeconds)}</span>
+                  <span>{formatHMS(elapsedSeconds)}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -1229,7 +1246,7 @@ useEffect(() => {
                   >
                     ✕
                   </button>
-                  <span>Hoy: {formatTime(todaySeconds)}</span>
+                  <span>Hoy: {formatHM(todaySeconds)}</span>
                 </div>
               </div>
             )
