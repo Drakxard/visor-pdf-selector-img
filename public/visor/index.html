@@ -631,6 +631,11 @@
           toggleTheme();
         } else if (e.data.type === 'toggleFullscreen') {
           toggleFullscreen();
+        } else if (e.data.type === 'timerStatus') {
+          showToast(
+            e.data.running ? 'Cronómetro iniciado' : 'Cronómetro pausado',
+            'info',
+          );
         }
       });
 
@@ -658,6 +663,14 @@
           e.preventDefault();
           zoomLevel = 1;
           applyZoom();
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'c') {
+          try {
+            window.parent.postMessage({ type: 'toggleTimer' }, '*');
+            e.preventDefault();
+          } catch {}
         }
       });
       const dropZone = document.getElementById('drop-zone');
