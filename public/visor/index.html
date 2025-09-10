@@ -2713,7 +2713,7 @@
         document.querySelectorAll('.draw-canvas').forEach(canvas => {
           const data = localStorage.getItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
           if (data) {
-            const ctx = canvas.getContext('2d');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
             const img = new Image();
             img.onload = () => ctx.drawImage(img,0,0,canvas.width,canvas.height);
             img.src = data;
@@ -2728,7 +2728,7 @@
       function clearAllDrawings() {
         if (!currentPdfKey) return;
         document.querySelectorAll('.draw-canvas').forEach(canvas => {
-          const ctx = canvas.getContext('2d');
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           canvas._history = [];
           localStorage.removeItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
@@ -2739,7 +2739,7 @@
         if (!drawMode) return;
         isDrawing = true;
         const canvas = e.target;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         ctx.globalCompositeOperation = eraseMode ? 'destination-out' : 'source-over';
         ctx.strokeStyle = eraseMode ? 'rgba(0,0,0,1)' : brushColor;
         ctx.lineWidth = brushWidth;
@@ -2777,7 +2777,7 @@
 
       function undoLastStroke() {
         if (!currentCanvas || !currentCanvas._history || !currentCanvas._history.length) return;
-        const ctx = currentCanvas.getContext('2d');
+        const ctx = currentCanvas.getContext('2d', { willReadFrequently: true });
         const imageData = currentCanvas._history.pop();
         ctx.putImageData(imageData, 0, 0);
         saveDrawing(currentCanvas);
