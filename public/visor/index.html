@@ -660,6 +660,14 @@
           applyZoom();
         }
       });
+      document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'c') {
+          try {
+            window.parent.postMessage({ type: 'toggleTimer' }, '*');
+            e.preventDefault();
+          } catch {}
+        }
+      });
       const dropZone = document.getElementById('drop-zone');
       const uploadArea = document.getElementById('upload-area');
       const fileInput = document.getElementById('file-input');

@@ -169,6 +169,19 @@ export default function Home() {
     }
   }, [elapsedSeconds])
 
+  const toggleTimer = useCallback(() => {
+    if (timerRunning) {
+      pauseTimer()
+    } else {
+      const todayStr = new Date().toISOString().split('T')[0]
+      if (todayStr !== currentDate) {
+        setCurrentDate(todayStr)
+        setTodaySeconds(0)
+      }
+      setTimerRunning(true)
+    }
+  }, [timerRunning, pauseTimer, currentDate])
+
   useEffect(() => {
     const fetchToday = async () => {
       try {
@@ -195,21 +208,22 @@ export default function Home() {
     const handler = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === 'c' && viewerOpen) {
         e.preventDefault()
-        if (timerRunning) {
-          pauseTimer()
-        } else {
-          const todayStr = new Date().toISOString().split('T')[0]
-          if (todayStr !== currentDate) {
-            setCurrentDate(todayStr)
-            setTodaySeconds(0)
-          }
-          setTimerRunning(true)
-        }
+        toggleTimer()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [viewerOpen, timerRunning, currentDate, pauseTimer])
+  }, [viewerOpen, toggleTimer])
+
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === 'toggleTimer' && viewerOpen) {
+        toggleTimer()
+      }
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [viewerOpen, toggleTimer])
 
   useEffect(() => {
     const vis = () => {
