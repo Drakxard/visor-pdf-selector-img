@@ -588,12 +588,12 @@ useEffect(() => {
 
   // remember last opened file
   useEffect(() => {
-    if (currentPdf) {
+    if (currentPdf && restored) {
       localStorage.setItem('lastPath', currentPdf.path)
       localStorage.setItem('lastWeek', String(currentPdf.week))
       localStorage.setItem('lastSubject', currentPdf.subject)
     }
-  }, [currentPdf])
+  }, [currentPdf, restored])
 
   // listen for messages from the PDF viewer
   useEffect(() => {
