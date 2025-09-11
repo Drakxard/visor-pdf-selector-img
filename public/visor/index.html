@@ -1820,6 +1820,7 @@
           sel.removeAllRanges();
           sel.addRange(newRange);
         }
+        if (container._saveState) container._saveState();
         return true;
       }
       function createTextarea(x, y, icon, targetLayer) {
@@ -1837,6 +1838,32 @@
         }
         document.body.appendChild(textarea);
         textarea.focus();
+
+        const undoStack = [];
+        let undoIndex = -1;
+        let isRestoring = false;
+        function saveState() {
+          if (isRestoring) return;
+          const tempDiv = textarea.cloneNode(true);
+          const origSpans = textarea.querySelectorAll('span.math-field');
+          const cloneSpans = tempDiv.querySelectorAll('span.math-field');
+          origSpans.forEach((orig, idx) => {
+            const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
+            cloneSpans[idx].textContent = `$${latex}$`;
+          });
+          const html = tempDiv.innerHTML;
+          undoStack.splice(undoIndex + 1);
+          undoStack.push(html);
+          undoIndex = undoStack.length - 1;
+        }
+        function restoreState(html) {
+          isRestoring = true;
+          renderContentInElement(textarea, processNoteContent(html, true), true);
+          isRestoring = false;
+        }
+        textarea._saveState = saveState;
+        saveState();
+        textarea.addEventListener('input', saveState);
 
         textarea.addEventListener('click', (ev) => {
           const span = ev.target.closest('span.matrix');
@@ -1859,6 +1886,22 @@
         });
 
         textarea.addEventListener('keydown', (ev) => {
+          if (ev.ctrlKey && ev.key.toLowerCase() === 'z') {
+            ev.preventDefault(); ev.stopPropagation();
+            if (undoIndex > 0) {
+              undoIndex--;
+              restoreState(undoStack[undoIndex]);
+            }
+            return;
+          }
+          if (ev.ctrlKey && (ev.key.toLowerCase() === 'y' || (ev.shiftKey && ev.key.toLowerCase() === 'z'))) {
+            ev.preventDefault(); ev.stopPropagation();
+            if (undoIndex < undoStack.length - 1) {
+              undoIndex++;
+              restoreState(undoStack[undoIndex]);
+            }
+            return;
+          }
           if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
             ev.preventDefault(); ev.stopPropagation();
             const sel = window.getSelection();
@@ -1873,6 +1916,7 @@
             sel.removeAllRanges(); sel.addRange(range);
             enhanceMathField(span);
             setTimeout(() => { span._mqInstance.focus(); }, 10);
+            saveState();
             return;
           }
           if (tryInsertMatrix(ev, textarea)) return;
@@ -1955,7 +1999,15 @@
       function enhanceMathField(span) {
         if (span._mqInstance) return;
         const initialLatex = span.textContent; span.textContent = '';
-        const mf = MQ.MathField(span, { spaceBehavesLikeTab: true, handlers: { edit: () => {} } });
+        const mf = MQ.MathField(span, {
+          spaceBehavesLikeTab: true,
+          handlers: {
+            edit: () => {
+              const ta = span.closest('.note-textarea');
+              if (ta && ta._saveState) ta._saveState();
+            }
+          }
+        });
         span._mqInstance = mf;
         if (initialLatex) mf.latex(initialLatex);
 
