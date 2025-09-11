@@ -123,11 +123,13 @@ export default function Home() {
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
   const [timerRunning, setTimerRunning] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const unsentRef = useRef(0)
   const [todaySeconds, setTodaySeconds] = useState(0)
   const [currentDate, setCurrentDate] = useState(
     new Date().toISOString().split('T')[0],
   )
   const viewerRef = useRef<HTMLIFrameElement>(null)
+  const initialTheme = useRef(theme)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const [restored, setRestored] = useState(false)
@@ -157,7 +159,7 @@ export default function Home() {
     return `${h}:${m}:${s}`
   }
 
-  const sendTime = async (sec: number) => {
+  const sendTime = useCallback(async (sec: number) => {
     if (sec <= 0) return
     try {
       const res = await fetch('/api/time', {
@@ -172,15 +174,15 @@ export default function Home() {
     } catch (err) {
       console.error('sendTime error', err)
     }
-  }
+  }, [])
 
   const pauseTimer = useCallback(() => {
     setTimerRunning(false)
-    if (elapsedSeconds > 0) {
-      sendTime(elapsedSeconds)
-      setElapsedSeconds(0)
+    if (unsentRef.current > 0) {
+      sendTime(unsentRef.current)
+      unsentRef.current = 0
     }
-  }, [elapsedSeconds])
+  }, [sendTime])
 
   const toggleTimer = useCallback(() => {
     if (timerRunning) {
@@ -191,6 +193,8 @@ export default function Home() {
       if (todayStr !== currentDate) {
         setCurrentDate(todayStr)
         setTodaySeconds(0)
+        setElapsedSeconds(0)
+        unsentRef.current = 0
       }
       setTimerRunning(true)
       setToast({ type: 'success', text: 'Cronómetro iniciado' })
@@ -217,6 +221,7 @@ export default function Home() {
     const id = window.setInterval(() => {
       setElapsedSeconds((s) => s + 1)
       setTodaySeconds((s) => s + 1)
+      unsentRef.current += 1
     }, 1000)
     return () => window.clearInterval(id)
   }, [timerRunning])
@@ -243,6 +248,13 @@ export default function Home() {
   }, [viewerOpen, toggleTimer])
 
   useEffect(() => {
+    viewerRef.current?.contentWindow?.postMessage(
+      { type: 'theme', theme },
+      '*',
+    )
+  }, [theme])
+
+  useEffect(() => {
     const vis = () => {
       if (document.visibilityState !== 'visible' && timerRunning) {
         pauseTimer()
@@ -253,7 +265,11 @@ export default function Home() {
   }, [timerRunning, pauseTimer])
 
   useEffect(() => {
-    if (!viewerOpen && timerRunning) pauseTimer()
+    if (!viewerOpen) {
+      if (timerRunning) pauseTimer()
+      setElapsedSeconds(0)
+      unsentRef.current = 0
+    }
   }, [viewerOpen, timerRunning, pauseTimer])
 
   const applyTheme = (start: number) => {
@@ -1288,7 +1304,9 @@ useEffect(() => {
                   currentPdf.isPdf
                     ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
                         currentPdf.file.name,
-                      )}&key=${encodeURIComponent(currentPdf.path)}`
+                      )}&key=${encodeURIComponent(currentPdf.path)}&theme=${encodeURIComponent(
+                        initialTheme.current,
+                      )}`
                     : embedUrl!
                 }
                 className="w-full h-full border-0"
