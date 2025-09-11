@@ -1615,7 +1615,7 @@
           return;
         }
 
-        if (e.ctrlKey && e.key.toLowerCase() === 'z' && !e.shiftKey && !e.altKey) {
+        if (!isEditing && e.ctrlKey && e.key.toLowerCase() === 'z' && !e.shiftKey && !e.altKey) {
           e.preventDefault();
           undoLastStroke();
           return;
