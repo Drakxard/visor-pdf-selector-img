@@ -131,6 +131,7 @@ export default function Home() {
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
@@ -183,22 +184,26 @@ export default function Home() {
     }
   }, [unsentSeconds])
 
+  const startTimer = useCallback(() => {
+    const todayStr = new Date().toISOString().split('T')[0]
+    if (todayStr !== currentDate) {
+      setCurrentDate(todayStr)
+      setTodaySeconds(0)
+    }
+    setTimerRunning(true)
+  }, [currentDate])
+
   const toggleTimer = useCallback(() => {
     if (timerRunning) {
       pauseTimer()
       setToast({ type: 'success', text: 'Cronómetro pausado' })
     } else {
-      const todayStr = new Date().toISOString().split('T')[0]
-      if (todayStr !== currentDate) {
-        setCurrentDate(todayStr)
-        setTodaySeconds(0)
-      }
-      setTimerRunning(true)
+      startTimer()
       setToast({ type: 'success', text: 'Cronómetro iniciado' })
     }
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-  }, [timerRunning, pauseTimer, currentDate])
+  }, [timerRunning, pauseTimer, startTimer])
 
   useEffect(() => {
     const fetchToday = async () => {
@@ -246,13 +251,19 @@ export default function Home() {
 
   useEffect(() => {
     const vis = () => {
-      if (document.visibilityState !== 'visible' && timerRunning) {
-        pauseTimer()
+      if (document.visibilityState === 'hidden') {
+        if (timerRunning) {
+          autoPausedRef.current = true
+          pauseTimer()
+        }
+      } else if (document.visibilityState === 'visible' && autoPausedRef.current) {
+        autoPausedRef.current = false
+        startTimer()
       }
     }
     document.addEventListener('visibilitychange', vis)
     return () => document.removeEventListener('visibilitychange', vis)
-  }, [timerRunning, pauseTimer])
+  }, [timerRunning, pauseTimer, startTimer])
 
   useEffect(() => {
     if (!viewerOpen) {
