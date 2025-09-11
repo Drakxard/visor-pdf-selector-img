@@ -660,6 +660,14 @@
           applyZoom();
         }
       });
+      document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'c') {
+          try {
+            window.parent.postMessage({ type: 'toggleTimer' }, '*');
+            e.preventDefault();
+          } catch {}
+        }
+      });
       const dropZone = document.getElementById('drop-zone');
       const uploadArea = document.getElementById('upload-area');
       const fileInput = document.getElementById('file-input');
@@ -726,18 +734,22 @@
           themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
         }
       }
-      function applyAutoTheme() {
-        const hour = new Date().getHours();
-        if (hour >= 6 && hour < 18) {
-          document.body.classList.add('light-mode');
-        } else {
-          document.body.classList.remove('light-mode');
-        }
+      const params = new URLSearchParams(window.location.search);
+      const initialTheme = params.get('theme');
+      if (initialTheme) {
+        document.body.classList.toggle('light-mode', initialTheme === 'light');
         if (themeToggleBtn) {
-          themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
+          themeToggleBtn.textContent = initialTheme === 'light' ? '🌞' : '🌙';
         }
       }
-      applyAutoTheme();
+      window.addEventListener('message', (e) => {
+        if (e.data?.type === 'theme') {
+          document.body.classList.toggle('light-mode', e.data.theme === 'light');
+          if (themeToggleBtn) {
+            themeToggleBtn.textContent = e.data.theme === 'light' ? '🌞' : '🌙';
+          }
+        }
+      });
       themeToggleBtn?.addEventListener('click', toggleTheme);
 
       // Persistencia de notas
