@@ -629,6 +629,15 @@
           applyZoom();
         } else if (e.data.type === 'toggleTheme') {
           toggleTheme();
+        } else if (e.data.type === 'setTheme') {
+          if (e.data.theme === 'light') {
+            document.body.classList.add('light-mode');
+          } else {
+            document.body.classList.remove('light-mode');
+          }
+          if (themeToggleBtn) {
+            themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
+          }
         } else if (e.data.type === 'toggleFullscreen') {
           toggleFullscreen();
         }
@@ -658,6 +667,14 @@
           e.preventDefault();
           zoomLevel = 1;
           applyZoom();
+        }
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 'c') {
+          try {
+            window.parent.postMessage({ type: 'toggleTimer' }, '*');
+            e.preventDefault();
+          } catch {}
         }
       });
       const dropZone = document.getElementById('drop-zone');
@@ -726,18 +743,6 @@
           themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
         }
       }
-      function applyAutoTheme() {
-        const hour = new Date().getHours();
-        if (hour >= 6 && hour < 18) {
-          document.body.classList.add('light-mode');
-        } else {
-          document.body.classList.remove('light-mode');
-        }
-        if (themeToggleBtn) {
-          themeToggleBtn.textContent = document.body.classList.contains('light-mode') ? '🌞' : '🌙';
-        }
-      }
-      applyAutoTheme();
       themeToggleBtn?.addEventListener('click', toggleTheme);
 
       // Persistencia de notas
