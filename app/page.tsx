@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, useMemo } from "react"
 import { useTheme } from "next-themes"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
@@ -86,8 +86,6 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState(1)
-  const [unlockedWeeks, setUnlockedWeeks] = useState(1)
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
@@ -135,6 +133,11 @@ export default function Home() {
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  const weekList = useMemo(
+    () => Object.keys(fileTree).map(Number).sort((a, b) => a - b),
+    [fileTree],
+  )
 
   const formatHM = (sec: number) => {
     const h = Math.floor(sec / 3600)
@@ -299,12 +302,10 @@ export default function Home() {
     if (cfg) {
       const text = await cfg.text()
       const data = JSON.parse(text)
-      setWeeks(data.weeks || 1)
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
       setOrders(data.orders || {})
-      localStorage.setItem("weeks", String(data.weeks || 1))
       localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
     }
@@ -356,17 +357,6 @@ export default function Home() {
     }
   }
 
-  const unlockNextWeek = () => {
-    setUnlockedWeeks((prev) => {
-      const next = Math.min(weeks, prev + 1)
-      localStorage.setItem("unlockedWeeks", String(next))
-      setToast({ type: 'success', text: `Semana ${next} desbloqueada` })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-      return next
-    })
-  }
-
   useEffect(() => {
     if (step === 1) {
       ;(async () => {
@@ -404,11 +394,6 @@ export default function Home() {
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
-    } else {
-      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
-      setWeeks(storedWeeks)
-      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
-      setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
 
@@ -595,14 +580,8 @@ useEffect(() => {
         }
       }
     }
-    for (let w = 1; w <= weeks; w++) {
-      if (!tree[w]) tree[w] = {}
-      names.forEach((n) => {
-        if (!tree[w][n]) tree[w][n] = []
-      })
-    }
     setFileTree(tree)
-  }, [dirFiles, orders, weeks, names, videos])
+  }, [dirFiles, orders, videos])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -1030,19 +1009,11 @@ useEffect(() => {
           <>
             <h2 className="text-xl">Semanas</h2>
             <ul className="space-y-1">
-              {Array.from({ length: weeks }, (_, i) => {
-                const wk = i + 1
-                const locked = wk > unlockedWeeks
-                return (
-                  <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
-                    {locked ? (
-                      <>Semana {wk} 🔒</>
-                    ) : (
-                      <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
-                    )}
-                  </li>
-                )
-              })}
+              {weekList.map((wk) => (
+                <li key={wk} className="font-bold">
+                  <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
+                </li>
+              ))}
             </ul>
           </>
         )}
@@ -1387,7 +1358,6 @@ useEffect(() => {
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
           <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
-          <button className="block w-full text-left" onClick={unlockNextWeek}>Unlock Next Semana</button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
       )}
