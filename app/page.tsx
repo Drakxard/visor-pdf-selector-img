@@ -86,8 +86,9 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState(1)
-  const [unlockedWeeks, setUnlockedWeeks] = useState(1)
+  const [weeks, setWeeks] = useState<number[]>([])
+  const [rootHandle, setRootHandle] =
+    useState<FileSystemDirectoryHandle | null>(null)
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
@@ -299,12 +300,10 @@ export default function Home() {
     if (cfg) {
       const text = await cfg.text()
       const data = JSON.parse(text)
-      setWeeks(data.weeks || 1)
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
       setOrders(data.orders || {})
-      localStorage.setItem("weeks", String(data.weeks || 1))
       localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
     }
@@ -345,6 +344,7 @@ export default function Home() {
     try {
       const handle = await (window as any).showDirectoryPicker()
       await saveHandle(handle)
+      setRootHandle(handle)
       const rawFiles = await readAllFiles(handle)
       const files = filterSystemFiles(rawFiles)
       setNames([])
@@ -356,17 +356,6 @@ export default function Home() {
     }
   }
 
-  const unlockNextWeek = () => {
-    setUnlockedWeeks((prev) => {
-      const next = Math.min(weeks, prev + 1)
-      localStorage.setItem("unlockedWeeks", String(next))
-      setToast({ type: 'success', text: `Semana ${next} desbloqueada` })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-      return next
-    })
-  }
-
   useEffect(() => {
     if (step === 1) {
       ;(async () => {
@@ -375,6 +364,21 @@ export default function Home() {
       })()
     }
   }, [step, dirFiles])
+
+  useEffect(() => {
+    if (!rootHandle) return
+    ;(async () => {
+      const weekNums = new Set<number>()
+      for await (const [name, handle] of (rootHandle as any).entries()) {
+        if (handle.kind !== 'directory') continue
+        if (name.toLowerCase() === 'system') continue
+        const match = name.match(/\d+/)
+        if (match) weekNums.add(parseInt(match[0], 10))
+      }
+      const list = Array.from(weekNums).sort((a, b) => a - b)
+      setWeeks(list)
+    })()
+  }, [rootHandle])
 
   // complete setup automatically when config is checked
   useEffect(() => {
@@ -404,11 +408,6 @@ export default function Home() {
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
-    } else {
-      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
-      setWeeks(storedWeeks)
-      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
-      setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
 
@@ -423,6 +422,7 @@ export default function Home() {
       try {
         const handle = await loadHandle()
         if (handle && (await verifyPermission(handle))) {
+          setRootHandle(handle)
           const raw = await readAllFiles(handle)
           const files = filterSystemFiles(raw)
           setDirFiles(files)
@@ -595,12 +595,12 @@ useEffect(() => {
         }
       }
     }
-    for (let w = 1; w <= weeks; w++) {
+    weeks.forEach((w) => {
       if (!tree[w]) tree[w] = {}
       names.forEach((n) => {
         if (!tree[w][n]) tree[w][n] = []
       })
-    }
+    })
     setFileTree(tree)
   }, [dirFiles, orders, weeks, names, videos])
 
@@ -1030,19 +1030,11 @@ useEffect(() => {
           <>
             <h2 className="text-xl">Semanas</h2>
             <ul className="space-y-1">
-              {Array.from({ length: weeks }, (_, i) => {
-                const wk = i + 1
-                const locked = wk > unlockedWeeks
-                return (
-                  <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
-                    {locked ? (
-                      <>Semana {wk} 🔒</>
-                    ) : (
-                      <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
-                    )}
-                  </li>
-                )
-              })}
+              {weeks.map((wk) => (
+                <li key={wk} className="font-bold">
+                  <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
+                </li>
+              ))}
             </ul>
           </>
         )}
@@ -1387,7 +1379,6 @@ useEffect(() => {
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
           <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
-          <button className="block w-full text-left" onClick={unlockNextWeek}>Unlock Next Semana</button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
       )}
