@@ -669,12 +669,21 @@
           applyZoom();
         }
       });
+      // document.addEventListener('keydown', (e) => {
+      //   if (e.key.toLowerCase() === 'c') {
+      //     try {
+      //       window.parent.postMessage({ type: 'toggleTimer' }, '*');
+      //       e.preventDefault();
+      //     } catch {}
+      //   }
+      // });
       document.addEventListener('keydown', (e) => {
-        if (e.key.toLowerCase() === 'c') {
-          try {
-            window.parent.postMessage({ type: 'toggleTimer' }, '*');
-            e.preventDefault();
-          } catch {}
+        if (e.key.toLowerCase() === 'a' && drawMode && !writeMode) {
+          const ae = document.activeElement;
+          if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+          e.preventDefault();
+          writeMode = true;
+          showToast('Modo escritura: clic para ubicar texto');
         }
       });
       const dropZone = document.getElementById('drop-zone');
@@ -826,6 +835,7 @@
       let shadowOffset = 0;
       let brushOpacity = 1;
       let eraseMode = false;
+      let writeMode = false;
 
       const BRUSH_SETTINGS_KEY = 'draw-settings';
 
@@ -2742,6 +2752,27 @@
 
       function startDraw(e) {
         if (!drawMode) return;
+        if (writeMode) {
+          const canvas = e.target;
+          const text = prompt('Texto:');
+          if (text) {
+            const ctx = canvas.getContext('2d');
+            ctx.save();
+            ctx.globalCompositeOperation = 'source-over';
+            ctx.fillStyle = brushColor;
+            ctx.globalAlpha = brushOpacity;
+            ctx.shadowColor = shadowColor;
+            ctx.shadowBlur = shadowWidth;
+            ctx.shadowOffsetX = shadowOffset;
+            ctx.shadowOffsetY = shadowOffset;
+            ctx.font = `${brushWidth * 5}px sans-serif`;
+            ctx.fillText(text, e.offsetX, e.offsetY);
+            ctx.restore();
+            saveDrawing(canvas);
+          }
+          writeMode = false;
+          return;
+        }
         isDrawing = true;
         const canvas = e.target;
         const ctx = canvas.getContext('2d');
