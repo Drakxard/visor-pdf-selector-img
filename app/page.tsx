@@ -8,7 +8,7 @@ const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 type PdfFile = {
   file: File
   path: string
-  week: number
+  week: string
   subject: string
   tableType: "theory" | "practice"
   isPdf: boolean
@@ -86,21 +86,21 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState(1)
+  const [weeks, setWeeks] = useState<string[]>([])
   const [dirFiles, setDirFiles] = useState<File[]>([])
-  const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
+  const [fileTree, setFileTree] = useState<Record<string, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
   const [queue, setQueue] = useState<PdfFile[]>([])
   const [queueIndex, setQueueIndex] = useState(0)
-  const [viewWeek, setViewWeek] = useState<number | null>(null)
+  const [viewWeek, setViewWeek] = useState<string | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [videos, setVideos] = useState<
     Record<
-      number,
+      string,
       Record<
         string,
         { theory: { name: string; url: string }[]; practice: { name: string; url: string }[] }
@@ -110,7 +110,7 @@ export default function Home() {
   const [videoModalOpen, setVideoModalOpen] = useState(false)
   const [videoModalText, setVideoModalText] = useState("")
   const [videoModalTarget, setVideoModalTarget] = useState<
-    { week: number; subject: string; table: 'theory' | 'practice' } | null
+    { week: string; subject: string; table: 'theory' | 'practice' } | null
   >(null)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
@@ -363,14 +363,16 @@ export default function Home() {
   }, [step, dirFiles])
 
   useEffect(() => {
-    const weekNums = new Set<number>()
+    const dirs: string[] = []
     dirFiles.forEach((f) => {
-      const rel = ((f as any).webkitRelativePath || '') as string
-      const match = rel.match(/Semana\s*(\d+)/i)
-      if (match) weekNums.add(parseInt(match[1], 10))
+      const rel = ((f as any).webkitRelativePath || "") as string
+      const parts = rel.split("/")
+      if (parts.length > 1) {
+        const folder = parts[1]
+        if (folder && folder !== "system" && !dirs.includes(folder)) dirs.push(folder)
+      }
     })
-    const maxWeek = weekNums.size ? Math.max(...Array.from(weekNums)) : 1
-    setWeeks(maxWeek)
+    setWeeks(dirs)
   }, [dirFiles])
 
   // complete setup automatically when config is checked
@@ -530,18 +532,17 @@ useEffect(() => {
 
   // build tree from selected directory
   useEffect(() => {
-    const tree: Record<number, Record<string, PdfFile[]>> = {}
+    const tree: Record<string, Record<string, PdfFile[]>> = {}
     for (const file of dirFiles) {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
       if (parts.length >= 5) {
-        const weekPart = parts[1]
+        const week = parts[1]
         const subject = parts[2]
         const table = parts[3].toLowerCase().includes("pract")
           ? "practice"
           : "theory"
-        const week = parseInt(weekPart.replace(/\D/g, ""))
         if (!tree[week]) tree[week] = {}
         if (!tree[week][subject]) tree[week][subject] = []
         tree[week][subject].push({
@@ -555,7 +556,7 @@ useEffect(() => {
       }
     }
     for (const w in videos) {
-      const wk = Number(w)
+      const wk = w
       if (!tree[wk]) tree[wk] = {}
       for (const s in videos[wk]) {
         if (!tree[wk][s]) tree[wk][s] = []
@@ -587,7 +588,7 @@ useEffect(() => {
         }
       }
     }
-    for (let w = 1; w <= weeks; w++) {
+    for (const w of weeks) {
       if (!tree[w]) tree[w] = {}
       names.forEach((n) => {
         if (!tree[w][n]) tree[w][n] = []
@@ -642,7 +643,11 @@ useEffect(() => {
     const q: PdfFile[] = []
     stats.forEach((s) => {
       q.push(
-        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
+        ...s.pdfs.sort(
+          (a, b) =>
+            a.week.localeCompare(b.week) ||
+            a.file.name.localeCompare(b.file.name),
+        ),
       )
     })
     setQueue(q)
@@ -734,7 +739,7 @@ useEffect(() => {
   useEffect(() => {
     if (currentPdf) {
       localStorage.setItem('lastPath', currentPdf.path)
-      localStorage.setItem('lastWeek', String(currentPdf.week))
+      localStorage.setItem('lastWeek', currentPdf.week)
       localStorage.setItem('lastSubject', currentPdf.subject)
     }
   }, [currentPdf])
@@ -863,10 +868,10 @@ useEffect(() => {
     const content = `[InternetShortcut]\nURL=${data}\n`
     const file = new File([content], fileName, { type: 'text/plain' })
     Object.defineProperty(file, 'webkitRelativePath', {
-      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
+      value: `root/${viewWeek}/${viewSubject}/${category}/${fileName}`,
     })
     setDirFiles((prev) => [...prev, file])
-    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    const path = `${viewWeek}/${viewSubject}/${category}/${fileName}`
     const pdf: PdfFile = {
       file,
       path,
@@ -937,7 +942,7 @@ useEffect(() => {
   }
 
   const openVideoModal = (
-    week: number,
+    week: string,
     subject: string,
     table: 'theory' | 'practice',
   ) => {
@@ -968,7 +973,7 @@ useEffect(() => {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }
 
-  const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
+  const reorderPdf = (week: string, subject: string, index: number, delta: number) => {
     const arr = [...(fileTree[week]?.[subject] || [])]
     const target = index + delta
     if (target < 0 || target >= arr.length) return
@@ -979,7 +984,7 @@ useEffect(() => {
   }
 
   const removeVideo = (
-    week: number,
+    week: string,
     subject: string,
     table: 'theory' | 'practice',
     index: number,
@@ -1020,16 +1025,13 @@ useEffect(() => {
         )}
         {!viewWeek && (
           <>
-            <h2 className="text-xl">Semanas</h2>
+            <h2 className="text-xl">Carpetas</h2>
             <ul className="space-y-1">
-              {Array.from({ length: weeks }, (_, i) => {
-                const wk = i + 1
-                return (
-                  <li key={wk} className="font-bold">
-                    <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
-                  </li>
-                )
-              })}
+              {weeks.map((wk) => (
+                <li key={wk} className="font-bold">
+                  <button onClick={() => setViewWeek(wk)}>{wk}</button>
+                </li>
+              ))}
             </ul>
           </>
         )}
@@ -1038,7 +1040,7 @@ useEffect(() => {
             <button className="mb-2 underline" onClick={() => setViewWeek(null)}>
               ← Volver
             </button>
-            <h2 className="text-xl">Semana {viewWeek}</h2>
+            <h2 className="text-xl">{viewWeek}</h2>
             <ul className="space-y-1">
               {Object.entries(fileTree[viewWeek] || {})
                 .filter(([, files]) => files.length > 0)
