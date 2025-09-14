@@ -86,8 +86,7 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState(1)
-  const [unlockedWeeks, setUnlockedWeeks] = useState(1)
+  const [weeks, setWeeks] = useState<number[]>([])
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
@@ -299,12 +298,10 @@ export default function Home() {
     if (cfg) {
       const text = await cfg.text()
       const data = JSON.parse(text)
-      setWeeks(data.weeks || 1)
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
       setOrders(data.orders || {})
-      localStorage.setItem("weeks", String(data.weeks || 1))
       localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
     }
@@ -356,16 +353,6 @@ export default function Home() {
     }
   }
 
-  const unlockNextWeek = () => {
-    setUnlockedWeeks((prev) => {
-      const next = Math.min(weeks, prev + 1)
-      localStorage.setItem("unlockedWeeks", String(next))
-      setToast({ type: 'success', text: `Semana ${next} desbloqueada` })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-      return next
-    })
-  }
 
   useEffect(() => {
     if (step === 1) {
@@ -404,11 +391,6 @@ export default function Home() {
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
-    } else {
-      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
-      setWeeks(storedWeeks)
-      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
-      setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
 
@@ -539,6 +521,7 @@ useEffect(() => {
   // build tree from selected directory
   useEffect(() => {
     const tree: Record<number, Record<string, PdfFile[]>> = {}
+    const weekSet = new Set<number>()
     for (const file of dirFiles) {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
@@ -550,6 +533,7 @@ useEffect(() => {
           ? "practice"
           : "theory"
         const week = parseInt(weekPart.replace(/\D/g, ""))
+        weekSet.add(week)
         if (!tree[week]) tree[week] = {}
         if (!tree[week][subject]) tree[week][subject] = []
         tree[week][subject].push({
@@ -564,6 +548,7 @@ useEffect(() => {
     }
     for (const w in videos) {
       const wk = Number(w)
+      weekSet.add(wk)
       if (!tree[wk]) tree[wk] = {}
       for (const s in videos[wk]) {
         if (!tree[wk][s]) tree[wk][s] = []
@@ -595,14 +580,16 @@ useEffect(() => {
         }
       }
     }
-    for (let w = 1; w <= weeks; w++) {
+    const sortedWeeks = Array.from(weekSet).sort((a, b) => a - b)
+    for (const w of sortedWeeks) {
       if (!tree[w]) tree[w] = {}
       names.forEach((n) => {
         if (!tree[w][n]) tree[w][n] = []
       })
     }
+    setWeeks(sortedWeeks)
     setFileTree(tree)
-  }, [dirFiles, orders, weeks, names, videos])
+  }, [dirFiles, orders, names, videos])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -1030,19 +1017,11 @@ useEffect(() => {
           <>
             <h2 className="text-xl">Semanas</h2>
             <ul className="space-y-1">
-              {Array.from({ length: weeks }, (_, i) => {
-                const wk = i + 1
-                const locked = wk > unlockedWeeks
-                return (
-                  <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
-                    {locked ? (
-                      <>Semana {wk} 🔒</>
-                    ) : (
-                      <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
-                    )}
-                  </li>
-                )
-              })}
+              {weeks.map((wk) => (
+                <li key={wk} className="font-bold">
+                  <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
+                </li>
+              ))}
             </ul>
           </>
         )}
@@ -1387,7 +1366,6 @@ useEffect(() => {
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
           <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
-          <button className="block w-full text-left" onClick={unlockNextWeek}>Unlock Next Semana</button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
       )}
