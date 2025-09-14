@@ -537,7 +537,7 @@ useEffect(() => {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 5) {
+      if (parts.length >= 5 && file.name.toLowerCase().endsWith(".pdf")) {
         const week = parts[1]
         const subject = parts[2]
         const table = parts[3].toLowerCase().includes("pract")
@@ -551,28 +551,7 @@ useEffect(() => {
           week,
           subject,
           tableType: table,
-          isPdf: file.name.toLowerCase().endsWith(".pdf"),
-        })
-      }
-    }
-    for (const w in videos) {
-      const wk = w
-      if (!tree[wk]) tree[wk] = {}
-      for (const s in videos[wk]) {
-        if (!tree[wk][s]) tree[wk][s] = []
-        ;(["theory", "practice"] as const).forEach((cat) => {
-          videos[wk][s][cat].forEach((vid, idx) => {
-            const file = new File([], vid.name || `Video ${idx + 1}`)
-            tree[wk][s].push({
-              file,
-              path: `video-${wk}-${s}-${cat}-${idx}`,
-              week: wk,
-              subject: s,
-              tableType: cat,
-              isPdf: false,
-              url: vid.url,
-            })
-          })
+          isPdf: true,
         })
       }
     }
@@ -595,7 +574,7 @@ useEffect(() => {
       })
     }
     setFileTree(tree)
-  }, [dirFiles, orders, weeks, names, videos])
+  }, [dirFiles, orders, weeks, names])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -1009,7 +988,9 @@ useEffect(() => {
   }
 
   const selectedFiles =
-    viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
+    viewWeek && viewSubject
+      ? (fileTree[viewWeek]?.[viewSubject] || []).filter((f) => f.isPdf)
+      : []
   const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
   const practiceFiles = selectedFiles.filter((f) => f.tableType === "practice")
 
@@ -1075,12 +1056,7 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
-            <div
-              className="relative space-y-4"
-              onDragOver={handleDragOverArea}
-              onDragLeave={handleDragLeaveArea}
-              onDrop={handleDropLink}
-            >
+            <div className="relative space-y-4">
               {theoryFiles.length > 0 && (
                 <div>
                   <h3 className="font-semibold">Teoría:</h3>
@@ -1107,21 +1083,6 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
-                          {!p.isPdf && (
-                            <button
-                              onClick={() =>
-                                removeVideo(
-                                  p.week,
-                                  p.subject,
-                                  p.tableType,
-                                  parseInt(p.path.split('-').pop() || '0'),
-                                  p.path,
-                                )
-                              }
-                            >
-                              x
-                            </button>
-                          )}
                         </li>
                       )
                     })}
@@ -1154,55 +1115,10 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
-                          {!p.isPdf && (
-                            <button
-                              onClick={() =>
-                                removeVideo(
-                                  p.week,
-                                  p.subject,
-                                  p.tableType,
-                                  parseInt(p.path.split('-').pop() || '0'),
-                                  p.path,
-                                )
-                              }
-                            >
-                              x
-                            </button>
-                          )}
                         </li>
                       )
                     })}
                   </ul>
-                </div>
-              )}
-              <div className="flex gap-2">
-                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'theory')}>
-                  + Video teoría
-                </button>
-                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'practice')}>
-                  + Video práctica
-                </button>
-              </div>
-              {dragCategory && (
-                <div className="absolute inset-0 flex flex-col bg-white/90 dark:bg-gray-800/90 pointer-events-none">
-                  <div
-                    className={`flex-1 flex items-center justify-center ${
-                      dragCategory === 'theory'
-                        ? 'bg-gray-200 dark:bg-gray-700'
-                        : ''
-                    }`}
-                  >
-                    Teoría
-                  </div>
-                  <div
-                    className={`flex-1 flex items-center justify-center ${
-                      dragCategory === 'practice'
-                        ? 'bg-gray-200 dark:bg-gray-700'
-                        : ''
-                    }`}
-                  >
-                    Práctica
-                  </div>
                 </div>
               )}
             </div>
