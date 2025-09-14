@@ -103,157 +103,157 @@ export default function Home() {
   const [darkModeStart, setDarkModeStart] = useState(19)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
-  const [timerRunning, setTimerRunning] = useState(false)
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [unsentSeconds, setUnsentSeconds] = useState(0)
-  const [todaySeconds, setTodaySeconds] = useState(0)
-  const [currentDate, setCurrentDate] = useState(
-    new Date().toISOString().split('T')[0],
-  )
+  // const [timerRunning, setTimerRunning] = useState(false)
+  // const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  // const [unsentSeconds, setUnsentSeconds] = useState(0)
+  // const [todaySeconds, setTodaySeconds] = useState(0)
+  // const [currentDate, setCurrentDate] = useState(
+  //   new Date().toISOString().split('T')[0],
+  // )
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
-  const autoPausedRef = useRef(false)
+  // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
-  const formatHM = (sec: number) => {
-    const h = Math.floor(sec / 3600)
-      .toString()
-      .padStart(2, '0')
-    const m = Math.floor((sec % 3600) / 60)
-      .toString()
-      .padStart(2, '0')
-    return `${h}:${m}`
-  }
+  // const formatHM = (sec: number) => {
+  //   const h = Math.floor(sec / 3600)
+  //     .toString()
+  //     .padStart(2, '0')
+  //   const m = Math.floor((sec % 3600) / 60)
+  //     .toString()
+  //     .padStart(2, '0')
+  //   return `${h}:${m}`
+  // }
 
-  const formatHMS = (sec: number) => {
-    const h = Math.floor(sec / 3600)
-      .toString()
-      .padStart(2, '0')
-    const m = Math.floor((sec % 3600) / 60)
-      .toString()
-      .padStart(2, '0')
-    const s = Math.floor(sec % 60)
-      .toString()
-      .padStart(2, '0')
-    return `${h}:${m}:${s}`
-  }
+  // const formatHMS = (sec: number) => {
+  //   const h = Math.floor(sec / 3600)
+  //     .toString()
+  //     .padStart(2, '0')
+  //   const m = Math.floor((sec % 3600) / 60)
+  //     .toString()
+  //     .padStart(2, '0')
+  //   const s = Math.floor(sec % 60)
+  //     .toString()
+  //     .padStart(2, '0')
+  //   return `${h}:${m}:${s}`
+  // }
 
-  const sendTime = async (sec: number) => {
-    if (sec <= 0) return
-    try {
-      const res = await fetch('/api/time', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seconds: sec }),
-      })
-      const data = await res.json()
-      if (typeof data.seconds === 'number') {
-        setTodaySeconds(data.seconds)
-      }
-    } catch (err) {
-      console.error('sendTime error', err)
-    }
-  }
+  // const sendTime = async (sec: number) => {
+  //   if (sec <= 0) return
+  //   try {
+  //     const res = await fetch('/api/time', {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({ seconds: sec }),
+  //     })
+  //     const data = await res.json()
+  //     if (typeof data.seconds === 'number') {
+  //       setTodaySeconds(data.seconds)
+  //     }
+  //   } catch (err) {
+  //     console.error('sendTime error', err)
+  //   }
+  // }
 
-  const pauseTimer = useCallback(() => {
-    setTimerRunning(false)
-    if (unsentSeconds > 0) {
-      sendTime(unsentSeconds)
-      setUnsentSeconds(0)
-    }
-  }, [unsentSeconds])
+  // const pauseTimer = useCallback(() => {
+  //   setTimerRunning(false)
+  //   if (unsentSeconds > 0) {
+  //     sendTime(unsentSeconds)
+  //     setUnsentSeconds(0)
+  //   }
+  // }, [unsentSeconds])
 
-  const startTimer = useCallback(() => {
-    const todayStr = new Date().toISOString().split('T')[0]
-    if (todayStr !== currentDate) {
-      setCurrentDate(todayStr)
-      setTodaySeconds(0)
-    }
-    setTimerRunning(true)
-  }, [currentDate])
+  // const startTimer = useCallback(() => {
+  //   const todayStr = new Date().toISOString().split('T')[0]
+  //   if (todayStr !== currentDate) {
+  //     setCurrentDate(todayStr)
+  //     setTodaySeconds(0)
+  //   }
+  //   setTimerRunning(true)
+  // }, [currentDate])
 
-  const toggleTimer = useCallback(() => {
-    if (timerRunning) {
-      pauseTimer()
-      setToast({ type: 'success', text: 'Cronómetro pausado' })
-    } else {
-      startTimer()
-      setToast({ type: 'success', text: 'Cronómetro iniciado' })
-    }
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-  }, [timerRunning, pauseTimer, startTimer])
+  // const toggleTimer = useCallback(() => {
+  //   if (timerRunning) {
+  //     pauseTimer()
+  //     setToast({ type: 'success', text: 'Cronómetro pausado' })
+  //   } else {
+  //     startTimer()
+  //     setToast({ type: 'success', text: 'Cronómetro iniciado' })
+  //   }
+  //   if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+  //   toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+  // }, [timerRunning, pauseTimer, startTimer])
 
-  useEffect(() => {
-    const fetchToday = async () => {
-      try {
-        const res = await fetch('/api/time')
-        const data = await res.json()
-        if (typeof data.seconds === 'number') setTodaySeconds(data.seconds)
-      } catch (err) {
-        console.error('fetchToday error', err)
-      }
-    }
-    fetchToday()
-  }, [])
+  // useEffect(() => {
+  //   const fetchToday = async () => {
+  //     try {
+  //       const res = await fetch('/api/time')
+  //       const data = await res.json()
+  //       if (typeof data.seconds === 'number') setTodaySeconds(data.seconds)
+  //     } catch (err) {
+  //       console.error('fetchToday error', err)
+  //     }
+  //   }
+  //   fetchToday()
+  // }, [])
 
-  useEffect(() => {
-    if (!timerRunning || document.visibilityState !== 'visible') return
-    const id = window.setInterval(() => {
-      setElapsedSeconds((s) => s + 1)
-      setTodaySeconds((s) => s + 1)
-      setUnsentSeconds((s) => s + 1)
-    }, 1000)
-    return () => window.clearInterval(id)
-  }, [timerRunning])
+  // useEffect(() => {
+  //   if (!timerRunning || document.visibilityState !== 'visible') return
+  //   const id = window.setInterval(() => {
+  //     setElapsedSeconds((s) => s + 1)
+  //     setTodaySeconds((s) => s + 1)
+  //     setUnsentSeconds((s) => s + 1)
+  //   }, 1000)
+  //   return () => window.clearInterval(id)
+  // }, [timerRunning])
 
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === 'c' && viewerOpen) {
-        e.preventDefault()
-        toggleTimer()
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [viewerOpen, toggleTimer])
+  // useEffect(() => {
+  //   const handler = (e: KeyboardEvent) => {
+  //     if (e.key.toLowerCase() === 'c' && viewerOpen) {
+  //       e.preventDefault()
+  //       toggleTimer()
+  //     }
+  //   }
+  //   window.addEventListener('keydown', handler)
+  //   return () => window.removeEventListener('keydown', handler)
+  // }, [viewerOpen, toggleTimer])
 
-  useEffect(() => {
-    const handler = (e: MessageEvent) => {
-      if (e.data?.type === 'toggleTimer' && viewerOpen) {
-        toggleTimer()
-      }
-    }
-    window.addEventListener('message', handler)
-    return () => window.removeEventListener('message', handler)
-  }, [viewerOpen, toggleTimer])
+  // useEffect(() => {
+  //   const handler = (e: MessageEvent) => {
+  //     if (e.data?.type === 'toggleTimer' && viewerOpen) {
+  //       toggleTimer()
+  //     }
+  //   }
+  //   window.addEventListener('message', handler)
+  //   return () => window.removeEventListener('message', handler)
+  // }, [viewerOpen, toggleTimer])
 
-  useEffect(() => {
-    const vis = () => {
-      if (document.visibilityState === 'hidden') {
-        if (timerRunning) {
-          autoPausedRef.current = true
-          pauseTimer()
-        }
-      } else if (document.visibilityState === 'visible' && autoPausedRef.current) {
-        autoPausedRef.current = false
-        startTimer()
-      }
-    }
-    document.addEventListener('visibilitychange', vis)
-    return () => document.removeEventListener('visibilitychange', vis)
-  }, [timerRunning, pauseTimer, startTimer])
+  // useEffect(() => {
+  //   const vis = () => {
+  //     if (document.visibilityState === 'hidden') {
+  //       if (timerRunning) {
+  //         autoPausedRef.current = true
+  //         pauseTimer()
+  //       }
+  //     } else if (document.visibilityState === 'visible' && autoPausedRef.current) {
+  //       autoPausedRef.current = false
+  //       startTimer()
+  //     }
+  //   }
+  //   document.addEventListener('visibilitychange', vis)
+  //   return () => document.removeEventListener('visibilitychange', vis)
+  // }, [timerRunning, pauseTimer, startTimer])
 
-  useEffect(() => {
-    if (!viewerOpen) {
-      if (timerRunning) pauseTimer()
-      setElapsedSeconds(0)
-      setUnsentSeconds(0)
-    }
-  }, [viewerOpen, timerRunning, pauseTimer])
+  // useEffect(() => {
+  //   if (!viewerOpen) {
+  //     if (timerRunning) pauseTimer()
+  //     setElapsedSeconds(0)
+  //     setUnsentSeconds(0)
+  //   }
+  // }, [viewerOpen, timerRunning, pauseTimer])
 
   useEffect(() => {
     viewerRef.current?.contentWindow?.postMessage(
@@ -648,9 +648,9 @@ export default function Home() {
   }
 
   const handleSelectFile = (pdf: PdfFile) => {
-    if (timerRunning) pauseTimer()
-    setElapsedSeconds(0)
-    setUnsentSeconds(0)
+    // if (timerRunning) pauseTimer()
+    // setElapsedSeconds(0)
+    // setUnsentSeconds(0)
     const idx = queue.findIndex((f) => f.path === pdf.path)
     if (idx >= 0) {
       setQueueIndex(idx)
@@ -663,9 +663,9 @@ export default function Home() {
 
   const prevPdf = () => {
     if (queueIndex > 0) {
-      if (timerRunning) pauseTimer()
-      setElapsedSeconds(0)
-      setUnsentSeconds(0)
+      // if (timerRunning) pauseTimer()
+      // setElapsedSeconds(0)
+      // setUnsentSeconds(0)
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
@@ -675,9 +675,9 @@ export default function Home() {
 
   const nextPdf = () => {
     if (queueIndex < queue.length - 1) {
-      if (timerRunning) pauseTimer()
-      setElapsedSeconds(0)
-      setUnsentSeconds(0)
+      // if (timerRunning) pauseTimer()
+      // setElapsedSeconds(0)
+      // setUnsentSeconds(0)
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
@@ -789,7 +789,7 @@ export default function Home() {
                   <span className="truncate" title={currentPdf?.file.name}>
                     {currentPdf?.file.name}
                   </span>
-                  <span>{formatHMS(elapsedSeconds)}</span>
+                  {/* <span>{formatHMS(elapsedSeconds)}</span> */}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -833,7 +833,7 @@ export default function Home() {
                   >
                     ✕
                   </button>
-                  <span>Hoy: {formatHM(todaySeconds)}</span>
+                  {/* <span>Hoy: {formatHM(todaySeconds)}</span> */}
                 </div>
               </div>
             )

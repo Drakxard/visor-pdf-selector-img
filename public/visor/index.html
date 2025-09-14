@@ -818,6 +818,7 @@
       let currentCanvas = null;
       let redrawDelay = 200;
       let redrawTimer = null;
+      let writeMode = false;
 
       let brushColor = '#ff0000';
       let brushWidth = 2;
@@ -1569,6 +1570,13 @@
           e.preventDefault();
           drawMode = !drawMode;
           updateDrawMode();
+          return;
+        }
+
+        if (!isEditing && drawMode && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'a' && !writeMode) {
+          e.preventDefault();
+          writeMode = true;
+          showToast('Click para escribir', 'info');
           return;
         }
 
@@ -2742,8 +2750,25 @@
 
       function startDraw(e) {
         if (!drawMode) return;
-        isDrawing = true;
         const canvas = e.target;
+        if (writeMode) {
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = brushColor;
+          ctx.globalAlpha = brushOpacity;
+          ctx.shadowColor = shadowColor;
+          ctx.shadowBlur = shadowWidth;
+          ctx.shadowOffsetX = shadowOffset;
+          ctx.shadowOffsetY = shadowOffset;
+          ctx.font = `${brushWidth * 4}px sans-serif`;
+          const text = prompt('Texto:');
+          if (text) {
+            ctx.fillText(text, e.offsetX, e.offsetY);
+            saveDrawing(canvas);
+          }
+          writeMode = false;
+          return;
+        }
+        isDrawing = true;
         const ctx = canvas.getContext('2d');
         ctx.globalCompositeOperation = eraseMode ? 'destination-out' : 'source-over';
         ctx.strokeStyle = eraseMode ? 'rgba(0,0,0,1)' : brushColor;
