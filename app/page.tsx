@@ -8,7 +8,7 @@ const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 type PdfFile = {
   file: File
   path: string
-  week: number
+  week: string
   subject: string
   tableType: "theory" | "practice"
   isPdf: boolean
@@ -86,22 +86,21 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState(1)
-  const [unlockedWeeks, setUnlockedWeeks] = useState(1)
+  const [weeks, setWeeks] = useState<string[]>([])
   const [dirFiles, setDirFiles] = useState<File[]>([])
-  const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
+  const [fileTree, setFileTree] = useState<Record<string, Record<string, PdfFile[]>>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
   const [queue, setQueue] = useState<PdfFile[]>([])
   const [queueIndex, setQueueIndex] = useState(0)
-  const [viewWeek, setViewWeek] = useState<number | null>(null)
+  const [viewWeek, setViewWeek] = useState<string | null>(null)
   const [viewSubject, setViewSubject] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
   const [orders, setOrders] = useState<Record<string, string[]>>({})
   const [videos, setVideos] = useState<
     Record<
-      number,
+      string,
       Record<
         string,
         { theory: { name: string; url: string }[]; practice: { name: string; url: string }[] }
@@ -111,7 +110,7 @@ export default function Home() {
   const [videoModalOpen, setVideoModalOpen] = useState(false)
   const [videoModalText, setVideoModalText] = useState("")
   const [videoModalTarget, setVideoModalTarget] = useState<
-    { week: number; subject: string; table: 'theory' | 'practice' } | null
+    { week: string; subject: string; table: 'theory' | 'practice' } | null
   >(null)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
@@ -299,12 +298,10 @@ export default function Home() {
     if (cfg) {
       const text = await cfg.text()
       const data = JSON.parse(text)
-      setWeeks(data.weeks || 1)
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
       setOrders(data.orders || {})
-      localStorage.setItem("weeks", String(data.weeks || 1))
       localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
     }
@@ -356,17 +353,6 @@ export default function Home() {
     }
   }
 
-  const unlockNextWeek = () => {
-    setUnlockedWeeks((prev) => {
-      const next = Math.min(weeks, prev + 1)
-      localStorage.setItem("unlockedWeeks", String(next))
-      setToast({ type: 'success', text: `Semana ${next} desbloqueada` })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-      return next
-    })
-  }
-
   useEffect(() => {
     if (step === 1) {
       ;(async () => {
@@ -375,6 +361,19 @@ export default function Home() {
       })()
     }
   }, [step, dirFiles])
+
+  useEffect(() => {
+    const dirs: string[] = []
+    dirFiles.forEach((f) => {
+      const rel = ((f as any).webkitRelativePath || "") as string
+      const parts = rel.split("/")
+      if (parts.length > 1) {
+        const folder = parts[1]
+        if (folder && folder !== "system" && !dirs.includes(folder)) dirs.push(folder)
+      }
+    })
+    setWeeks(dirs)
+  }, [dirFiles])
 
   // complete setup automatically when config is checked
   useEffect(() => {
@@ -404,11 +403,6 @@ export default function Home() {
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
-    } else {
-      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
-      setWeeks(storedWeeks)
-      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
-      setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
 
@@ -538,18 +532,17 @@ useEffect(() => {
 
   // build tree from selected directory
   useEffect(() => {
-    const tree: Record<number, Record<string, PdfFile[]>> = {}
+    const tree: Record<string, Record<string, PdfFile[]>> = {}
     for (const file of dirFiles) {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 5) {
-        const weekPart = parts[1]
+      if (parts.length >= 5 && file.name.toLowerCase().endsWith(".pdf")) {
+        const week = parts[1]
         const subject = parts[2]
         const table = parts[3].toLowerCase().includes("pract")
           ? "practice"
           : "theory"
-        const week = parseInt(weekPart.replace(/\D/g, ""))
         if (!tree[week]) tree[week] = {}
         if (!tree[week][subject]) tree[week][subject] = []
         tree[week][subject].push({
@@ -558,28 +551,7 @@ useEffect(() => {
           week,
           subject,
           tableType: table,
-          isPdf: file.name.toLowerCase().endsWith(".pdf"),
-        })
-      }
-    }
-    for (const w in videos) {
-      const wk = Number(w)
-      if (!tree[wk]) tree[wk] = {}
-      for (const s in videos[wk]) {
-        if (!tree[wk][s]) tree[wk][s] = []
-        ;(["theory", "practice"] as const).forEach((cat) => {
-          videos[wk][s][cat].forEach((vid, idx) => {
-            const file = new File([], vid.name || `Video ${idx + 1}`)
-            tree[wk][s].push({
-              file,
-              path: `video-${wk}-${s}-${cat}-${idx}`,
-              week: wk,
-              subject: s,
-              tableType: cat,
-              isPdf: false,
-              url: vid.url,
-            })
-          })
+          isPdf: true,
         })
       }
     }
@@ -595,14 +567,14 @@ useEffect(() => {
         }
       }
     }
-    for (let w = 1; w <= weeks; w++) {
+    for (const w of weeks) {
       if (!tree[w]) tree[w] = {}
       names.forEach((n) => {
         if (!tree[w][n]) tree[w][n] = []
       })
     }
     setFileTree(tree)
-  }, [dirFiles, orders, weeks, names, videos])
+  }, [dirFiles, orders, weeks, names])
 
   useEffect(() => {
     const subs = new Set<string>()
@@ -650,7 +622,11 @@ useEffect(() => {
     const q: PdfFile[] = []
     stats.forEach((s) => {
       q.push(
-        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
+        ...s.pdfs.sort(
+          (a, b) =>
+            a.week.localeCompare(b.week) ||
+            a.file.name.localeCompare(b.file.name),
+        ),
       )
     })
     setQueue(q)
@@ -742,7 +718,7 @@ useEffect(() => {
   useEffect(() => {
     if (currentPdf) {
       localStorage.setItem('lastPath', currentPdf.path)
-      localStorage.setItem('lastWeek', String(currentPdf.week))
+      localStorage.setItem('lastWeek', currentPdf.week)
       localStorage.setItem('lastSubject', currentPdf.subject)
     }
   }, [currentPdf])
@@ -871,10 +847,10 @@ useEffect(() => {
     const content = `[InternetShortcut]\nURL=${data}\n`
     const file = new File([content], fileName, { type: 'text/plain' })
     Object.defineProperty(file, 'webkitRelativePath', {
-      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
+      value: `root/${viewWeek}/${viewSubject}/${category}/${fileName}`,
     })
     setDirFiles((prev) => [...prev, file])
-    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
+    const path = `${viewWeek}/${viewSubject}/${category}/${fileName}`
     const pdf: PdfFile = {
       file,
       path,
@@ -945,7 +921,7 @@ useEffect(() => {
   }
 
   const openVideoModal = (
-    week: number,
+    week: string,
     subject: string,
     table: 'theory' | 'practice',
   ) => {
@@ -976,7 +952,7 @@ useEffect(() => {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }
 
-  const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
+  const reorderPdf = (week: string, subject: string, index: number, delta: number) => {
     const arr = [...(fileTree[week]?.[subject] || [])]
     const target = index + delta
     if (target < 0 || target >= arr.length) return
@@ -987,7 +963,7 @@ useEffect(() => {
   }
 
   const removeVideo = (
-    week: number,
+    week: string,
     subject: string,
     table: 'theory' | 'practice',
     index: number,
@@ -1012,7 +988,9 @@ useEffect(() => {
   }
 
   const selectedFiles =
-    viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
+    viewWeek && viewSubject
+      ? (fileTree[viewWeek]?.[viewSubject] || []).filter((f) => f.isPdf)
+      : []
   const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
   const practiceFiles = selectedFiles.filter((f) => f.tableType === "practice")
 
@@ -1028,21 +1006,13 @@ useEffect(() => {
         )}
         {!viewWeek && (
           <>
-            <h2 className="text-xl">Semanas</h2>
+            <h2 className="text-xl">Carpetas</h2>
             <ul className="space-y-1">
-              {Array.from({ length: weeks }, (_, i) => {
-                const wk = i + 1
-                const locked = wk > unlockedWeeks
-                return (
-                  <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
-                    {locked ? (
-                      <>Semana {wk} 🔒</>
-                    ) : (
-                      <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
-                    )}
-                  </li>
-                )
-              })}
+              {weeks.map((wk) => (
+                <li key={wk} className="font-bold">
+                  <button onClick={() => setViewWeek(wk)}>{wk}</button>
+                </li>
+              ))}
             </ul>
           </>
         )}
@@ -1051,7 +1021,7 @@ useEffect(() => {
             <button className="mb-2 underline" onClick={() => setViewWeek(null)}>
               ← Volver
             </button>
-            <h2 className="text-xl">Semana {viewWeek}</h2>
+            <h2 className="text-xl">{viewWeek}</h2>
             <ul className="space-y-1">
               {Object.entries(fileTree[viewWeek] || {})
                 .filter(([, files]) => files.length > 0)
@@ -1086,12 +1056,7 @@ useEffect(() => {
               ← Volver
             </button>
             <h2 className="text-xl">{viewSubject}</h2>
-            <div
-              className="relative space-y-4"
-              onDragOver={handleDragOverArea}
-              onDragLeave={handleDragLeaveArea}
-              onDrop={handleDropLink}
-            >
+            <div className="relative space-y-4">
               {theoryFiles.length > 0 && (
                 <div>
                   <h3 className="font-semibold">Teoría:</h3>
@@ -1118,21 +1083,6 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
-                          {!p.isPdf && (
-                            <button
-                              onClick={() =>
-                                removeVideo(
-                                  p.week,
-                                  p.subject,
-                                  p.tableType,
-                                  parseInt(p.path.split('-').pop() || '0'),
-                                  p.path,
-                                )
-                              }
-                            >
-                              x
-                            </button>
-                          )}
                         </li>
                       )
                     })}
@@ -1165,55 +1115,10 @@ useEffect(() => {
                           <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
                             ↓
                           </button>
-                          {!p.isPdf && (
-                            <button
-                              onClick={() =>
-                                removeVideo(
-                                  p.week,
-                                  p.subject,
-                                  p.tableType,
-                                  parseInt(p.path.split('-').pop() || '0'),
-                                  p.path,
-                                )
-                              }
-                            >
-                              x
-                            </button>
-                          )}
                         </li>
                       )
                     })}
                   </ul>
-                </div>
-              )}
-              <div className="flex gap-2">
-                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'theory')}>
-                  + Video teoría
-                </button>
-                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'practice')}>
-                  + Video práctica
-                </button>
-              </div>
-              {dragCategory && (
-                <div className="absolute inset-0 flex flex-col bg-white/90 dark:bg-gray-800/90 pointer-events-none">
-                  <div
-                    className={`flex-1 flex items-center justify-center ${
-                      dragCategory === 'theory'
-                        ? 'bg-gray-200 dark:bg-gray-700'
-                        : ''
-                    }`}
-                  >
-                    Teoría
-                  </div>
-                  <div
-                    className={`flex-1 flex items-center justify-center ${
-                      dragCategory === 'practice'
-                        ? 'bg-gray-200 dark:bg-gray-700'
-                        : ''
-                    }`}
-                  >
-                    Práctica
-                  </div>
                 </div>
               )}
             </div>
@@ -1387,7 +1292,6 @@ useEffect(() => {
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
           <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
-          <button className="block w-full text-left" onClick={unlockNextWeek}>Unlock Next Semana</button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
       )}
