@@ -8,7 +8,7 @@ const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 type PdfFile = {
   file: File
   path: string
-  week: number
+  week: string
   subject: string
   tableType: "theory" | "practice"
   isPdf: boolean
@@ -86,36 +86,18 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState(1)
-  const [unlockedWeeks, setUnlockedWeeks] = useState(1)
+  const [weeks, setWeeks] = useState<string[]>([])
   const [dirFiles, setDirFiles] = useState<File[]>([])
-  const [fileTree, setFileTree] = useState<Record<number, Record<string, PdfFile[]>>>({})
+  const [fileTree, setFileTree] = useState<Record<string, PdfFile[]>>({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
   const [queue, setQueue] = useState<PdfFile[]>([])
   const [queueIndex, setQueueIndex] = useState(0)
-  const [viewWeek, setViewWeek] = useState<number | null>(null)
-  const [viewSubject, setViewSubject] = useState<string | null>(null)
+  const [viewWeek, setViewWeek] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
-  const [orders, setOrders] = useState<Record<string, string[]>>({})
-  const [videos, setVideos] = useState<
-    Record<
-      number,
-      Record<
-        string,
-        { theory: { name: string; url: string }[]; practice: { name: string; url: string }[] }
-      >
-    >
-  >({})
-  const [videoModalOpen, setVideoModalOpen] = useState(false)
-  const [videoModalText, setVideoModalText] = useState("")
-  const [videoModalTarget, setVideoModalTarget] = useState<
-    { week: number; subject: string; table: 'theory' | 'practice' } | null
-  >(null)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
-  const [dragCategory, setDragCategory] = useState<'theory' | 'practice' | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showDarkModal, setShowDarkModal] = useState(false)
   const [darkModeStart, setDarkModeStart] = useState(19)
@@ -299,13 +281,9 @@ export default function Home() {
     if (cfg) {
       const text = await cfg.text()
       const data = JSON.parse(text)
-      setWeeks(data.weeks || 1)
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
-      setOrders(data.orders || {})
-      localStorage.setItem("weeks", String(data.weeks || 1))
-      localStorage.setItem("orders", JSON.stringify(data.orders || {}))
       return true
     }
     return false
@@ -356,17 +334,6 @@ export default function Home() {
     }
   }
 
-  const unlockNextWeek = () => {
-    setUnlockedWeeks((prev) => {
-      const next = Math.min(weeks, prev + 1)
-      localStorage.setItem("unlockedWeeks", String(next))
-      setToast({ type: 'success', text: `Semana ${next} desbloqueada` })
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-      return next
-    })
-  }
-
   useEffect(() => {
     if (step === 1) {
       ;(async () => {
@@ -375,6 +342,19 @@ export default function Home() {
       })()
     }
   }, [step, dirFiles])
+
+  useEffect(() => {
+    const dirs: string[] = []
+    dirFiles.forEach((f) => {
+      const rel = ((f as any).webkitRelativePath || "") as string
+      const parts = rel.split("/")
+      if (parts.length > 1) {
+        const folder = parts[1]
+        if (folder && folder !== "system" && !dirs.includes(folder)) dirs.push(folder)
+      }
+    })
+    setWeeks(dirs)
+  }, [dirFiles])
 
   // complete setup automatically when config is checked
   useEffect(() => {
@@ -404,11 +384,6 @@ export default function Home() {
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
-    } else {
-      const storedWeeks = parseInt(localStorage.getItem("weeks") || "1")
-      setWeeks(storedWeeks)
-      const storedUnlocked = parseInt(localStorage.getItem("unlockedWeeks") || "1")
-      setUnlockedWeeks(storedUnlocked)
     }
   }, [setTheme])
 
@@ -471,37 +446,6 @@ export default function Home() {
     if (storedTheory) setTheory(JSON.parse(storedTheory))
     const storedPractice = localStorage.getItem("practice")
     if (storedPractice) setPractice(JSON.parse(storedPractice))
-    const storedVideos = localStorage.getItem("videos")
-    if (storedVideos) {
-      try {
-        const parsed = JSON.parse(storedVideos)
-        const norm: Record<
-          number,
-          Record<string, { theory: { name: string; url: string }[]; practice: { name: string; url: string }[] }>
-        > = {}
-        for (const w in parsed) {
-          norm[w as any] = {}
-          for (const s in parsed[w]) {
-            const obj = parsed[w][s]
-            const fix = (arr: any[]) =>
-              Array.isArray(arr)
-                ? arr.map((v: any, i: number) =>
-                    typeof v === "string"
-                      ? { name: `Video ${i + 1}`, url: v }
-                      : v,
-                  )
-                : []
-            norm[w as any][s] = {
-              theory: fix(obj.theory),
-              practice: fix(obj.practice),
-            }
-          }
-        }
-        setVideos(norm)
-      } catch {
-        setVideos({})
-      }
-    }
   }, [])
 
   // persist completed
@@ -521,138 +465,38 @@ export default function Home() {
     localStorage.setItem("practice", JSON.stringify(practice))
   }, [practice])
 
-  useEffect(() => {
-    localStorage.setItem("videos", JSON.stringify(videos))
-  }, [videos])
-
-
-// load orders
-useEffect(() => {
-  const ord = localStorage.getItem("orders")
-  if (ord) setOrders(JSON.parse(ord))
-}, [])
-
-useEffect(() => {
-  localStorage.setItem("orders", JSON.stringify(orders))
-}, [orders])
 
   // build tree from selected directory
   useEffect(() => {
-    const tree: Record<number, Record<string, PdfFile[]>> = {}
+    const tree: Record<string, PdfFile[]> = {}
     for (const file of dirFiles) {
       const rel = (file as any).webkitRelativePath || ""
       if (rel.split("/").includes("system")) continue
       const parts = rel.split("/") || []
-      if (parts.length >= 5) {
-        const weekPart = parts[1]
-        const subject = parts[2]
-        const table = parts[3].toLowerCase().includes("pract")
-          ? "practice"
-          : "theory"
-        const week = parseInt(weekPart.replace(/\D/g, ""))
-        if (!tree[week]) tree[week] = {}
-        if (!tree[week][subject]) tree[week][subject] = []
-        tree[week][subject].push({
-          file,
-          path: parts.slice(1).join("/"),
-          week,
-          subject,
-          tableType: table,
-          isPdf: file.name.toLowerCase().endsWith(".pdf"),
-        })
-      }
-    }
-    for (const w in videos) {
-      const wk = Number(w)
-      if (!tree[wk]) tree[wk] = {}
-      for (const s in videos[wk]) {
-        if (!tree[wk][s]) tree[wk][s] = []
-        ;(["theory", "practice"] as const).forEach((cat) => {
-          videos[wk][s][cat].forEach((vid, idx) => {
-            const file = new File([], vid.name || `Video ${idx + 1}`)
-            tree[wk][s].push({
-              file,
-              path: `video-${wk}-${s}-${cat}-${idx}`,
-              week: wk,
-              subject: s,
-              tableType: cat,
-              isPdf: false,
-              url: vid.url,
-            })
+      if (parts.length > 1) {
+        const folder = parts[1]
+        if (!tree[folder]) tree[folder] = []
+        if (file.name.toLowerCase().endsWith(".pdf")) {
+          tree[folder].push({
+            file,
+            path: parts.slice(1).join("/"),
+            week: folder,
+            subject: "",
+            tableType: "theory",
+            isPdf: true,
           })
-        })
-      }
-    }
-    for (const w in tree) {
-      for (const s in tree[w]) {
-        const key = `${w}-${s}`
-        if (orders[key]) {
-          tree[w][s].sort(
-            (a, b) => orders[key].indexOf(a.path) - orders[key].indexOf(b.path),
-          )
-        } else {
-          tree[w][s].sort((a, b) => a.file.name.localeCompare(b.file.name))
         }
       }
     }
-    for (let w = 1; w <= weeks; w++) {
-      if (!tree[w]) tree[w] = {}
-      names.forEach((n) => {
-        if (!tree[w][n]) tree[w][n] = []
-      })
-    }
     setFileTree(tree)
-  }, [dirFiles, orders, weeks, names, videos])
+  }, [dirFiles])
 
+  // compute queue from all pdfs
   useEffect(() => {
-    const subs = new Set<string>()
-    Object.values(fileTree).forEach((subjects) => {
-      Object.keys(subjects).forEach((s) => subs.add(s))
-    })
-    if (subs.size && names.length === 0) {
-      setNames(Array.from(subs))
-    }
-  }, [fileTree, names.length])
-
-  // compute queue ordered by urgency
-  useEffect(() => {
-    const dayMap: Record<string, number> = {
-      Lunes: 1,
-      Martes: 2,
-      Miércoles: 3,
-      Jueves: 4,
-      Viernes: 5,
-    }
-    const today = new Date().getDay()
-    const stats: { subject: string; days: number; pdfs: PdfFile[] }[] = []
-    Object.values(fileTree).forEach((subjects) => {
-      Object.entries(subjects).forEach(([subject, files]) => {
-        const remaining = files.filter((f) => !completed[f.path])
-        if (!remaining.length) return
-        let days = 7
-        remaining.forEach((f) => {
-          const dayName =
-            f.tableType === "practice" ? practice[subject] : theory[subject]
-          if (!dayName) return
-          const d = dayMap[dayName]
-          let diff = d - today
-          if (diff < 0) diff += 7
-          if (diff === 0) diff = 7
-          if (diff < days) days = diff
-        })
-        stats.push({ subject, days, pdfs: remaining })
-      })
-    })
-    stats.sort((a, b) => {
-      if (a.days !== b.days) return a.days - b.days
-      return b.pdfs.length - a.pdfs.length
-    })
-    const q: PdfFile[] = []
-    stats.forEach((s) => {
-      q.push(
-        ...s.pdfs.sort((a, b) => a.week - b.week || a.file.name.localeCompare(b.file.name)),
-      )
-    })
+    const q = Object.values(fileTree)
+      .flat()
+      .filter((f) => !completed[f.path])
+      .sort((a, b) => a.file.name.localeCompare(b.file.name))
     setQueue(q)
     if (q.length) {
       const current = currentPdf && q.find((f) => f.path === currentPdf.path)
@@ -663,7 +507,7 @@ useEffect(() => {
       setCurrentPdf(null)
       setQueueIndex(0)
     }
-  }, [fileTree, completed, theory, practice])
+  }, [fileTree, completed])
 
   // restore last opened file when queue is ready
   useEffect(() => {
@@ -676,7 +520,6 @@ useEffect(() => {
           setCurrentPdf(pdf)
           setQueueIndex(idx)
           setViewWeek(pdf.week)
-          setViewSubject(pdf.subject)
         }
       }
       setRestored(true)
@@ -742,7 +585,7 @@ useEffect(() => {
   useEffect(() => {
     if (currentPdf) {
       localStorage.setItem('lastPath', currentPdf.path)
-      localStorage.setItem('lastWeek', String(currentPdf.week))
+      localStorage.setItem('lastWeek', currentPdf.week)
       localStorage.setItem('lastSubject', currentPdf.subject)
     }
   }, [currentPdf])
@@ -842,50 +685,6 @@ useEffect(() => {
     }
   }
 
-  const handleDragOverArea = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const rect = e.currentTarget.getBoundingClientRect()
-    const y = e.clientY - rect.top
-    setDragCategory(y < rect.height / 2 ? 'theory' : 'practice')
-  }
-
-  const handleDragLeaveArea = () => setDragCategory(null)
-
-  const handleDropLink = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const data =
-      e.dataTransfer.getData('text/uri-list') ||
-      e.dataTransfer.getData('text/plain')
-    if (!data) {
-      setDragCategory(null)
-      return
-    }
-    const category = dragCategory || 'theory'
-    const suggested = data.includes('youtube') ? 'video.lnk' : 'enlace.lnk'
-    const name = prompt('Nombre del enlace:', suggested)
-    if (!name) {
-      setDragCategory(null)
-      return
-    }
-    const fileName = name.endsWith('.lnk') ? name : `${name}.lnk`
-    const content = `[InternetShortcut]\nURL=${data}\n`
-    const file = new File([content], fileName, { type: 'text/plain' })
-    Object.defineProperty(file, 'webkitRelativePath', {
-      value: `root/Semana${viewWeek}/${viewSubject}/${category}/${fileName}`,
-    })
-    setDirFiles((prev) => [...prev, file])
-    const path = `Semana${viewWeek}/${viewSubject}/${category}/${fileName}`
-    const pdf: PdfFile = {
-      file,
-      path,
-      week: viewWeek!,
-      subject: viewSubject!,
-      tableType: category,
-      isPdf: false,
-    }
-    setCurrentPdf(pdf)
-    setDragCategory(null)
-  }
 
   const toggleComplete = async () => {
     if (!currentPdf) return
@@ -928,93 +727,8 @@ useEffect(() => {
     }
   }
 
-  const parseVideoLines = (text: string) => {
-    const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean)
-    return lines
-      .map((line, idx) => {
-        const match = line.match(/https?:\/\/\S+/)
-        if (!match) return null
-        const url = match[0]
-        const name = line
-          .slice(0, match.index)
-          .trim()
-          .replace(/[:\s]+$/, '') || `Video ${idx + 1}`
-        return { name, url }
-      })
-      .filter(Boolean) as { name: string; url: string }[]
-  }
 
-  const openVideoModal = (
-    week: number,
-    subject: string,
-    table: 'theory' | 'practice',
-  ) => {
-    setVideoModalTarget({ week, subject, table })
-    setVideoModalText('')
-    setVideoModalOpen(true)
-  }
-
-  const confirmVideoModal = () => {
-    if (!videoModalTarget) return
-    const entries = parseVideoLines(videoModalText)
-    if (!entries.length) {
-      setVideoModalOpen(false)
-      return
-    }
-    const { week, subject, table } = videoModalTarget
-    setVideos((prev) => {
-      const v = { ...prev }
-      if (!v[week]) v[week] = {}
-      if (!v[week][subject])
-        v[week][subject] = { theory: [], practice: [] }
-      v[week][subject][table].push(...entries)
-      return v
-    })
-    setVideoModalOpen(false)
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-    setToast({ type: 'success', text: 'Videos agregados' })
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
-  }
-
-  const reorderPdf = (week: number, subject: string, index: number, delta: number) => {
-    const arr = [...(fileTree[week]?.[subject] || [])]
-    const target = index + delta
-    if (target < 0 || target >= arr.length) return
-    ;[arr[index], arr[target]] = [arr[target], arr[index]]
-    setFileTree({ ...fileTree, [week]: { ...fileTree[week], [subject]: arr } })
-    const key = `${week}-${subject}`
-    setOrders({ ...orders, [key]: arr.map((p) => p.path) })
-  }
-
-  const removeVideo = (
-    week: number,
-    subject: string,
-    table: 'theory' | 'practice',
-    index: number,
-    path: string,
-  ) => {
-    const v = { ...videos }
-    if (v[week] && v[week][subject]) {
-      const arr = [...v[week][subject][table]]
-      if (index >= 0 && index < arr.length) {
-        arr.splice(index, 1)
-        v[week] = { ...v[week], [subject]: { ...v[week][subject], [table]: arr } }
-        setVideos(v)
-        const key = `${week}-${subject}`
-        if (orders[key]) {
-          setOrders({
-            ...orders,
-            [key]: orders[key].filter((p) => p !== path),
-          })
-        }
-      }
-    }
-  }
-
-  const selectedFiles =
-    viewWeek && viewSubject ? fileTree[viewWeek]?.[viewSubject] || [] : []
-  const theoryFiles = selectedFiles.filter((f) => f.tableType === "theory")
-  const practiceFiles = selectedFiles.filter((f) => f.tableType === "practice")
+  const selectedFiles = viewWeek ? fileTree[viewWeek] || [] : []
 
   // main interface
   return (
@@ -1022,201 +736,46 @@ useEffect(() => {
       <main className="flex flex-col md:grid md:grid-cols-2 min-h-screen">
         <aside className="border-b md:border-r p-4 space-y-2">
         {viewWeek !== null && (
-          <button className="mb-2 underline" onClick={() => { setViewWeek(null); setViewSubject(null); }}>
+          <button className="mb-2 underline" onClick={() => { setViewWeek(null); }}>
             Inicio
           </button>
         )}
         {!viewWeek && (
           <>
-            <h2 className="text-xl">Semanas</h2>
+            <h2 className="text-xl">Carpetas</h2>
             <ul className="space-y-1">
-              {Array.from({ length: weeks }, (_, i) => {
-                const wk = i + 1
-                const locked = wk > unlockedWeeks
-                return (
-                  <li key={wk} className={locked ? "opacity-50" : "font-bold"}>
-                    {locked ? (
-                      <>Semana {wk} 🔒</>
-                    ) : (
-                      <button onClick={() => setViewWeek(wk)}>Semana {wk}</button>
-                    )}
-                  </li>
-                )
-              })}
+              {weeks.map((wk) => (
+                <li key={wk} className="font-bold">
+                  <button onClick={() => setViewWeek(wk)}>{wk}</button>
+                </li>
+              ))}
             </ul>
           </>
         )}
-        {viewWeek && !viewSubject && (
+        {viewWeek && (
           <>
             <button className="mb-2 underline" onClick={() => setViewWeek(null)}>
               ← Volver
             </button>
-            <h2 className="text-xl">Semana {viewWeek}</h2>
+            <h2 className="text-xl">{viewWeek}</h2>
             <ul className="space-y-1">
-              {Object.entries(fileTree[viewWeek] || {})
-                .filter(([, files]) => files.length > 0)
-                .map(([s, files]) => {
-                  const theoryFiles = files.filter(
-                    (f) => f.tableType === "theory",
-                  )
-                  const practiceFiles = files.filter(
-                    (f) => f.tableType === "practice",
-                  )
-                  const doneTheory = theoryFiles.filter(
-                    (f) => completed[f.path],
-                  ).length
-                  const donePractice = practiceFiles.filter(
-                    (f) => completed[f.path],
-                  ).length
-                  return (
-                    <li key={s}>
-                      <button onClick={() => setViewSubject(s)}>
-                        {s} (T {doneTheory}/{theoryFiles.length} - P {donePractice}/
-                        {practiceFiles.length})
-                      </button>
-                    </li>
-                  )
-                })}
+              {selectedFiles.map((p) => (
+                <li
+                  key={p.path}
+                  className={`flex items-center gap-2 ${
+                    completed[p.path] ? "line-through text-gray-400" : ""
+                  }`}
+                >
+                  <span
+                    className="flex-1 truncate cursor-pointer"
+                    title={p.file.name}
+                    onClick={() => handleSelectFile(p)}
+                  >
+                    {p.file.name}
+                  </span>
+                </li>
+              ))}
             </ul>
-          </>
-        )}
-        {viewWeek && viewSubject && (
-          <>
-            <button className="mb-2 underline" onClick={() => setViewSubject(null)}>
-              ← Volver
-            </button>
-            <h2 className="text-xl">{viewSubject}</h2>
-            <div
-              className="relative space-y-4"
-              onDragOver={handleDragOverArea}
-              onDragLeave={handleDragLeaveArea}
-              onDrop={handleDropLink}
-            >
-              {theoryFiles.length > 0 && (
-                <div>
-                  <h3 className="font-semibold">Teoría:</h3>
-                  <ul className="space-y-1">
-                    {theoryFiles.map((p) => {
-                      const idx = selectedFiles.indexOf(p)
-                      return (
-                        <li
-                          key={p.path}
-                          className={`flex flex-wrap items-center gap-2 ${
-                            completed[p.path] ? "line-through text-gray-400" : ""
-                          }`}
-                        >
-                          <span
-                            className="flex-1 truncate cursor-pointer"
-                            title={p.file.name}
-                            onClick={() => handleSelectFile(p)}
-                          >
-                            {p.file.name}
-                          </span>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
-                            ↑
-                          </button>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
-                            ↓
-                          </button>
-                          {!p.isPdf && (
-                            <button
-                              onClick={() =>
-                                removeVideo(
-                                  p.week,
-                                  p.subject,
-                                  p.tableType,
-                                  parseInt(p.path.split('-').pop() || '0'),
-                                  p.path,
-                                )
-                              }
-                            >
-                              x
-                            </button>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </div>
-              )}
-              {practiceFiles.length > 0 && (
-                <div>
-                  <h3 className="font-semibold">Práctica:</h3>
-                  <ul className="space-y-1">
-                    {practiceFiles.map((p) => {
-                      const idx = selectedFiles.indexOf(p)
-                      return (
-                        <li
-                          key={p.path}
-                          className={`flex flex-wrap items-center gap-2 ${
-                            completed[p.path] ? "line-through text-gray-400" : ""
-                          }`}
-                        >
-                          <span
-                            className="flex-1 truncate cursor-pointer"
-                            title={p.file.name}
-                            onClick={() => handleSelectFile(p)}
-                          >
-                            {p.file.name}
-                          </span>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, -1)}>
-                            ↑
-                          </button>
-                          <button onClick={() => reorderPdf(viewWeek!, viewSubject!, idx, 1)}>
-                            ↓
-                          </button>
-                          {!p.isPdf && (
-                            <button
-                              onClick={() =>
-                                removeVideo(
-                                  p.week,
-                                  p.subject,
-                                  p.tableType,
-                                  parseInt(p.path.split('-').pop() || '0'),
-                                  p.path,
-                                )
-                              }
-                            >
-                              x
-                            </button>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </div>
-              )}
-              <div className="flex gap-2">
-                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'theory')}>
-                  + Video teoría
-                </button>
-                <button onClick={() => openVideoModal(viewWeek!, viewSubject!, 'practice')}>
-                  + Video práctica
-                </button>
-              </div>
-              {dragCategory && (
-                <div className="absolute inset-0 flex flex-col bg-white/90 dark:bg-gray-800/90 pointer-events-none">
-                  <div
-                    className={`flex-1 flex items-center justify-center ${
-                      dragCategory === 'theory'
-                        ? 'bg-gray-200 dark:bg-gray-700'
-                        : ''
-                    }`}
-                  >
-                    Teoría
-                  </div>
-                  <div
-                    className={`flex-1 flex items-center justify-center ${
-                      dragCategory === 'practice'
-                        ? 'bg-gray-200 dark:bg-gray-700'
-                        : ''
-                    }`}
-                  >
-                    Práctica
-                  </div>
-                </div>
-              )}
-            </div>
           </>
         )}
         </aside>
@@ -1237,9 +796,8 @@ useEffect(() => {
                     onClick={() => {
                       setViewerOpen(false)
                       setPdfFullscreen(false)
-                      setViewWeek(null)
-                      setViewSubject(null)
-                    }}
+                        setViewWeek(null)
+                      }}
                   >
                     Inicio
                   </button>
@@ -1338,38 +896,6 @@ useEffect(() => {
           </div>
         </section>
       </main>
-    {videoModalOpen && (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-        <div className="bg-white dark:bg-gray-800 p-4 rounded shadow max-w-lg w-full space-y-2">
-          <h2 className="text-lg font-semibold">Agregar videos</h2>
-          <textarea
-            className="w-full border p-2 dark:bg-gray-700"
-            placeholder="Nombre: URL"
-            value={videoModalText}
-            onChange={(e) => setVideoModalText(e.target.value)}
-          />
-          <div className="max-h-40 overflow-y-auto">
-            <h3 className="font-medium">Preview</h3>
-            <ul className="list-disc pl-5 space-y-1">
-              {parseVideoLines(videoModalText).map((v, i) => (
-                <li key={i} className="truncate">
-                  {v.name} - {v.url}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button onClick={() => setVideoModalOpen(false)}>Cancelar</button>
-            <button
-              onClick={confirmVideoModal}
-              disabled={!parseVideoLines(videoModalText).length}
-            >
-              Agregar
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
     {/* Toast banner */}
     {toast && (
       <div
@@ -1387,7 +913,6 @@ useEffect(() => {
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
           <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
-          <button className="block w-full text-left" onClick={unlockNextWeek}>Unlock Next Semana</button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
       )}
