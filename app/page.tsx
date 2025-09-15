@@ -13,6 +13,7 @@ type PdfFile = {
   tableType: "theory" | "practice"
   isPdf: boolean
   url?: string
+  directory: string
 }
 
 const DB_NAME = "folder-handle-db"
@@ -86,9 +87,10 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState<string[]>([])
   const [dirFiles, setDirFiles] = useState<File[]>([])
-  const [fileTree, setFileTree] = useState<Record<string, PdfFile[]>>({})
+  const [fileTree, setFileTree] = useState<
+    Record<string, { files: PdfFile[]; directories: string[] }>
+  >({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
   const [queue, setQueue] = useState<PdfFile[]>([])
@@ -343,19 +345,6 @@ export default function Home() {
     }
   }, [step, dirFiles])
 
-  useEffect(() => {
-    const dirs: string[] = []
-    dirFiles.forEach((f) => {
-      const rel = ((f as any).webkitRelativePath || "") as string
-      const parts = rel.split("/")
-      if (parts.length > 1) {
-        const folder = parts[1]
-        if (folder && folder !== "system" && !dirs.includes(folder)) dirs.push(folder)
-      }
-    })
-    setWeeks(dirs)
-  }, [dirFiles])
-
   // complete setup automatically when config is checked
   useEffect(() => {
     if (step === 1 && configFound !== null) {
@@ -468,33 +457,68 @@ export default function Home() {
 
   // build tree from selected directory
   useEffect(() => {
-    const tree: Record<string, PdfFile[]> = {}
+    type NodeData = { files: PdfFile[]; directories: Set<string> }
+    const map = new Map<string, NodeData>()
+    const ensureNode = (path: string) => {
+      if (!map.has(path)) {
+        map.set(path, { files: [], directories: new Set<string>() })
+      }
+      return map.get(path)!
+    }
+
+    ensureNode("")
+
     for (const file of dirFiles) {
-      const rel = (file as any).webkitRelativePath || ""
-      if (rel.split("/").includes("system")) continue
-      const parts = rel.split("/") || []
-      if (parts.length > 1) {
-        const folder = parts[1]
-        if (!tree[folder]) tree[folder] = []
-        if (file.name.toLowerCase().endsWith(".pdf")) {
-          tree[folder].push({
-            file,
-            path: parts.slice(1).join("/"),
-            week: folder,
-            subject: "",
-            tableType: "theory",
-            isPdf: true,
-          })
-        }
+      const rel = ((file as any).webkitRelativePath || "") as string
+      if (!rel) continue
+      const parts = rel.split("/").filter(Boolean)
+      if (parts.length < 2) continue
+      const segments = parts.slice(1)
+      if (!segments.length) continue
+      const dirSegments = segments.slice(0, -1)
+
+      let currentPath = ""
+      ensureNode(currentPath)
+      for (const segment of dirSegments) {
+        const node = ensureNode(currentPath)
+        node.directories.add(segment)
+        const nextPath = currentPath ? `${currentPath}/${segment}` : segment
+        ensureNode(nextPath)
+        currentPath = nextPath
+      }
+
+      const targetNode = ensureNode(currentPath)
+      if (file.name.toLowerCase().endsWith(".pdf")) {
+        targetNode.files.push({
+          file,
+          path: segments.join("/"),
+          week: dirSegments[0] || "",
+          subject: "",
+          tableType: "theory",
+          isPdf: true,
+          directory: currentPath,
+        })
       }
     }
-    setFileTree(tree)
+
+    const normalized: Record<string, { files: PdfFile[]; directories: string[] }> = {}
+    for (const [path, data] of map.entries()) {
+      normalized[path] = {
+        files: data.files.sort((a, b) =>
+          a.file.name.localeCompare(b.file.name, "es", { numeric: true }),
+        ),
+        directories: Array.from(data.directories).sort((a, b) =>
+          a.localeCompare(b, "es", { numeric: true }),
+        ),
+      }
+    }
+    setFileTree(normalized)
   }, [dirFiles])
 
   // compute queue from all pdfs
   useEffect(() => {
     const q = Object.values(fileTree)
-      .flat()
+      .flatMap((node) => node.files)
       .filter((f) => !completed[f.path])
       .sort((a, b) => a.file.name.localeCompare(b.file.name))
     setQueue(q)
@@ -519,7 +543,7 @@ export default function Home() {
           const pdf = queue[idx]
           setCurrentPdf(pdf)
           setQueueIndex(idx)
-          setViewWeek(pdf.week)
+          setViewWeek(pdf.directory ? pdf.directory : null)
         }
       }
       setRestored(true)
@@ -652,13 +676,15 @@ export default function Home() {
     // setElapsedSeconds(0)
     // setUnsentSeconds(0)
     const idx = queue.findIndex((f) => f.path === pdf.path)
+    const target = idx >= 0 ? queue[idx] : pdf
     if (idx >= 0) {
       setQueueIndex(idx)
-      setCurrentPdf(queue[idx])
+      setCurrentPdf(target)
     } else {
-      setCurrentPdf(pdf)
+      setCurrentPdf(target)
     }
-    if (!pdf.isPdf) setViewerOpen(false)
+    setViewWeek(target.directory ? target.directory : null)
+    if (!target.isPdf) setViewerOpen(false)
   }
 
   const prevPdf = () => {
@@ -669,6 +695,7 @@ export default function Home() {
       const i = queueIndex - 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      setViewWeek(queue[i].directory ? queue[i].directory : null)
       if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
@@ -681,6 +708,7 @@ export default function Home() {
       const i = queueIndex + 1
       setQueueIndex(i)
       setCurrentPdf(queue[i])
+      setViewWeek(queue[i].directory ? queue[i].directory : null)
       if (!queue[i].isPdf) setViewerOpen(false)
     }
   }
@@ -728,7 +756,28 @@ export default function Home() {
   }
 
 
-  const selectedFiles = viewWeek ? fileTree[viewWeek] || [] : []
+  const currentFolderKey = viewWeek ?? ""
+  const currentNode = fileTree[currentFolderKey] || {
+    files: [],
+    directories: [],
+  }
+  const selectedFiles = currentNode.files
+  const childDirectories = currentNode.directories
+  const breadcrumbs = viewWeek ? viewWeek.split("/") : []
+  const currentFolderTitle = breadcrumbs.length
+    ? breadcrumbs[breadcrumbs.length - 1]
+    : "Carpetas"
+  const parentFolder = breadcrumbs.length
+    ? breadcrumbs.slice(0, -1).join("/") || null
+    : null
+
+  const openFolder = (name: string) => {
+    setViewWeek((prev) => (prev ? `${prev}/${name}` : name))
+  }
+
+  const goUpOneLevel = () => {
+    setViewWeek(parentFolder)
+  }
 
   // main interface
   return (
@@ -736,28 +785,35 @@ export default function Home() {
       <main className="flex flex-col md:grid md:grid-cols-2 min-h-screen">
         <aside className="border-b md:border-r p-4 space-y-2">
         {viewWeek !== null && (
-          <button className="mb-2 underline" onClick={() => { setViewWeek(null); }}>
-            Inicio
+          <button className="mb-2 underline" onClick={goUpOneLevel}>
+            {parentFolder ? "← Volver" : "Inicio"}
           </button>
         )}
-        {!viewWeek && (
-          <>
-            <h2 className="text-xl">Carpetas</h2>
+        <h2 className="text-xl">{currentFolderTitle}</h2>
+        {viewWeek && (
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Inicio / {breadcrumbs.join(" / ")}
+          </p>
+        )}
+        {childDirectories.length > 0 && (
+          <div className="space-y-1 mt-2">
+            <div className="text-sm font-semibold text-gray-600 dark:text-gray-300">
+              Carpetas
+            </div>
             <ul className="space-y-1">
-              {weeks.map((wk) => (
-                <li key={wk} className="font-bold">
-                  <button onClick={() => setViewWeek(wk)}>{wk}</button>
+              {childDirectories.map((dir) => (
+                <li key={`${currentFolderKey}/${dir}`} className="font-bold">
+                  <button onClick={() => openFolder(dir)}>{dir}</button>
                 </li>
               ))}
             </ul>
-          </>
+          </div>
         )}
-        {viewWeek && (
-          <>
-            <button className="mb-2 underline" onClick={() => setViewWeek(null)}>
-              ← Volver
-            </button>
-            <h2 className="text-xl">{viewWeek}</h2>
+        {selectedFiles.length > 0 && (
+          <div className="space-y-1 mt-4">
+            <div className="text-sm font-semibold text-gray-600 dark:text-gray-300">
+              Archivos
+            </div>
             <ul className="space-y-1">
               {selectedFiles.map((p) => (
                 <li
@@ -776,7 +832,10 @@ export default function Home() {
                 </li>
               ))}
             </ul>
-          </>
+          </div>
+        )}
+        {childDirectories.length === 0 && selectedFiles.length === 0 && (
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">Carpeta vacía</p>
         )}
         </aside>
        <section
