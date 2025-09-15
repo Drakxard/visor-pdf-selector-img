@@ -211,6 +211,9 @@
       outline: none;
       transition: border-color 0.2s ease;
     }
+    .text-annotation.selected {
+      border-color: currentColor;
+    }
     .text-annotation.editing {
       border-color: currentColor;
       cursor: text;
@@ -266,7 +269,19 @@
       padding: 2px 4px;
       border-radius: 4px;
     }
+    #draw-toolbar select {
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: inherit;
+      border-radius: 4px;
+      padding: 2px 4px;
+    }
     body.light-mode #draw-toolbar input[type="number"] {
+      background: rgba(0,0,0,0.05);
+      border-color: rgba(0,0,0,0.2);
+      color: #202124;
+    }
+    body.light-mode #draw-toolbar select {
       background: rgba(0,0,0,0.05);
       border-color: rgba(0,0,0,0.2);
       color: #202124;
@@ -871,9 +886,13 @@
       let shadowOffset = 0;
       let brushOpacity = 1;
       let eraseMode = false;
+      let textFontSize = 16;
+      let activeTextAnnotation = null;
+      let textSizeSelect = null;
 
       const BRUSH_SETTINGS_KEY = 'draw-settings';
       const TEXT_ANNOTATION_PREFIX = 'text-annotation';
+      const TEXT_SIZE_OPTIONS = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 36, 40, 44, 48, 56, 64, 72, 80, 96];
 
       function getTextAnnotationKey(pageNum) {
         if (!currentPdfKey) return null;
@@ -898,19 +917,21 @@
         if (!pageNum) return;
         const xp = canvas.width ? event.offsetX / canvas.width : 0;
         const yp = canvas.height ? event.offsetY / canvas.height : 0;
-        createTextAnnotationElement(pageNum, {
+        const annotation = createTextAnnotationElement(pageNum, {
           xp,
           yp,
           color: brushColor,
-          fontSize: Math.max(4, brushWidth * 4),
+          fontSize: clampTextFontSize(textFontSize),
           opacity: brushOpacity,
           html: ''
         }, { editing: true });
+        if (annotation) setActiveTextAnnotation(annotation);
         writeMode = false;
       }
 
       function loadTextAnnotationsFromStorage() {
         if (!currentPdfKey) return;
+        setActiveTextAnnotation(null);
         container.querySelectorAll('.text-annotation').forEach(node => node.remove());
         document.querySelectorAll('.page-wrapper').forEach(wrapper => {
           const pageNum = parseInt(wrapper.dataset.pageNum, 10);
@@ -948,7 +969,7 @@
         const clampedYp = Math.min(1, Math.max(0, isNaN(rawYp) ? 0 : rawYp));
         annotation.dataset.xp = String(clampedXp);
         annotation.dataset.yp = String(clampedYp);
-        const baseFontSize = data.fontSize != null ? Number(data.fontSize) : brushWidth * 4;
+        const baseFontSize = data.fontSize != null ? Number(data.fontSize) : clampTextFontSize(textFontSize);
         const fontSize = Number.isFinite(baseFontSize) && baseFontSize > 0 ? baseFontSize : 12;
         const color = typeof data.color === 'string' ? data.color : brushColor;
         const rawOpacity = data.opacity != null ? Number(data.opacity) : brushOpacity;
@@ -965,6 +986,7 @@
         annotation.setAttribute('role', 'textbox');
         annotation.setAttribute('aria-multiline', 'true');
         wrapper.appendChild(annotation);
+        ensureTextSizeOption(fontSize);
         attachTextAnnotationEvents(annotation);
         if (options.editing) {
           requestAnimationFrame(() => startTextAnnotationEditing(annotation, true));
@@ -976,11 +998,13 @@
         annotation.addEventListener('dblclick', (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
+          setActiveTextAnnotation(annotation);
           startTextAnnotationEditing(annotation, true);
         });
         annotation.addEventListener('pointerdown', (ev) => {
-          if (annotation.contentEditable === 'true') return;
           if (ev.button !== 0) return;
+          setActiveTextAnnotation(annotation);
+          if (annotation.contentEditable === 'true') return;
           if (writeMode) return;
           if (ev.detail > 1) return;
           ev.preventDefault();
@@ -1049,7 +1073,75 @@
         return { xp, yp };
       }
 
+      function clampTextFontSize(size) {
+        const value = Number(size);
+        if (!Number.isFinite(value)) return textFontSize;
+        return Math.min(200, Math.max(4, Math.round(value)));
+      }
+
+      function ensureTextSizeOption(size) {
+        if (!textSizeSelect) return;
+        const value = String(size);
+        const options = Array.from(textSizeSelect.options);
+        if (options.some(option => option.value === value)) return;
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = `${value} px`;
+        options.push(option);
+        options.sort((a, b) => Number(a.value) - Number(b.value));
+        textSizeSelect.innerHTML = '';
+        options.forEach(opt => textSizeSelect.appendChild(opt));
+      }
+
+      function refreshTextSizeSelection() {
+        if (!textSizeSelect) return;
+        const size = activeTextAnnotation && activeTextAnnotation.isConnected
+          ? parseFloat(activeTextAnnotation.dataset.fontSize || String(textFontSize))
+          : textFontSize;
+        const clamped = clampTextFontSize(size);
+        ensureTextSizeOption(clamped);
+        textSizeSelect.value = String(clamped);
+      }
+
+      function applyFontSizeToAnnotation(annotation, size, persist = false) {
+        if (!annotation) return;
+        const clamped = clampTextFontSize(size);
+        annotation.style.fontSize = clamped + 'px';
+        annotation.dataset.fontSize = String(clamped);
+        const wrapper = annotation.closest('.page-wrapper');
+        if (wrapper) {
+          const left = parseFloat(annotation.style.left || '0');
+          const top = parseFloat(annotation.style.top || '0');
+          setAnnotationPosition(annotation, wrapper, left, top);
+          updateAnnotationStoredPosition(annotation);
+        }
+        if (persist) {
+          const pageNum = parseInt(annotation.dataset.page || '0', 10);
+          if (pageNum) saveTextAnnotationsForPage(pageNum);
+        }
+      }
+
+      function setActiveTextAnnotation(annotation) {
+        if (activeTextAnnotation === annotation) {
+          refreshTextSizeSelection();
+          return;
+        }
+        if (activeTextAnnotation && activeTextAnnotation.isConnected) {
+          activeTextAnnotation.classList.remove('selected');
+        }
+        if (annotation && annotation.isConnected) {
+          activeTextAnnotation = annotation;
+          annotation.classList.add('selected');
+          const derivedSize = parseFloat(annotation.dataset.fontSize || String(textFontSize));
+          textFontSize = clampTextFontSize(derivedSize);
+        } else {
+          activeTextAnnotation = null;
+        }
+        refreshTextSizeSelection();
+      }
+
       function startTextAnnotationEditing(annotation, placeCaret = true) {
+        setActiveTextAnnotation(annotation);
         if (annotation.contentEditable === 'true') return;
         annotation.classList.add('editing');
         annotation.contentEditable = 'true';
@@ -1088,13 +1180,16 @@
         annotation.contentEditable = 'false';
         annotation.classList.remove('editing');
         const pageNum = parseInt(annotation.dataset.page || '0', 10);
+        const wasActive = activeTextAnnotation === annotation;
         if (annotationIsEmpty(annotation)) {
           annotation.remove();
+          if (wasActive) setActiveTextAnnotation(null);
           if (pageNum) saveTextAnnotationsForPage(pageNum);
           return;
         }
         updateAnnotationStoredPosition(annotation);
         if (pageNum) saveTextAnnotationsForPage(pageNum);
+        if (wasActive) refreshTextSizeSelection();
       }
 
       function annotationIsEmpty(annotation) {
@@ -1140,6 +1235,7 @@
 
       function clearTextAnnotations() {
         if (!currentPdfKey) return;
+        setActiveTextAnnotation(null);
         document.querySelectorAll('.page-wrapper').forEach(wrapper => {
           const pageNum = parseInt(wrapper.dataset.pageNum, 10);
           if (!pageNum) return;
@@ -1153,6 +1249,7 @@
 
       function saveBrushSettings() {
         try {
+          textFontSize = clampTextFontSize(textFontSize);
           localStorage.setItem(BRUSH_SETTINGS_KEY, JSON.stringify({
             brushColor,
             brushWidth,
@@ -1160,7 +1257,8 @@
             shadowWidth,
             shadowOffset,
             brushOpacity,
-            redrawDelay
+            redrawDelay,
+            textFontSize
           }));
         } catch {}
       }
@@ -1175,10 +1273,12 @@
           if (data.shadowOffset) shadowOffset = data.shadowOffset;
           if (typeof data.brushOpacity === 'number') brushOpacity = data.brushOpacity;
           if (typeof data.redrawDelay === 'number') redrawDelay = data.redrawDelay;
+          if (typeof data.textFontSize === 'number') textFontSize = data.textFontSize;
           brushWidth = Math.min(100, Math.max(1, Number(brushWidth) || 1));
           shadowWidth = Math.min(50, Math.max(0, Number(shadowWidth) || 0));
           shadowOffset = Math.min(50, Math.max(0, Number(shadowOffset) || 0));
           brushOpacity = Math.min(1, Math.max(0, Number(brushOpacity) || 1));
+          textFontSize = clampTextFontSize(textFontSize);
         } catch {}
       }
 
@@ -1193,6 +1293,7 @@
           <label>Sombra<input type="color" id="tool-shadow-color" value="#000000"></label>
         </div>
         <label class="range-field"><span>Ancho del cepillo</span><input type="range" id="tool-brush-width" min="1" max="100" value="2"><input type="number" id="tool-brush-width-number" min="1" max="100" value="2"></label>
+        <label class="text-size-field"><span>Tamaño texto</span><select id="tool-text-size"></select></label>
         <label>Anchura del trazo <input type="range" id="tool-stroke-width" min="1" max="100" value="1"></label>
         <label>Ancho de sombra <input type="range" id="tool-shadow-width" min="0" max="50" value="0"></label>
         <label>Desplazamiento de <input type="range" id="tool-shadow-offset" min="0" max="50" value="0"></label>
@@ -1207,6 +1308,7 @@
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
       const brushWidthNumberInput = drawToolbar.querySelector('#tool-brush-width-number');
+      textSizeSelect = drawToolbar.querySelector('#tool-text-size');
       const shadowColorInput = drawToolbar.querySelector('#tool-shadow-color');
       const shadowWidthInput = drawToolbar.querySelector('#tool-shadow-width');
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
@@ -1239,6 +1341,25 @@
           }
         });
       }
+      if (textSizeSelect) {
+        TEXT_SIZE_OPTIONS.forEach(size => {
+          const option = document.createElement('option');
+          option.value = String(size);
+          option.textContent = `${size} px`;
+          textSizeSelect.appendChild(option);
+        });
+        textSizeSelect.addEventListener('change', (e) => {
+          const value = clampTextFontSize(e.target.value);
+          textFontSize = value;
+          ensureTextSizeOption(value);
+          textSizeSelect.value = String(value);
+          if (activeTextAnnotation && activeTextAnnotation.isConnected) {
+            applyFontSizeToAnnotation(activeTextAnnotation, value, true);
+          }
+          saveBrushSettings();
+          refreshTextSizeSelection();
+        });
+      }
       shadowColorInput.addEventListener('input', e => { shadowColor = e.target.value; saveBrushSettings(); });
       shadowWidthInput.addEventListener('input', e => { shadowWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
       shadowOffsetInput.addEventListener('input', e => { shadowOffset = parseInt(e.target.value, 10); saveBrushSettings(); });
@@ -1259,6 +1380,7 @@
         shadowOffsetInput.value = shadowOffset;
         opacityInput.value = brushOpacity;
         redrawDelayInput.value = redrawDelay;
+        refreshTextSizeSelection();
       }
 
       loadBrushSettings();
@@ -2071,6 +2193,12 @@
           document.body.classList.remove('creating-note');
           if (isFullscreen) toggleFullscreen();
         }
+      });
+
+      document.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.text-annotation')) return;
+        if (event.target.closest('#draw-toolbar')) return;
+        setActiveTextAnnotation(null);
       });
 
       container.addEventListener('wheel', (e) => {
