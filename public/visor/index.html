@@ -295,6 +295,20 @@
     }
     .mq-editable-field:focus { border-color: #4285f4 !important; box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.2) !important; }
 
+    .draw-text, .draw-text-input {
+      position: absolute;
+      white-space: pre-wrap;
+      pointer-events: auto;
+    }
+    .draw-text {
+      cursor: move;
+    }
+    .draw-text-input {
+      background: rgba(255,255,255,0.3);
+      border: none;
+      outline: none;
+    }
+
     .matrix-editor {
       border-collapse: collapse;
       display: inline-table;
@@ -822,6 +836,7 @@
 
       let brushColor = '#ff0000';
       let brushWidth = 2;
+      let textSize = 16;
       let shadowColor = '#000000';
       let shadowWidth = 0;
       let shadowOffset = 0;
@@ -835,6 +850,7 @@
           localStorage.setItem(BRUSH_SETTINGS_KEY, JSON.stringify({
             brushColor,
             brushWidth,
+            textSize,
             shadowColor,
             shadowWidth,
             shadowOffset,
@@ -849,6 +865,7 @@
           const data = JSON.parse(localStorage.getItem(BRUSH_SETTINGS_KEY) || '{}');
           if (data.brushColor) brushColor = data.brushColor;
           if (data.brushWidth) brushWidth = data.brushWidth;
+          if (data.textSize) textSize = data.textSize;
           if (data.shadowColor) shadowColor = data.shadowColor;
           if (data.shadowWidth) shadowWidth = data.shadowWidth;
           if (data.shadowOffset) shadowOffset = data.shadowOffset;
@@ -868,6 +885,7 @@
           <label>Sombra<input type="color" id="tool-shadow-color" value="#000000"></label>
         </div>
         <label>Ancho del cepillo <input type="range" id="tool-brush-width" min="1" max="100" value="2"></label>
+        <label>Tamaño texto <input type="number" id="tool-text-size" min="8" max="200" value="16" style="width:60px"></label>
         <label>Anchura del trazo <input type="range" id="tool-stroke-width" min="1" max="100" value="1"></label>
         <label>Ancho de sombra <input type="range" id="tool-shadow-width" min="0" max="50" value="0"></label>
         <label>Desplazamiento de <input type="range" id="tool-shadow-offset" min="0" max="50" value="0"></label>
@@ -881,6 +899,7 @@
 
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
+      const textSizeInput = drawToolbar.querySelector('#tool-text-size');
       const shadowColorInput = drawToolbar.querySelector('#tool-shadow-color');
       const shadowWidthInput = drawToolbar.querySelector('#tool-shadow-width');
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
@@ -891,6 +910,7 @@
 
       lineColorInput.addEventListener('input', e => { brushColor = e.target.value; saveBrushSettings(); });
       brushWidthInput.addEventListener('input', e => { brushWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
+      textSizeInput.addEventListener('input', e => { textSize = parseInt(e.target.value, 10); saveBrushSettings(); });
       shadowColorInput.addEventListener('input', e => { shadowColor = e.target.value; saveBrushSettings(); });
       shadowWidthInput.addEventListener('input', e => { shadowWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
       shadowOffsetInput.addEventListener('input', e => { shadowOffset = parseInt(e.target.value, 10); saveBrushSettings(); });
@@ -905,6 +925,7 @@
       function applyBrushSettings() {
         lineColorInput.value = brushColor;
         brushWidthInput.value = brushWidth;
+        textSizeInput.value = textSize;
         shadowColorInput.value = shadowColor;
         shadowWidthInput.value = shadowWidth;
         shadowOffsetInput.value = shadowOffset;
@@ -2069,7 +2090,7 @@
           }, 100);
         });
       }
-      function addDragHandlers(icon, targetLayer) {
+      function addDragHandlers(icon, targetLayer, saveCallback = saveNotesToFile) {
         let offsetX = 0, offsetY = 0; let isDragging = false; let startY = 0;
         function onMouseDown(e) {
           e.preventDefault(); e.stopPropagation();
@@ -2101,7 +2122,7 @@
           icon.classList.remove('dragging');
           const dragDistance = startY - e.clientY;
           if (dragDistance > 100 || icon.classList.contains('deleting')) {
-            icon.remove(); hidePopup(); setTimeout(saveNotesToFile, 100); return;
+            icon.remove(); hidePopup(); if (saveCallback) setTimeout(saveCallback, 100); return;
           }
           icon.classList.remove('deleting'); isDragging = false;
 
@@ -2112,9 +2133,10 @@
           icon.dataset.xp = String(left / pageWidth);
           icon.dataset.yp = String(top / pageHeight);
 
-          setTimeout(saveNotesToFile, 100);
+          if (saveCallback) setTimeout(saveCallback, 100);
         }
         icon.addEventListener('mousedown', onMouseDown);
+        icon._dragHandler = onMouseDown;
       }
 
       // ========================================
@@ -2720,6 +2742,83 @@
         } catch (e) {}
       }
 
+      function saveTextAnnotations(layer) {
+        if (!currentPdfKey) return;
+        const page = layer.dataset.page;
+        const texts = Array.from(layer.querySelectorAll('.draw-text')).map(el => ({
+          xp: parseFloat(el.dataset.xp || '0'),
+          yp: parseFloat(el.dataset.yp || '0'),
+          color: el.style.color,
+          size: parseInt(el.style.fontSize, 10) || textSize,
+          opacity: parseFloat(el.style.opacity || '1'),
+          content: el.innerHTML
+        }));
+        try {
+          localStorage.setItem(`text-${currentPdfKey}-page${page}`, JSON.stringify(texts));
+        } catch {}
+      }
+
+      function addTextElement(xp, yp, content, color, size, layer, opacity = 1) {
+        const div = document.createElement('div');
+        div.className = 'draw-text';
+        div.style.left = (xp * layer.offsetWidth) + 'px';
+        div.style.top = (yp * layer.offsetHeight) + 'px';
+        div.style.color = color;
+        div.style.fontSize = size + 'px';
+        div.style.opacity = opacity;
+        div.innerHTML = content;
+        div.dataset.xp = xp;
+        div.dataset.yp = yp;
+        addDragHandlers(div, layer, () => saveTextAnnotations(layer));
+        div.addEventListener('dblclick', () => editDrawText(div, layer));
+        layer.appendChild(div);
+      }
+
+      function editDrawText(el, layer) {
+        el.removeEventListener('mousedown', el._dragHandler);
+        el.contentEditable = 'true';
+        el.classList.add('draw-text-input');
+        el.focus();
+        const finish = () => {
+          el.removeEventListener('blur', finish);
+          el.contentEditable = 'false';
+          el.classList.remove('draw-text-input');
+          addDragHandlers(el, layer, () => saveTextAnnotations(layer));
+          saveTextAnnotations(layer);
+        };
+        el.addEventListener('blur', finish);
+      }
+
+      function createDrawTextInput(canvas, x, y) {
+        const layer = canvas.parentElement.querySelector('.anno-layer');
+        const div = document.createElement('div');
+        div.className = 'draw-text draw-text-input';
+        div.contentEditable = 'true';
+        div.style.left = x + 'px';
+        div.style.top = y + 'px';
+        div.style.color = brushColor;
+        div.style.fontSize = textSize + 'px';
+        div.style.opacity = brushOpacity;
+        div.style.textShadow = `${shadowOffset}px ${shadowOffset}px ${shadowWidth}px ${shadowColor}`;
+        layer.appendChild(div);
+        const finish = () => {
+          div.removeEventListener('blur', finish);
+          div.contentEditable = 'false';
+          div.classList.remove('draw-text-input');
+          const pageWidth = layer.offsetWidth;
+          const pageHeight = layer.offsetHeight;
+          const left = parseFloat(div.style.left || '0');
+          const top = parseFloat(div.style.top || '0');
+          div.dataset.xp = left / pageWidth;
+          div.dataset.yp = top / pageHeight;
+          addDragHandlers(div, layer, () => saveTextAnnotations(layer));
+          div.addEventListener('dblclick', () => editDrawText(div, layer));
+          saveTextAnnotations(layer);
+        };
+        div.addEventListener('blur', finish);
+        div.focus();
+      }
+
       function loadDrawingsFromStorage() {
         if (!currentPdfKey) return;
         let found = false;
@@ -2733,9 +2832,21 @@
             found = true;
           }
         });
+        document.querySelectorAll('.anno-layer').forEach(layer => loadTextAnnotations(layer));
         drawMode = true;
         updateDrawMode();
         drawToolbar.classList.remove('active');
+      }
+
+      function loadTextAnnotations(layer) {
+        if (!currentPdfKey) return;
+        const page = layer.dataset.page;
+        const data = localStorage.getItem(`text-${currentPdfKey}-page${page}`);
+        if (!data) return;
+        try {
+          const texts = JSON.parse(data);
+          texts.forEach(t => addTextElement(t.xp, t.yp, t.content, t.color || brushColor, t.size || textSize, layer, t.opacity || 1));
+        } catch {}
       }
 
       function clearAllDrawings() {
@@ -2746,25 +2857,17 @@
           canvas._history = [];
           localStorage.removeItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
         });
+        document.querySelectorAll('.anno-layer').forEach(layer => {
+          layer.querySelectorAll('.draw-text').forEach(el => el.remove());
+          localStorage.removeItem(`text-${currentPdfKey}-page${layer.dataset.page}`);
+        });
       }
 
       function startDraw(e) {
         if (!drawMode) return;
         const canvas = e.target;
         if (writeMode) {
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = brushColor;
-          ctx.globalAlpha = brushOpacity;
-          ctx.shadowColor = shadowColor;
-          ctx.shadowBlur = shadowWidth;
-          ctx.shadowOffsetX = shadowOffset;
-          ctx.shadowOffsetY = shadowOffset;
-          ctx.font = `${brushWidth * 4}px sans-serif`;
-          const text = prompt('Texto:');
-          if (text) {
-            ctx.fillText(text, e.offsetX, e.offsetY);
-            saveDrawing(canvas);
-          }
+          createDrawTextInput(canvas, e.offsetX, e.offsetY);
           writeMode = false;
           return;
         }
