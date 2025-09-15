@@ -188,10 +188,25 @@
       pointer-events: auto;
       display: none;
     }
-    #draw-indicator.active { display: block; }
-    .draw-canvas { position: absolute; top: 0; left: 0; z-index: 800; }
+  #draw-indicator.active { display: block; }
+  .draw-canvas { position: absolute; top: 0; left: 0; z-index: 800; }
 
-    #draw-toolbar {
+    .free-text {
+      position: absolute;
+      z-index: 850;
+      background: transparent;
+      border: none;
+      outline: none;
+      pointer-events: auto;
+      white-space: pre-wrap;
+      cursor: move;
+    }
+    .free-text[contenteditable="true"] {
+      background: rgba(0,0,0,0.2);
+      cursor: text;
+    }
+
+  #draw-toolbar {
       position: fixed;
       top: 40px;
       right: 10px;
@@ -827,6 +842,7 @@
       let shadowOffset = 0;
       let brushOpacity = 1;
       let eraseMode = false;
+      let textSize = 16;
 
       const BRUSH_SETTINGS_KEY = 'draw-settings';
 
@@ -839,7 +855,8 @@
             shadowWidth,
             shadowOffset,
             brushOpacity,
-            redrawDelay
+            redrawDelay,
+            textSize
           }));
         } catch {}
       }
@@ -854,6 +871,7 @@
           if (data.shadowOffset) shadowOffset = data.shadowOffset;
           if (typeof data.brushOpacity === 'number') brushOpacity = data.brushOpacity;
           if (typeof data.redrawDelay === 'number') redrawDelay = data.redrawDelay;
+          if (typeof data.textSize === 'number') textSize = data.textSize;
         } catch {}
       }
 
@@ -868,6 +886,7 @@
           <label>Sombra<input type="color" id="tool-shadow-color" value="#000000"></label>
         </div>
         <label>Ancho del cepillo <input type="range" id="tool-brush-width" min="1" max="100" value="2"></label>
+        <label>Tamaño texto <input type="number" id="tool-text-size" min="8" max="200" value="16" style="width:60px;"></label>
         <label>Anchura del trazo <input type="range" id="tool-stroke-width" min="1" max="100" value="1"></label>
         <label>Ancho de sombra <input type="range" id="tool-shadow-width" min="0" max="50" value="0"></label>
         <label>Desplazamiento de <input type="range" id="tool-shadow-offset" min="0" max="50" value="0"></label>
@@ -881,6 +900,7 @@
 
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
+      const textSizeInput = drawToolbar.querySelector('#tool-text-size');
       const shadowColorInput = drawToolbar.querySelector('#tool-shadow-color');
       const shadowWidthInput = drawToolbar.querySelector('#tool-shadow-width');
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
@@ -891,6 +911,7 @@
 
       lineColorInput.addEventListener('input', e => { brushColor = e.target.value; saveBrushSettings(); });
       brushWidthInput.addEventListener('input', e => { brushWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
+      textSizeInput.addEventListener('input', e => { textSize = parseInt(e.target.value, 10) || 16; saveBrushSettings(); });
       shadowColorInput.addEventListener('input', e => { shadowColor = e.target.value; saveBrushSettings(); });
       shadowWidthInput.addEventListener('input', e => { shadowWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
       shadowOffsetInput.addEventListener('input', e => { shadowOffset = parseInt(e.target.value, 10); saveBrushSettings(); });
@@ -910,6 +931,7 @@
         shadowOffsetInput.value = shadowOffset;
         opacityInput.value = brushOpacity;
         redrawDelayInput.value = redrawDelay;
+        textSizeInput.value = textSize;
       }
 
       loadBrushSettings();
@@ -2733,6 +2755,7 @@
             found = true;
           }
         });
+        document.querySelectorAll('.page-wrapper').forEach(wrapper => loadTexts(wrapper));
         drawMode = true;
         updateDrawMode();
         drawToolbar.classList.remove('active');
@@ -2746,25 +2769,100 @@
           canvas._history = [];
           localStorage.removeItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
         });
+        document.querySelectorAll('.page-wrapper').forEach(wrapper => {
+          wrapper.querySelectorAll('.free-text').forEach(el => el.remove());
+          localStorage.removeItem(`text-${currentPdfKey}-page${wrapper.dataset.pageNum}`);
+        });
+      }
+
+      function saveTexts(wrapper) {
+        if (!currentPdfKey) return;
+        const pageNum = wrapper.dataset.pageNum;
+        const texts = Array.from(wrapper.querySelectorAll('.free-text')).map(el => ({
+          text: el.innerText,
+          x: parseInt(el.style.left, 10) || 0,
+          y: parseInt(el.style.top, 10) || 0,
+          color: el.style.color,
+          size: parseInt(el.style.fontSize, 10) || textSize
+        }));
+        try {
+          localStorage.setItem(`text-${currentPdfKey}-page${pageNum}`, JSON.stringify(texts));
+        } catch {}
+      }
+
+      function loadTexts(wrapper) {
+        if (!currentPdfKey) return;
+        const pageNum = wrapper.dataset.pageNum;
+        const data = localStorage.getItem(`text-${currentPdfKey}-page${pageNum}`);
+        if (!data) return;
+        try {
+          const texts = JSON.parse(data);
+          texts.forEach(t => createTextBox(wrapper, t.x, t.y, t.text, t.size, t.color, false));
+        } catch {}
+      }
+
+      function createTextBox(wrapper, x, y, content = '', size = textSize, color = brushColor, focus = true) {
+        const div = document.createElement('div');
+        div.className = 'free-text';
+        div.style.left = x + 'px';
+        div.style.top = y + 'px';
+        div.style.color = color;
+        div.style.fontSize = size + 'px';
+        div.contentEditable = 'true';
+        wrapper.appendChild(div);
+        if (content) div.textContent = content;
+
+        function finish(silent = false) {
+          div.contentEditable = 'false';
+          if (!silent) saveTexts(wrapper);
+        }
+
+        div.addEventListener('blur', () => finish());
+        div.addEventListener('keydown', ev => {
+          if (ev.key === 'Enter') {
+            ev.preventDefault();
+            document.execCommand('insertHTML', false, '\n');
+          }
+        });
+        div.addEventListener('dblclick', () => {
+          div.contentEditable = 'true';
+          div.focus();
+        });
+
+        let dragging = false, offsetX, offsetY;
+        div.addEventListener('pointerdown', ev => {
+          if (div.contentEditable === 'true') return;
+          dragging = true;
+          offsetX = ev.clientX - div.offsetLeft;
+          offsetY = ev.clientY - div.offsetTop;
+          div.setPointerCapture(ev.pointerId);
+        });
+        div.addEventListener('pointermove', ev => {
+          if (!dragging) return;
+          div.style.left = (ev.clientX - offsetX) + 'px';
+          div.style.top = (ev.clientY - offsetY) + 'px';
+        });
+        div.addEventListener('pointerup', ev => {
+          if (!dragging) return;
+          dragging = false;
+          div.releasePointerCapture(ev.pointerId);
+          saveTexts(wrapper);
+        });
+
+        if (focus) {
+          div.focus();
+        } else {
+          finish(true);
+        }
+        return div;
       }
 
       function startDraw(e) {
         if (!drawMode) return;
         const canvas = e.target;
         if (writeMode) {
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = brushColor;
-          ctx.globalAlpha = brushOpacity;
-          ctx.shadowColor = shadowColor;
-          ctx.shadowBlur = shadowWidth;
-          ctx.shadowOffsetX = shadowOffset;
-          ctx.shadowOffsetY = shadowOffset;
-          ctx.font = `${brushWidth * 4}px sans-serif`;
-          const text = prompt('Texto:');
-          if (text) {
-            ctx.fillText(text, e.offsetX, e.offsetY);
-            saveDrawing(canvas);
-          }
+          const wrapper = canvas.parentElement;
+          createTextBox(wrapper, e.offsetX, e.offsetY);
           writeMode = false;
           return;
         }
