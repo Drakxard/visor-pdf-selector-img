@@ -190,6 +190,77 @@
     }
     #draw-indicator.active { display: block; }
     .draw-canvas { position: absolute; top: 0; left: 0; z-index: 800; }
+    .text-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 805;
+      pointer-events: none;
+    }
+    .text-layer.allow-pointer { pointer-events: auto; }
+    .text-layer.allow-pointer .draw-text { pointer-events: auto; }
+    .draw-text {
+      position: absolute;
+      color: #ff0000;
+      white-space: pre-wrap;
+      cursor: grab;
+      user-select: none;
+      pointer-events: none;
+    }
+    .draw-text:active { cursor: grabbing; }
+    .text-overlay {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(480px, 80vw);
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+      background: transparent;
+      backdrop-filter: blur(2px);
+      z-index: 2200;
+    }
+    body.light-mode .text-overlay { border-color: rgba(0,0,0,0.3); }
+    .text-overlay.visible { display: flex; }
+    .text-overlay textarea {
+      min-height: 120px;
+      resize: vertical;
+      width: 100%;
+      background: transparent;
+      color: inherit;
+      border: 1px solid currentColor;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    body.light-mode .text-overlay textarea { color: #111; }
+    .text-overlay textarea::placeholder { color: currentColor; opacity: 0.6; }
+    .text-overlay-footer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .text-overlay-footer button,
+    .text-overlay-footer label {
+      font-size: 12px;
+    }
+    .text-overlay-footer button {
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid currentColor;
+      background: rgba(0,0,0,0.1);
+      color: inherit;
+      cursor: pointer;
+    }
+    body.light-mode .text-overlay-footer button { background: rgba(0,0,0,0.05); }
+    .text-overlay-footer button:hover { background: rgba(255,255,255,0.1); }
+    body.light-mode .text-overlay-footer button:hover { background: rgba(0,0,0,0.1); }
 
     #draw-toolbar {
       position: fixed;
@@ -612,6 +683,11 @@
             drawCanvas.width = w;
             drawCanvas.height = h;
           }
+          const textLayer = state.wrapper.querySelector('.text-layer');
+          if (textLayer) {
+            textLayer.style.width = w + 'px';
+            textLayer.style.height = h + 'px';
+          }
           if (pageNum === cur) {
             state.renderedScale = 0;
             scheduleRender(pageNum);
@@ -620,6 +696,7 @@
         currentPage = cur;
         clearTimeout(redrawTimer);
         redrawTimer = setTimeout(loadDrawingsFromStorage, redrawDelay);
+        refreshAllTextAnnotations();
       }
 
       window.addEventListener('message', (e) => {
@@ -819,6 +896,14 @@
       let redrawDelay = 200;
       let redrawTimer = null;
       let writeMode = false;
+      const textAnnotations = new Map(); // pageNum -> annotation[]
+      const elementAnnotation = new WeakMap();
+      let pendingText = '';
+      let editingText = null;
+      let textOverlayVisible = false;
+      let draggedText = null;
+      let dragOffsetX = 0;
+      let dragOffsetY = 0;
 
       let brushColor = '#ff0000';
       let brushWidth = 2;
@@ -868,6 +953,7 @@
           <label>Sombra<input type="color" id="tool-shadow-color" value="#000000"></label>
         </div>
         <label>Ancho del cepillo <input type="range" id="tool-brush-width" min="1" max="100" value="2"></label>
+        <label>Pixeles del trazo <input type="number" id="tool-brush-width-number" min="1" max="200" value="2"></label>
         <label>Anchura del trazo <input type="range" id="tool-stroke-width" min="1" max="100" value="1"></label>
         <label>Ancho de sombra <input type="range" id="tool-shadow-width" min="0" max="50" value="0"></label>
         <label>Desplazamiento de <input type="range" id="tool-shadow-offset" min="0" max="50" value="0"></label>
@@ -879,8 +965,310 @@
       `;
       document.body.appendChild(drawToolbar);
 
+      const textOverlay = document.createElement('div');
+      textOverlay.className = 'text-overlay';
+      textOverlay.innerHTML = `
+        <textarea id="draw-text-input" placeholder="Escribe el texto…"></textarea>
+        <div class="text-overlay-footer">
+          <span>Tamaño actual: <strong id="text-size-preview">0</strong> px</span>
+          <div class="text-overlay-actions">
+            <button id="text-overlay-cancel" type="button">Cerrar</button>
+            <button id="text-overlay-apply" type="button">Aplicar</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(textOverlay);
+
+      const textInput = textOverlay.querySelector('#draw-text-input');
+      const textApplyBtn = textOverlay.querySelector('#text-overlay-apply');
+      const textCancelBtn = textOverlay.querySelector('#text-overlay-cancel');
+      const textSizePreview = textOverlay.querySelector('#text-size-preview');
+
+      function showTextOverlay(mode = 'new', annotation = null) {
+        textOverlay.dataset.mode = mode;
+        textOverlayVisible = true;
+        textOverlay.classList.add('visible');
+        if (mode === 'edit' && annotation) {
+          editingText = annotation;
+          textInput.value = annotation.text || '';
+        } else {
+          editingText = null;
+          textInput.value = pendingText || '';
+        }
+        requestAnimationFrame(() => {
+          textInput.focus();
+          textInput.select();
+        });
+      }
+
+      function hideTextOverlay() {
+        if (!textOverlayVisible) return;
+        textOverlayVisible = false;
+        textOverlay.classList.remove('visible');
+        textOverlay.removeAttribute('data-mode');
+      }
+
+      function updateWriteModeUI() {
+        document.querySelectorAll('.text-layer').forEach(layer => {
+          layer.classList.toggle('allow-pointer', !writeMode);
+        });
+        if (!writeMode) {
+          if ((textOverlay.dataset.mode || 'new') === 'new') {
+            hideTextOverlay();
+          }
+        } else if (textOverlayVisible) {
+          textOverlay.classList.add('visible');
+        }
+      }
+
+      function applyTextOverlay() {
+        const value = textInput.value;
+        const mode = textOverlay.dataset.mode || 'new';
+        if (mode === 'edit' && editingText) {
+          editingText.text = value;
+          if (editingText.elem) {
+            editingText.elem.textContent = value;
+          }
+          saveTextAnnotations(editingText.page);
+          editingText = null;
+          hideTextOverlay();
+          return;
+        }
+        if (!value.trim()) {
+          showToast('Ingresa texto para continuar', 'info');
+          return;
+        }
+        pendingText = value;
+        hideTextOverlay();
+        showToast('Haz click en el PDF para colocar el texto', 'info');
+      }
+
+      function cancelTextOverlay() {
+        const mode = textOverlay.dataset.mode || 'new';
+        if (mode === 'edit') {
+          editingText = null;
+          hideTextOverlay();
+          return;
+        }
+        hideTextOverlay();
+        writeMode = false;
+        updateWriteModeUI();
+      }
+
+      textApplyBtn.addEventListener('click', () => {
+        applyTextOverlay();
+      });
+      textCancelBtn.addEventListener('click', () => {
+        cancelTextOverlay();
+      });
+      textInput.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          cancelTextOverlay();
+        } else if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+          ev.preventDefault();
+          applyTextOverlay();
+        }
+      });
+
+      function getAnnotationList(pageNum) {
+        const key = String(pageNum);
+        if (!textAnnotations.has(key)) {
+          textAnnotations.set(key, []);
+        }
+        return textAnnotations.get(key);
+      }
+
+      function updateAnnotationElement(annotation, layer) {
+        if (!annotation.elem) return;
+        const width = layer.clientWidth || layer.offsetWidth || 1;
+        const height = layer.clientHeight || layer.offsetHeight || 1;
+        annotation.elem.style.left = annotation.xRatio * width + 'px';
+        annotation.elem.style.top = annotation.yRatio * height + 'px';
+        annotation.elem.style.color = annotation.color;
+        annotation.elem.style.fontSize = annotation.fontRatio * width + 'px';
+        annotation.elem.style.opacity = annotation.opacity != null ? annotation.opacity : 1;
+        const blur = annotation.shadowBlur || 0;
+        const offset = annotation.shadowOffset || 0;
+        if (blur > 0 || offset !== 0) {
+          annotation.elem.style.textShadow = `${offset}px ${offset}px ${blur}px ${annotation.shadowColor || 'rgba(0,0,0,0.5)'}`;
+        } else {
+          annotation.elem.style.textShadow = 'none';
+        }
+      }
+
+      function renderAnnotation(annotation) {
+        const wrapper = container.querySelector(`.page-wrapper[data-page-num="${annotation.page}"]`);
+        if (!wrapper) return;
+        const layer = wrapper.querySelector('.text-layer');
+        if (!layer) return;
+        if (!annotation.elem) {
+          const elem = document.createElement('div');
+          elem.className = 'draw-text';
+          elem.dataset.id = annotation.id;
+          elem.textContent = annotation.text;
+          elem.addEventListener('pointerdown', (ev) => {
+            if (writeMode) return;
+            draggedText = elem;
+            const rect = layer.getBoundingClientRect();
+            dragOffsetX = ev.clientX - rect.left - (annotation.xRatio * (layer.clientWidth || rect.width));
+            dragOffsetY = ev.clientY - rect.top - (annotation.yRatio * (layer.clientHeight || rect.height));
+            elem.setPointerCapture(ev.pointerId);
+            elem.addEventListener('pointermove', onTextPointerMove);
+            elem.addEventListener('pointerup', onTextPointerUp);
+            elem.addEventListener('pointercancel', onTextPointerUp);
+            ev.stopPropagation();
+          });
+          elem.addEventListener('dblclick', (ev) => {
+            ev.stopPropagation();
+            showTextOverlay('edit', annotation);
+          });
+          annotation.elem = elem;
+          elementAnnotation.set(elem, annotation);
+          layer.appendChild(elem);
+        }
+        updateAnnotationElement(annotation, layer);
+      }
+
+      function onTextPointerMove(ev) {
+        if (!draggedText) return;
+        const annotation = elementAnnotation.get(draggedText);
+        if (!annotation) return;
+        const layer = draggedText.closest('.text-layer');
+        if (!layer) return;
+        const rect = layer.getBoundingClientRect();
+        const width = layer.clientWidth || rect.width || 1;
+        const height = layer.clientHeight || rect.height || 1;
+        let x = ev.clientX - rect.left - dragOffsetX;
+        let y = ev.clientY - rect.top - dragOffsetY;
+        x = Math.max(0, Math.min(width, x));
+        y = Math.max(0, Math.min(height, y));
+        annotation.xRatio = width ? x / width : 0;
+        annotation.yRatio = height ? y / height : 0;
+        updateAnnotationElement(annotation, layer);
+      }
+
+      function onTextPointerUp(ev) {
+        if (!draggedText) return;
+        const annotation = elementAnnotation.get(draggedText);
+        if (!annotation) return;
+        const elem = draggedText;
+        draggedText = null;
+        try { elem.releasePointerCapture(ev.pointerId); } catch {}
+        elem.removeEventListener('pointermove', onTextPointerMove);
+        elem.removeEventListener('pointerup', onTextPointerUp);
+        elem.removeEventListener('pointercancel', onTextPointerUp);
+        saveTextAnnotations(annotation.page);
+      }
+
+      function refreshAllTextAnnotations() {
+        textAnnotations.forEach((list) => {
+          list.forEach(annotation => renderAnnotation(annotation));
+        });
+      }
+
+      function saveTextAnnotations(pageNum) {
+        if (!currentPdfKey) return;
+        const list = getAnnotationList(pageNum);
+        const data = list.map(({ id, text, xRatio, yRatio, color, fontRatio, opacity, shadowColor, shadowBlur, shadowOffset }) => ({
+          id,
+          text,
+          xRatio,
+          yRatio,
+          color,
+          fontRatio,
+          opacity,
+          shadowColor,
+          shadowBlur,
+          shadowOffset
+        }));
+        try {
+          localStorage.setItem(`text-${currentPdfKey}-page${pageNum}`, JSON.stringify(data));
+        } catch {}
+      }
+
+      function loadTextAnnotationsFromStorage() {
+        if (!currentPdfKey) return;
+        document.querySelectorAll('.text-layer').forEach(layer => {
+          layer.innerHTML = '';
+        });
+        textAnnotations.clear();
+        document.querySelectorAll('.page-wrapper').forEach(wrapper => {
+          const pageNum = wrapper.dataset.pageNum;
+          const stored = localStorage.getItem(`text-${currentPdfKey}-page${pageNum}`);
+          if (!stored) return;
+          try {
+            const entries = JSON.parse(stored);
+            const list = getAnnotationList(pageNum);
+            entries.forEach(item => {
+              const annotation = {
+                id: item.id || `text-${Date.now()}-${Math.random()}`,
+                page: pageNum,
+                text: item.text || '',
+                xRatio: typeof item.xRatio === 'number' ? item.xRatio : 0,
+                yRatio: typeof item.yRatio === 'number' ? item.yRatio : 0,
+                color: item.color || brushColor,
+                fontRatio: typeof item.fontRatio === 'number' ? item.fontRatio : (brushWidth * 4) / (wrapper.querySelector('.draw-canvas')?.width || 1),
+                opacity: typeof item.opacity === 'number' ? item.opacity : 1,
+                shadowColor: item.shadowColor || shadowColor,
+                shadowBlur: typeof item.shadowBlur === 'number' ? item.shadowBlur : shadowWidth,
+                shadowOffset: typeof item.shadowOffset === 'number' ? item.shadowOffset : shadowOffset,
+                elem: null
+              };
+              list.push(annotation);
+              renderAnnotation(annotation);
+            });
+          } catch (err) {
+            console.error('Error cargando textos guardados', err);
+          }
+        });
+        updateWriteModeUI();
+      }
+
+      function clearPageText(pageNum) {
+        const list = textAnnotations.get(String(pageNum));
+        if (list) {
+          list.forEach(annotation => {
+            if (annotation.elem && annotation.elem.parentNode) {
+              annotation.elem.parentNode.removeChild(annotation.elem);
+            }
+          });
+        }
+        textAnnotations.delete(String(pageNum));
+        if (currentPdfKey) {
+          try { localStorage.removeItem(`text-${currentPdfKey}-page${pageNum}`); } catch {}
+        }
+      }
+
+      function drawTextAnnotationsOnContext(ctx, pageNum, width, height) {
+        const list = textAnnotations.get(String(pageNum));
+        if (!list || !list.length) return;
+        ctx.save();
+        ctx.textBaseline = 'top';
+        list.forEach(annotation => {
+          const fontSize = annotation.fontRatio * width;
+          if (!fontSize) return;
+          const lines = String(annotation.text || '').split(/\r?\n/);
+          const lineHeight = fontSize * 1.2;
+          ctx.font = `${fontSize}px sans-serif`;
+          ctx.fillStyle = annotation.color || '#ff0000';
+          ctx.globalAlpha = annotation.opacity != null ? annotation.opacity : 1;
+          ctx.shadowColor = annotation.shadowColor || 'rgba(0,0,0,0)';
+          ctx.shadowBlur = annotation.shadowBlur || 0;
+          ctx.shadowOffsetX = annotation.shadowOffset || 0;
+          ctx.shadowOffsetY = annotation.shadowOffset || 0;
+          const baseX = annotation.xRatio * width;
+          const baseY = annotation.yRatio * height;
+          lines.forEach((line, idx) => {
+            ctx.fillText(line, baseX, baseY + idx * lineHeight);
+          });
+        });
+        ctx.restore();
+      }
+
       const lineColorInput = drawToolbar.querySelector('#tool-line-color');
       const brushWidthInput = drawToolbar.querySelector('#tool-brush-width');
+      const brushWidthNumberInput = drawToolbar.querySelector('#tool-brush-width-number');
       const shadowColorInput = drawToolbar.querySelector('#tool-shadow-color');
       const shadowWidthInput = drawToolbar.querySelector('#tool-shadow-width');
       const shadowOffsetInput = drawToolbar.querySelector('#tool-shadow-offset');
@@ -889,8 +1277,29 @@
       const eraseBtn = drawToolbar.querySelector('#tool-erase-btn');
       const clearAllBtn = drawToolbar.querySelector('#tool-clear-all');
 
+      function updateTextSizePreview() {
+        if (textSizePreview) {
+          textSizePreview.textContent = String(Math.round(brushWidth * 4));
+        }
+      }
+
       lineColorInput.addEventListener('input', e => { brushColor = e.target.value; saveBrushSettings(); });
-      brushWidthInput.addEventListener('input', e => { brushWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
+      brushWidthInput.addEventListener('input', e => {
+        brushWidth = parseInt(e.target.value, 10);
+        brushWidthNumberInput.value = String(brushWidth);
+        updateTextSizePreview();
+        saveBrushSettings();
+      });
+      brushWidthNumberInput.addEventListener('input', e => {
+        let value = parseInt(e.target.value, 10);
+        if (isNaN(value)) value = brushWidth;
+        value = Math.min(200, Math.max(1, value));
+        brushWidth = value;
+        brushWidthInput.value = String(value);
+        brushWidthNumberInput.value = String(value);
+        updateTextSizePreview();
+        saveBrushSettings();
+      });
       shadowColorInput.addEventListener('input', e => { shadowColor = e.target.value; saveBrushSettings(); });
       shadowWidthInput.addEventListener('input', e => { shadowWidth = parseInt(e.target.value, 10); saveBrushSettings(); });
       shadowOffsetInput.addEventListener('input', e => { shadowOffset = parseInt(e.target.value, 10); saveBrushSettings(); });
@@ -905,11 +1314,13 @@
       function applyBrushSettings() {
         lineColorInput.value = brushColor;
         brushWidthInput.value = brushWidth;
+        brushWidthNumberInput.value = brushWidth;
         shadowColorInput.value = shadowColor;
         shadowWidthInput.value = shadowWidth;
         shadowOffsetInput.value = shadowOffset;
         opacityInput.value = brushOpacity;
         redrawDelayInput.value = redrawDelay;
+        updateTextSizePreview();
       }
 
       loadBrushSettings();
@@ -1222,6 +1633,11 @@
           drawCanvas.addEventListener('pointerleave', endDraw);
           wrapper.appendChild(drawCanvas);
 
+          const textLayer = document.createElement('div');
+          textLayer.className = 'text-layer';
+          textLayer.dataset.page = String(pageNum);
+          wrapper.appendChild(textLayer);
+
           const layer = document.createElement('div');
           layer.className = 'anno-layer';
           layer.style.width = w + 'px';
@@ -1324,6 +1740,7 @@
         pageStates.clear();
         visibleSet.clear();
         renderQueue.length = 0;
+        textAnnotations.clear();
 
         while (container.firstChild) container.removeChild(container.firstChild);
 
@@ -1573,10 +1990,20 @@
           return;
         }
 
-        if (!isEditing && drawMode && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'a' && !writeMode) {
+        if (!isEditing && drawMode && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'a') {
           e.preventDefault();
-          writeMode = true;
-          showToast('Click para escribir', 'info');
+          if (!writeMode) {
+            writeMode = true;
+            showTextOverlay('new');
+            showToast('Escribe el texto y da clic en el PDF', 'info');
+          } else if (textOverlayVisible) {
+            writeMode = false;
+            hideTextOverlay();
+            showToast('Modo texto desactivado', 'info');
+          } else {
+            showTextOverlay('new');
+          }
+          updateWriteModeUI();
           return;
         }
 
@@ -2391,7 +2818,13 @@
           sy2 = Math.round(Math.min(yp1, yp2) * drawCanvas.height);
           sw2 = Math.max(1, Math.round(Math.abs(xp2 - xp1) * drawCanvas.width));
           sh2 = Math.max(1, Math.round(Math.abs(yp2 - yp1) * drawCanvas.height));
-          ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
+          const temp = document.createElement('canvas');
+          temp.width = drawCanvas.width;
+          temp.height = drawCanvas.height;
+          const tctx = temp.getContext('2d');
+          tctx.drawImage(drawCanvas, 0, 0);
+          drawTextAnnotationsOnContext(tctx, pageNum, temp.width, temp.height);
+          ctx.drawImage(temp, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
         }
 
         const overlay = document.createElement('div');
@@ -2521,7 +2954,13 @@
             octx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
             const drawCanvas = state.wrapper.querySelector('.draw-canvas');
             if (drawCanvas) {
-              octx.drawImage(drawCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+              const temp = document.createElement('canvas');
+              temp.width = drawCanvas.width;
+              temp.height = drawCanvas.height;
+              const tctx = temp.getContext('2d');
+              tctx.drawImage(drawCanvas, 0, 0);
+              drawTextAnnotationsOnContext(tctx, s.pageNum, temp.width, temp.height);
+              octx.drawImage(temp, sx, sy, sw, sh, 0, 0, sw, sh);
             }
 
             const blob = await new Promise(resolve => out.toBlob(resolve, 'image/png', 0.92));
@@ -2711,6 +3150,7 @@
         canvases.forEach(c => c.style.pointerEvents = drawMode ? 'auto' : 'none');
         drawIndicator.classList.toggle('active', drawMode);
         if (!drawMode) drawToolbar.classList.remove('active');
+        updateWriteModeUI();
       }
 
       function saveDrawing(canvas) {
@@ -2733,8 +3173,11 @@
             found = true;
           }
         });
+        loadTextAnnotationsFromStorage();
         drawMode = true;
         updateDrawMode();
+        writeMode = false;
+        updateWriteModeUI();
         drawToolbar.classList.remove('active');
       }
 
@@ -2745,27 +3188,45 @@
           ctx.clearRect(0, 0, canvas.width, canvas.height);
           canvas._history = [];
           localStorage.removeItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
+          clearPageText(canvas.dataset.page);
         });
+        updateWriteModeUI();
       }
 
       function startDraw(e) {
         if (!drawMode) return;
         const canvas = e.target;
         if (writeMode) {
-          const ctx = canvas.getContext('2d');
-          ctx.fillStyle = brushColor;
-          ctx.globalAlpha = brushOpacity;
-          ctx.shadowColor = shadowColor;
-          ctx.shadowBlur = shadowWidth;
-          ctx.shadowOffsetX = shadowOffset;
-          ctx.shadowOffsetY = shadowOffset;
-          ctx.font = `${brushWidth * 4}px sans-serif`;
-          const text = prompt('Texto:');
-          if (text) {
-            ctx.fillText(text, e.offsetX, e.offsetY);
-            saveDrawing(canvas);
+          if (!pendingText.trim()) {
+            showTextOverlay('new');
+            return;
           }
-          writeMode = false;
+          const wrapper = canvas.closest('.page-wrapper');
+          const textLayer = wrapper?.querySelector('.text-layer');
+          if (!textLayer) return;
+          const page = wrapper.dataset.pageNum;
+          const width = canvas.width || textLayer.clientWidth || 1;
+          const height = canvas.height || textLayer.clientHeight || 1;
+          const annotation = {
+            id: `text-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            page,
+            text: pendingText,
+            xRatio: width ? e.offsetX / width : 0,
+            yRatio: height ? e.offsetY / height : 0,
+            color: brushColor,
+            fontRatio: width ? (brushWidth * 4) / width : 0,
+            opacity: brushOpacity,
+            shadowColor,
+            shadowBlur: shadowWidth,
+            shadowOffset: shadowOffset,
+            elem: null
+          };
+          const list = getAnnotationList(page);
+          list.push(annotation);
+          renderAnnotation(annotation);
+          saveTextAnnotations(page);
+          refreshAllTextAnnotations();
+          updateWriteModeUI();
           return;
         }
         isDrawing = true;
