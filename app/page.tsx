@@ -15,6 +15,14 @@ type PdfFile = {
   url?: string
 }
 
+type DirectoryEntry = {
+  path: string
+  name: string
+  parent: string | null
+  subdirs: string[]
+  files: PdfFile[]
+}
+
 const DB_NAME = "folder-handle-db"
 const STORE_NAME = "handles"
 
@@ -86,9 +94,10 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
-  const [weeks, setWeeks] = useState<string[]>([])
   const [dirFiles, setDirFiles] = useState<File[]>([])
-  const [fileTree, setFileTree] = useState<Record<string, PdfFile[]>>({})
+  const [directoryTree, setDirectoryTree] = useState<
+    Record<string, DirectoryEntry>
+  >({})
   const [completed, setCompleted] = useState<Record<string, boolean>>({})
   const [currentPdf, setCurrentPdf] = useState<PdfFile | null>(null)
   const [queue, setQueue] = useState<PdfFile[]>([])
@@ -343,19 +352,6 @@ export default function Home() {
     }
   }, [step, dirFiles])
 
-  useEffect(() => {
-    const dirs: string[] = []
-    dirFiles.forEach((f) => {
-      const rel = ((f as any).webkitRelativePath || "") as string
-      const parts = rel.split("/")
-      if (parts.length > 1) {
-        const folder = parts[1]
-        if (folder && folder !== "system" && !dirs.includes(folder)) dirs.push(folder)
-      }
-    })
-    setWeeks(dirs)
-  }, [dirFiles])
-
   // complete setup automatically when config is checked
   useEffect(() => {
     if (step === 1 && configFound !== null) {
@@ -466,35 +462,74 @@ export default function Home() {
   }, [practice])
 
 
-  // build tree from selected directory
+  // build directory structure from selected directory
   useEffect(() => {
-    const tree: Record<string, PdfFile[]> = {}
-    for (const file of dirFiles) {
-      const rel = (file as any).webkitRelativePath || ""
-      if (rel.split("/").includes("system")) continue
-      const parts = rel.split("/") || []
-      if (parts.length > 1) {
-        const folder = parts[1]
-        if (!tree[folder]) tree[folder] = []
-        if (file.name.toLowerCase().endsWith(".pdf")) {
-          tree[folder].push({
-            file,
-            path: parts.slice(1).join("/"),
-            week: folder,
-            subject: "",
-            tableType: "theory",
-            isPdf: true,
-          })
+    const map = new Map<string, DirectoryEntry>()
+
+    const ensureDir = (path: string) => {
+      if (map.has(path)) return map.get(path)!
+      const segments = path.split("/").filter(Boolean)
+      const name = segments.length ? segments[segments.length - 1] : ""
+      const parentPath = segments.slice(0, -1).join("/")
+      const parent = segments.length ? parentPath : null
+      const entry: DirectoryEntry = {
+        path,
+        name,
+        parent,
+        subdirs: [],
+        files: [],
+      }
+      map.set(path, entry)
+      if (parent !== null) {
+        const parentEntry = ensureDir(parent)
+        if (!parentEntry.subdirs.includes(path)) {
+          parentEntry.subdirs.push(path)
         }
       }
+      return entry
     }
-    setFileTree(tree)
+
+    ensureDir("")
+
+    for (const file of dirFiles) {
+      const rel = (file as any).webkitRelativePath || ""
+      const parts = rel.split("/").slice(1)
+      if (!parts.length) continue
+      if (parts.some((segment) => segment.toLowerCase() === "system")) continue
+      const dirPath = parts.slice(0, -1).join("/")
+      ensureDir(dirPath)
+      if (file.name.toLowerCase().endsWith(".pdf")) {
+        const entry = ensureDir(dirPath)
+        entry.files.push({
+          file,
+          path: parts.join("/"),
+          week: dirPath,
+          subject: "",
+          tableType: "theory",
+          isPdf: true,
+        })
+      }
+    }
+
+    map.forEach((entry) => {
+      entry.subdirs.sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+      )
+      entry.files.sort((a, b) =>
+        a.file.name.localeCompare(b.file.name, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      )
+    })
+
+    setDirectoryTree(Object.fromEntries(map))
   }, [dirFiles])
 
   // compute queue from all pdfs
   useEffect(() => {
-    const q = Object.values(fileTree)
-      .flat()
+    const q = Object.values(directoryTree)
+      .flatMap((entry) => entry.files)
       .filter((f) => !completed[f.path])
       .sort((a, b) => a.file.name.localeCompare(b.file.name))
     setQueue(q)
@@ -507,7 +542,13 @@ export default function Home() {
       setCurrentPdf(null)
       setQueueIndex(0)
     }
-  }, [fileTree, completed])
+  }, [directoryTree, completed])
+
+  useEffect(() => {
+    if (viewWeek && !directoryTree[viewWeek]) {
+      setViewWeek(null)
+    }
+  }, [viewWeek, directoryTree])
 
   // restore last opened file when queue is ready
   useEffect(() => {
@@ -519,7 +560,7 @@ export default function Home() {
           const pdf = queue[idx]
           setCurrentPdf(pdf)
           setQueueIndex(idx)
-          setViewWeek(pdf.week)
+          setViewWeek(pdf.week ? pdf.week : null)
         }
       }
       setRestored(true)
@@ -727,57 +768,93 @@ export default function Home() {
     }
   }
 
+  const fallbackDir: DirectoryEntry = {
+    path: "",
+    name: "",
+    parent: null,
+    subdirs: [],
+    files: [],
+  }
+  const currentDirEntry =
+    (viewWeek ? directoryTree[viewWeek] : directoryTree[""]) ?? fallbackDir
+  const childDirectories = currentDirEntry.subdirs
+  const selectedFiles = currentDirEntry.files
+  const parentDirectory = currentDirEntry.parent
 
-  const selectedFiles = viewWeek ? fileTree[viewWeek] || [] : []
+  const formatDirLabel = (path: string) => {
+    const segments = path.split("/").filter(Boolean)
+    if (!segments.length) return path || "Inicio"
+    return segments[segments.length - 1]
+  }
+
+  const formatBreadcrumb = (path: string | null) => {
+    if (!path) return "Carpetas"
+    const segments = path.split("/").filter(Boolean)
+    return segments.length ? segments.join(" / ") : "Carpetas"
+  }
 
   // main interface
   return (
     <>
       <main className="flex flex-col md:grid md:grid-cols-2 min-h-screen">
         <aside className="border-b md:border-r p-4 space-y-2">
-        {viewWeek !== null && (
-          <button className="mb-2 underline" onClick={() => { setViewWeek(null); }}>
-            Inicio
-          </button>
-        )}
-        {!viewWeek && (
-          <>
-            <h2 className="text-xl">Carpetas</h2>
-            <ul className="space-y-1">
-              {weeks.map((wk) => (
-                <li key={wk} className="font-bold">
-                  <button onClick={() => setViewWeek(wk)}>{wk}</button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {viewWeek && (
-          <>
-            <button className="mb-2 underline" onClick={() => setViewWeek(null)}>
-              ← Volver
-            </button>
-            <h2 className="text-xl">{viewWeek}</h2>
-            <ul className="space-y-1">
-              {selectedFiles.map((p) => (
-                <li
-                  key={p.path}
-                  className={`flex items-center gap-2 ${
-                    completed[p.path] ? "line-through text-gray-400" : ""
-                  }`}
+          {viewWeek !== null && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              <button className="underline" onClick={() => setViewWeek(null)}>
+                Inicio
+              </button>
+              {parentDirectory !== null && (
+                <button
+                  className="underline"
+                  onClick={() => setViewWeek(parentDirectory || null)}
                 >
-                  <span
-                    className="flex-1 truncate cursor-pointer"
-                    title={p.file.name}
-                    onClick={() => handleSelectFile(p)}
-                  >
-                    {p.file.name}
-                  </span>
+                  ← Volver
+                </button>
+              )}
+            </div>
+          )}
+          <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+          {childDirectories.length > 0 && (
+            <ul className="space-y-1">
+              {childDirectories.map((dir) => (
+                <li key={dir} className="font-bold">
+                  <button onClick={() => setViewWeek(dir)}>
+                    {formatDirLabel(dir)}
+                  </button>
                 </li>
               ))}
             </ul>
-          </>
-        )}
+          )}
+          {selectedFiles.length > 0 && (
+            <div className={childDirectories.length > 0 ? "space-y-1" : ""}>
+              {childDirectories.length > 0 && (
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">
+                  Archivos
+                </h3>
+              )}
+              <ul className="space-y-1">
+                {selectedFiles.map((p) => (
+                  <li
+                    key={p.path}
+                    className={`flex items-center gap-2 ${
+                      completed[p.path] ? "line-through text-gray-400" : ""
+                    }`}
+                  >
+                    <span
+                      className="flex-1 truncate cursor-pointer"
+                      title={p.file.name}
+                      onClick={() => handleSelectFile(p)}
+                    >
+                      {p.file.name}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {childDirectories.length === 0 && selectedFiles.length === 0 && (
+            <p className="text-sm text-gray-500">Carpeta vacía</p>
+          )}
         </aside>
        <section
           className={`flex flex-col flex-1 md:h-screen ${viewerOpen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900' : ''}`}
