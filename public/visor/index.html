@@ -573,6 +573,10 @@
         • <kbd>Ctrl+L</kbd> para LaTeX en notas<br>
         • Arrastra hacia arriba para eliminar<br><br>
 
+        <strong>🗒️ Notas temporales:</strong><br>
+        • <kbd>M</kbd> para abrir/cerrar el panel de notas temporales<br>
+        • También puedes usar el botón flotante 📝<br><br>
+
         <strong>💾 Guardado Automático:</strong><br>
         • Las notas se guardan automáticamente en archivos<br>
         • Se cargan automáticamente al abrir el mismo PDF<br>
@@ -872,7 +876,7 @@
       let practiceHandle = null;
 
       // Dibujo libre
-      let drawMode = true;
+      let drawMode = false;
       let isDrawing = false;
       let currentCanvas = null;
       let redrawDelay = 200;
@@ -1620,7 +1624,7 @@
           fileInfo.textContent = filename;
           currentPdfName = filename;
           currentPdfKey = uniqueKey ? `${filename}-${uniqueKey}` : filename;
-          drawMode = true;
+          drawMode = false;
           currentCanvas = null;
           updateDrawMode();
 
@@ -2130,6 +2134,12 @@
           if (creatingNote) document.body.classList.add('creating-note'); else document.body.classList.remove('creating-note');
         }
 
+        if (!isEditing && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'm') {
+          e.preventDefault();
+          toggleAuxNotesPanel();
+          return;
+        }
+
         if (!isEditing && pdfDoc) {
           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
             const hasHScroll = container.scrollWidth > container.clientWidth;
@@ -2191,7 +2201,6 @@
           if (fo) fo.remove();
           creatingNote = false;
           document.body.classList.remove('creating-note');
-          if (isFullscreen) toggleFullscreen();
         }
       });
 
@@ -3211,7 +3220,6 @@
             found = true;
           }
         });
-        drawMode = true;
         updateDrawMode();
         drawToolbar.classList.remove('active');
       }
@@ -3292,66 +3300,82 @@
       let auxFontSize = parseInt(localStorage.getItem('auxFontSize'), 10);
       if (isNaN(auxFontSize)) auxFontSize = 14;
       auxFontSize = Math.min(100, Math.max(10, auxFontSize));
-      auxEditor.style.fontSize = auxFontSize + 'px';
-      auxBtn.addEventListener('click', () => {
-        auxPanel.classList.toggle('hidden');
-        if (!auxPanel.classList.contains('hidden')) {
-          initMathFields(auxEditor);
-          auxEditor.focus();
+      if (auxEditor) auxEditor.style.fontSize = auxFontSize + 'px';
+
+      function toggleAuxNotesPanel(forceState) {
+        if (!auxPanel) return;
+        const shouldShow =
+          typeof forceState === 'boolean'
+            ? forceState
+            : auxPanel.classList.contains('hidden');
+        auxPanel.classList.toggle('hidden', !shouldShow);
+        if (shouldShow) {
+          if (auxEditor) {
+            initMathFields(auxEditor);
+            auxEditor.focus();
+          }
+        } else if (auxEditor && document.activeElement === auxEditor) {
+          auxEditor.blur();
         }
+      }
+
+      auxBtn?.addEventListener('click', () => {
+        toggleAuxNotesPanel();
       });
-      auxPlus.addEventListener('click', () => {
+      auxPlus?.addEventListener('click', () => {
         auxFontSize = Math.min(100, auxFontSize + 2);
-        auxEditor.style.fontSize = auxFontSize + 'px';
+        if (auxEditor) auxEditor.style.fontSize = auxFontSize + 'px';
         localStorage.setItem('auxFontSize', auxFontSize);
       });
-      auxMinus.addEventListener('click', () => {
+      auxMinus?.addEventListener('click', () => {
         auxFontSize = Math.max(10, auxFontSize - 2);
-        auxEditor.style.fontSize = auxFontSize + 'px';
+        if (auxEditor) auxEditor.style.fontSize = auxFontSize + 'px';
         localStorage.setItem('auxFontSize', auxFontSize);
       });
-      auxInfo.addEventListener('click', () => {
+      auxInfo?.addEventListener('click', () => {
         alert('Editor de fórmulas basado en MathQuill');
       });
-      auxEditor.addEventListener('click', (ev) => {
-        const span = ev.target.closest('span.matrix');
-        if (span) {
-          const rows = parseInt(span.dataset.rows, 10);
-          const cols = parseInt(span.dataset.cols, 10);
-          const values = (span.dataset.values || '').split('|').map(r => r.split(','));
-          const table = createMatrixTable(rows, cols, values);
-          span.replaceWith(table);
-          const first = table.querySelector('td');
-          if (first) {
-            const sel = window.getSelection();
-            const range = document.createRange();
-            range.selectNodeContents(first);
-            range.collapse(true);
-            sel.removeAllRanges();
-            sel.addRange(range);
+      if (auxEditor) {
+        auxEditor.addEventListener('click', (ev) => {
+          const span = ev.target.closest('span.matrix');
+          if (span) {
+            const rows = parseInt(span.dataset.rows, 10);
+            const cols = parseInt(span.dataset.cols, 10);
+            const values = (span.dataset.values || '').split('|').map(r => r.split(','));
+            const table = createMatrixTable(rows, cols, values);
+            span.replaceWith(table);
+            const first = table.querySelector('td');
+            if (first) {
+              const sel = window.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(first);
+              range.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(range);
+            }
           }
-        }
-      });
-      auxEditor.addEventListener('keydown', (ev) => {
-        if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
-          ev.preventDefault(); ev.stopPropagation();
-          const sel = window.getSelection();
-          if (!sel.rangeCount) return;
-          const range = sel.getRangeAt(0);
-          range.deleteContents();
-          const span = document.createElement('span');
-          span.className = 'math-field';
-          span.setAttribute('contenteditable', 'false');
-          range.insertNode(span);
-          range.setStartAfter(span);
-          range.collapse(true);
-          sel.removeAllRanges(); sel.addRange(range);
-          enhanceMathField(span);
-          setTimeout(() => { span._mqInstance.focus(); }, 10);
-        } else {
-          tryInsertMatrix(ev, auxEditor);
-        }
-      });
+        });
+        auxEditor.addEventListener('keydown', (ev) => {
+          if (ev.ctrlKey && ev.key.toLowerCase() === 'l') {
+            ev.preventDefault(); ev.stopPropagation();
+            const sel = window.getSelection();
+            if (!sel.rangeCount) return;
+            const range = sel.getRangeAt(0);
+            range.deleteContents();
+            const span = document.createElement('span');
+            span.className = 'math-field';
+            span.setAttribute('contenteditable', 'false');
+            range.insertNode(span);
+            range.setStartAfter(span);
+            range.collapse(true);
+            sel.removeAllRanges(); sel.addRange(range);
+            enhanceMathField(span);
+            setTimeout(() => { span._mqInstance.focus(); }, 10);
+          } else {
+            tryInsertMatrix(ev, auxEditor);
+          }
+        });
+      }
 
       // cargar pdf inicial si viene por query
       const params = new URLSearchParams(window.location.search);
