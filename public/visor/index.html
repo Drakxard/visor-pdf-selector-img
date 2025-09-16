@@ -470,6 +470,7 @@
       background: #4285f4; color: #fff; border: none;
       cursor: pointer; font-size: 24px;
     }
+    #aux-notes-btn.hidden { display: none; }
     .aux-notes-panel {
       position: fixed; inset: 0; z-index: 1999;
       display: flex; flex-direction: column;
@@ -633,7 +634,7 @@
     </div>
     <div id="aux-notes-editor" class="aux-notes-editor" contenteditable="true"></div>
   </div>
-  <button id="aux-notes-btn" class="aux-notes-btn">📝</button>
+  <button id="aux-notes-btn" class="aux-notes-btn hidden">📝</button>
 
   <script src="https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
   <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@2.16.105/build/pdf.worker.min.js';</script>
@@ -744,6 +745,10 @@
       const backBtn = document.getElementById('back-btn');
       let navIndicator = document.getElementById('nav-indicator');
       const themeToggleBtn = document.getElementById('theme-toggle');
+      let auxBtn = null;
+      let auxPanel = null;
+      let auxEditor = null;
+      let auxNotesRevealed = false;
 
       // Overlay de carga
       let loadingOverlay = document.getElementById('loading-overlay');
@@ -872,7 +877,7 @@
       let practiceHandle = null;
 
       // Dibujo libre
-      let drawMode = true;
+      let drawMode = false;
       let isDrawing = false;
       let currentCanvas = null;
       let redrawDelay = 200;
@@ -1620,9 +1625,10 @@
           fileInfo.textContent = filename;
           currentPdfName = filename;
           currentPdfKey = uniqueKey ? `${filename}-${uniqueKey}` : filename;
-          drawMode = true;
+          drawMode = false;
           currentCanvas = null;
           updateDrawMode();
+          drawToolbar.classList.remove('active');
 
           const loadingTask = pdfjsLib.getDocument(url);
           pdfDoc = await loadingTask.promise;
@@ -2130,6 +2136,21 @@
           if (creatingNote) document.body.classList.add('creating-note'); else document.body.classList.remove('creating-note');
         }
 
+        if (
+          !isEditing &&
+          !e.repeat &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.metaKey &&
+          e.key.toLowerCase() === 'm'
+        ) {
+          e.preventDefault();
+          auxNotesRevealed = true;
+          ensureAuxNotesButtonVisible();
+          toggleAuxNotesPanel();
+          return;
+        }
+
         if (!isEditing && pdfDoc) {
           if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
             const hasHScroll = container.scrollWidth > container.clientWidth;
@@ -2191,7 +2212,6 @@
           if (fo) fo.remove();
           creatingNote = false;
           document.body.classList.remove('creating-note');
-          if (isFullscreen) toggleFullscreen();
         }
       });
 
@@ -3200,7 +3220,6 @@
 
       function loadDrawingsFromStorage() {
         if (!currentPdfKey) return;
-        let found = false;
         document.querySelectorAll('.draw-canvas').forEach(canvas => {
           const data = localStorage.getItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
           if (data) {
@@ -3208,10 +3227,8 @@
             const img = new Image();
             img.onload = () => ctx.drawImage(img,0,0,canvas.width,canvas.height);
             img.src = data;
-            found = true;
           }
         });
-        drawMode = true;
         updateDrawMode();
         drawToolbar.classList.remove('active');
       }
@@ -3280,12 +3297,45 @@
         ctx.putImageData(imageData, 0, 0);
         saveDrawing(currentCanvas);
       }
+
+      function ensureAuxNotesButtonVisible() {
+        if (auxBtn) auxBtn.classList.remove('hidden');
+      }
+
+      function openAuxNotesPanel() {
+        if (!auxPanel) return;
+        auxPanel.classList.remove('hidden');
+        auxNotesRevealed = true;
+        ensureAuxNotesButtonVisible();
+        if (auxEditor) {
+          initMathFields(auxEditor);
+          auxEditor.focus();
+        }
+      }
+
+      function closeAuxNotesPanel() {
+        if (!auxPanel) return;
+        auxPanel.classList.add('hidden');
+      }
+
+      function toggleAuxNotesPanel(forceState) {
+        if (!auxPanel) return;
+        const shouldOpen =
+          typeof forceState === 'boolean'
+            ? forceState
+            : auxPanel.classList.contains('hidden');
+        if (shouldOpen) {
+          openAuxNotesPanel();
+        } else {
+          closeAuxNotesPanel();
+        }
+      }
       // ===============================
       // NOTAS AUXILIARES
       // ===============================
-      const auxBtn = document.getElementById('aux-notes-btn');
-      const auxPanel = document.getElementById('aux-notes-panel');
-      const auxEditor = document.getElementById('aux-notes-editor');
+      auxBtn = document.getElementById('aux-notes-btn');
+      auxPanel = document.getElementById('aux-notes-panel');
+      auxEditor = document.getElementById('aux-notes-editor');
       const auxPlus = document.getElementById('aux-font-plus');
       const auxMinus = document.getElementById('aux-font-minus');
       const auxInfo = document.getElementById('aux-notes-info');
@@ -3293,13 +3343,13 @@
       if (isNaN(auxFontSize)) auxFontSize = 14;
       auxFontSize = Math.min(100, Math.max(10, auxFontSize));
       auxEditor.style.fontSize = auxFontSize + 'px';
-      auxBtn.addEventListener('click', () => {
-        auxPanel.classList.toggle('hidden');
-        if (!auxPanel.classList.contains('hidden')) {
-          initMathFields(auxEditor);
-          auxEditor.focus();
-        }
-      });
+      if (auxBtn) {
+        auxBtn.addEventListener('click', () => {
+          auxNotesRevealed = true;
+          ensureAuxNotesButtonVisible();
+          toggleAuxNotesPanel();
+        });
+      }
       auxPlus.addEventListener('click', () => {
         auxFontSize = Math.min(100, auxFontSize + 2);
         auxEditor.style.fontSize = auxFontSize + 'px';
