@@ -2058,6 +2058,13 @@
           return;
         }
 
+        // Open current PDF in browser viewer from inside iframe when not editing and not in draw mode
+        if (!isEditing && !drawMode && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'a') {
+          e.preventDefault();
+          try { window.parent.postMessage({ type: 'openInBrowser' }, '*'); } catch {}
+          return;
+        }
+
         // Bloquear navegación si overlay visible
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
           if (

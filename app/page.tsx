@@ -640,10 +640,42 @@ export default function Home() {
       if (e.data?.type === 'viewerPage') {
         localStorage.setItem('lastPage', String(e.data.page))
       }
+      if (e.data?.type === 'openInBrowser') {
+        // open current PDF blob in a new tab using the browser viewer
+        if (currentPdf?.isPdf && pdfUrl) {
+          try {
+            window.open(pdfUrl, '_blank', 'noopener,noreferrer')
+          } catch {}
+        }
+      }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [])
+  }, [currentPdf, pdfUrl])
+
+  // Global key: press 'a' (when not typing) to open current PDF in a new tab
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key || '').toLowerCase() !== 'a') return
+      // Ignore if typing inside inputs/textareas/contentEditable elements
+      const el = (document.activeElement as HTMLElement | null)
+      const tag = (el?.tagName || '').toUpperCase()
+      const isTyping = !!(
+        el && (
+          el.isContentEditable ||
+          tag === 'TEXTAREA' ||
+          (tag === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' && (el as HTMLInputElement).type !== 'button')
+        )
+      )
+      if (isTyping) return
+      if (currentPdf?.isPdf && pdfUrl) {
+        e.preventDefault()
+        try { window.open(pdfUrl, '_blank', 'noopener,noreferrer') } catch {}
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [currentPdf, pdfUrl])
 
   if (!mounted) return null
 
