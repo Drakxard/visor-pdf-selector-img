@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
@@ -21,6 +21,15 @@ type DirectoryEntry = {
   parent: string | null
   subdirs: string[]
   files: PdfFile[]
+}
+
+type MoodleFolderConfig = {
+  id: string
+  courseId: number
+  folderId: number
+  path: string
+  name?: string
+  lastSynced?: string
 }
 
 const DB_NAME = "folder-handle-db"
@@ -59,32 +68,67 @@ const loadHandle = async (): Promise<FileSystemDirectoryHandle | null> => {
   return handle
 }
 
-const verifyPermission = async (handle: FileSystemDirectoryHandle) => {
-  if ((await handle.queryPermission({ mode: "read" })) === "granted") return true
-  if ((await handle.requestPermission({ mode: "read" })) === "granted") return true
+const verifyPermission = async (
+  handle: FileSystemDirectoryHandle | FileSystemFileHandle,
+  mode: "read" | "readwrite" = "read",
+) => {
+  const anyHandle = handle as any
+  if (typeof anyHandle.queryPermission === "function") {
+    try {
+      if ((await anyHandle.queryPermission({ mode })) === "granted") return true
+    } catch {
+      // ignore query errors
+    }
+  }
+  if (typeof anyHandle.requestPermission === "function") {
+    try {
+      if ((await anyHandle.requestPermission({ mode })) === "granted") return true
+    } catch {
+      // ignore request errors
+    }
+  }
   return false
 }
 
-const readAllFiles = async (dir: FileSystemDirectoryHandle) => {
+const readAllEntries = async (
+  dir: FileSystemDirectoryHandle,
+): Promise<{ files: File[]; directories: string[] }> => {
   const files: File[] = []
+  const directories = new Set<string>()
   const traverse = async (
     directory: FileSystemDirectoryHandle,
-    path: string,
+    relativePath: string,
   ): Promise<void> => {
     for await (const [name, handle] of (directory as any).entries()) {
       if (handle.kind === "file") {
         const file = await handle.getFile()
+        const rel = relativePath ? `${relativePath}/${name}` : name
         Object.defineProperty(file, "webkitRelativePath", {
-          value: `${path}${name}`,
+          value: `${dir.name}/${rel}`,
         })
         files.push(file)
       } else if (handle.kind === "directory") {
-        await traverse(handle, `${path}${name}/`)
+        const rel = relativePath ? `${relativePath}/${name}` : name
+        directories.add(rel)
+        await traverse(handle, rel)
       }
     }
   }
-  await traverse(dir, `${dir.name}/`)
-  return files
+  await traverse(dir, "")
+  return { files, directories: Array.from(directories) }
+}
+
+const getDirectoryHandleForPath = async (
+  root: FileSystemDirectoryHandle,
+  path: string,
+) => {
+  if (!path) return root
+  const segments = path.split('/').filter(Boolean)
+  let current = root
+  for (const segment of segments) {
+    current = await current.getDirectoryHandle(segment, { create: true })
+  }
+  return current
 }
 
 export default function Home() {
@@ -95,6 +139,8 @@ export default function Home() {
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
   const [dirFiles, setDirFiles] = useState<File[]>([])
+  const [dirPaths, setDirPaths] = useState<string[]>([])
+  const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [directoryTree, setDirectoryTree] = useState<
     Record<string, DirectoryEntry>
   >({})
@@ -122,6 +168,20 @@ export default function Home() {
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const [showMoodleModal, setShowMoodleModal] = useState(false)
+  const [moodleToken, setMoodleToken] = useState<string>(process.env.NEXT_PUBLIC_MOODLE_TOKEN || '')
+  const [moodleFolders, setMoodleFolders] = useState<MoodleFolderConfig[]>([])
+  const [syncingFolderId, setSyncingFolderId] = useState<string | null>(null)
+  const [moodleError, setMoodleError] = useState<string | null>(null)
+  const [showAddFolderForm, setShowAddFolderForm] = useState(false)
+  const [newCourseId, setNewCourseId] = useState('')
+  const [newFolderId, setNewFolderId] = useState('')
+  const [newFolderName, setNewFolderName] = useState('')
+  const showToastMessage = useCallback((type: 'success' | 'error', text: string) => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+    setToast({ type, text })
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+  }, [])
   // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
@@ -280,10 +340,27 @@ export default function Home() {
     }
   }
 
-  const filterSystemFiles = (files: File[]) =>
-    files.filter(
-      (f) => !((f as any).webkitRelativePath || "").split("/").includes("system"),
+  const filterSystemEntries = (files: File[], directories: string[]) => {
+    const filteredFiles = files.filter(
+      (f) => !((f as any).webkitRelativePath || "").split("/").some((segment: string) => segment.toLowerCase() === "system"),
     )
+    const filteredDirs = directories.filter(
+      (dir) => !dir.split("/").some((segment) => segment.toLowerCase() === "system"),
+    )
+    return { files: filteredFiles, directories: filteredDirs }
+  }
+
+  const refreshDirectory = useCallback(
+    async (handle?: FileSystemDirectoryHandle | null) => {
+      const target = handle ?? rootHandle
+      if (!target) return
+      const entries = await readAllEntries(target)
+      const filtered = filterSystemEntries(entries.files, entries.directories)
+      setDirFiles(filtered.files)
+      setDirPaths(filtered.directories)
+    },
+    [rootHandle],
+  )
 
   const loadConfig = async (files: File[]) => {
     const cfg = files.find((f) => f.name === "config.json")
@@ -328,15 +405,168 @@ export default function Home() {
     }
   }
 
+  const handleSyncMoodleFolder = useCallback(
+    async (config: MoodleFolderConfig) => {
+      if (!rootHandle) {
+        const message = 'Selecciona una carpeta local antes de sincronizar'
+        setMoodleError(message)
+        return { ok: false as const, error: message }
+      }
+      if (!moodleToken) {
+        const message = 'Configura el token de Moodle'
+        setMoodleError(message)
+        return { ok: false as const, error: message }
+      }
+      setMoodleError(null)
+      setSyncingFolderId(config.id)
+      try {
+        const baseUrl = new URL('http://e-fich.unl.edu.ar/moodle/webservice/rest/server.php')
+        baseUrl.searchParams.set('wstoken', moodleToken)
+        baseUrl.searchParams.set('wsfunction', 'core_course_get_contents')
+        baseUrl.searchParams.set('moodlewsrestformat', 'json')
+        baseUrl.searchParams.set('courseid', String(config.courseId))
+        const resp = await fetch(baseUrl.toString())
+        if (!resp.ok) {
+          throw new Error(`Error HTTP ${resp.status}`)
+        }
+        const data = (await resp.json()) as any
+        if (!Array.isArray(data)) {
+          const message = data?.message || data?.error || 'Respuesta inesperada del servidor'
+          throw new Error(message)
+        }
+        let targetModule: any = null
+        for (const section of data) {
+          if (targetModule) break
+          const modules = Array.isArray(section?.modules) ? section.modules : []
+          for (const mod of modules) {
+            if (mod?.id === config.folderId || String(mod?.id) === String(config.folderId)) {
+              targetModule = mod
+              break
+            }
+          }
+        }
+        if (!targetModule) {
+          throw new Error('No se encontro la carpeta solicitada en el curso')
+        }
+        const contents = Array.isArray(targetModule.contents)
+          ? targetModule.contents.filter((c: any) => c && c.fileurl)
+          : []
+        if (!contents.length) {
+          throw new Error('La carpeta no posee archivos disponibles')
+        }
+        const dirHandle = await getDirectoryHandleForPath(rootHandle, config.path)
+        if (!(await verifyPermission(dirHandle, 'readwrite'))) {
+          throw new Error('Se requieren permisos de escritura en la carpeta destino')
+        }
+        for (const item of contents) {
+          const baseName = typeof item.filename === 'string' ? item.filename : ''
+          const fileUrl = typeof item.fileurl === 'string' ? item.fileurl : ''
+          const fallback = fileUrl ? fileUrl.split('?')[0]?.split('/').pop() || 'archivo.pdf' : 'archivo.pdf'
+          const filename = baseName || fallback
+          if (!fileUrl) continue
+          const downloadUrl = fileUrl.includes('?')
+            ? `${fileUrl}&token=${encodeURIComponent(moodleToken)}`
+            : `${fileUrl}?token=${encodeURIComponent(moodleToken)}`
+          const fileResp = await fetch(downloadUrl)
+          if (!fileResp.ok) {
+            throw new Error(`No se pudo descargar ${filename} (${fileResp.status})`)
+          }
+          const buffer = await fileResp.arrayBuffer()
+          const fileHandle = await dirHandle.getFileHandle(filename, { create: true })
+          if (!(await verifyPermission(fileHandle, 'readwrite'))) {
+            throw new Error(`Sin permiso para escribir ${filename}`)
+          }
+          const writable = await fileHandle.createWritable()
+          await writable.write(buffer)
+          await writable.close()
+        }
+        await refreshDirectory(rootHandle)
+        return { ok: true as const, count: contents.length }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Error inesperado al descargar'
+        setMoodleError(message)
+        return { ok: false as const, error: message }
+      } finally {
+        setSyncingFolderId(null)
+      }
+    },
+    [rootHandle, moodleToken, refreshDirectory],
+  )
+
+  const handleSyncExisting = useCallback(
+    async (config: MoodleFolderConfig) => {
+      const result = await handleSyncMoodleFolder(config)
+      if (result.ok) {
+        const timestamp = new Date().toISOString()
+        setMoodleFolders((prev) =>
+          prev.map((item) =>
+            item.id === config.id ? { ...item, lastSynced: timestamp } : item,
+          ),
+        )
+        showToastMessage('success', `Descargados ${result.count} archivos`)
+        setMoodleError(null)
+      } else {
+        showToastMessage('error', result.error)
+      }
+    },
+    [handleSyncMoodleFolder, showToastMessage],
+  )
+
+  const handleRemoveMoodleFolder = useCallback((id: string) => {
+    setMoodleFolders((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
+  const handleAddMoodleFolder = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      const courseId = Number(newCourseId.trim())
+      const folderId = Number(newFolderId.trim())
+      if (!Number.isFinite(courseId) || courseId <= 0 || !Number.isFinite(folderId) || folderId <= 0) {
+        const message = 'Ingresa IDs numericos validos'
+        setMoodleError(message)
+        showToastMessage('error', message)
+        return
+      }
+      const pathTarget = viewWeek ?? ''
+      const generatedId =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      const configToSync: MoodleFolderConfig = {
+        id: generatedId,
+        courseId,
+        folderId,
+        path: pathTarget,
+        name: newFolderName.trim() || undefined,
+      }
+      const result = await handleSyncMoodleFolder(configToSync)
+      if (result.ok) {
+        const timestamp = new Date().toISOString()
+        setMoodleFolders((prev) => [...prev, { ...configToSync, lastSynced: timestamp }])
+        showToastMessage('success', `Descargados ${result.count} archivos`)
+        setMoodleError(null)
+        setShowAddFolderForm(false)
+        setNewCourseId('')
+        setNewFolderId('')
+        setNewFolderName('')
+      } else {
+        showToastMessage('error', result.error)
+      }
+    },
+    [handleSyncMoodleFolder, newCourseId, newFolderId, newFolderName, showToastMessage, viewWeek],
+  )
+
   const selectDirectory = async () => {
     try {
       const handle = await (window as any).showDirectoryPicker()
       await saveHandle(handle)
-      const rawFiles = await readAllFiles(handle)
-      const files = filterSystemFiles(rawFiles)
+      setRootHandle(handle)
+      const entries = await readAllEntries(handle)
+      const filtered = filterSystemEntries(entries.files, entries.directories)
       setNames([])
-      setDirFiles(files)
-      void restoreCheckHistory(rawFiles)
+      setDirFiles(filtered.files)
+      setDirPaths(filtered.directories)
+      void restoreCheckHistory(entries.files)
       setStep(1)
     } catch (err) {
       console.warn("Directory selection cancelled", err)
@@ -390,14 +620,28 @@ export default function Home() {
   }, [darkModeStart, mounted])
 
   useEffect(() => {
+    const storedToken = localStorage.getItem('moodleToken')
+    if (storedToken && !moodleToken) setMoodleToken(storedToken)
+    const storedFolders = localStorage.getItem('moodleFolders')
+    if (storedFolders) {
+      try {
+        const parsed = JSON.parse(storedFolders) as MoodleFolderConfig[]
+        setMoodleFolders(parsed)
+      } catch {}
+    }
+  }, [])
+
+  useEffect(() => {
     ;(async () => {
       try {
         const handle = await loadHandle()
         if (handle && (await verifyPermission(handle))) {
-          const raw = await readAllFiles(handle)
-          const files = filterSystemFiles(raw)
-          setDirFiles(files)
-          void restoreCheckHistory(raw)
+          setRootHandle(handle)
+          const entries = await readAllEntries(handle)
+          const filtered = filterSystemEntries(entries.files, entries.directories)
+          setDirFiles(filtered.files)
+          setDirPaths(filtered.directories)
+          void restoreCheckHistory(entries.files)
           setStep(1)
           setSetupComplete(true)
           return
@@ -461,6 +705,16 @@ export default function Home() {
     localStorage.setItem("practice", JSON.stringify(practice))
   }, [practice])
 
+  useEffect(() => {
+    if (!mounted) return
+    localStorage.setItem('moodleToken', moodleToken)
+  }, [moodleToken, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+    localStorage.setItem('moodleFolders', JSON.stringify(moodleFolders))
+  }, [moodleFolders, mounted])
+
 
   // build directory structure from selected directory
   useEffect(() => {
@@ -491,15 +745,18 @@ export default function Home() {
 
     ensureDir("")
 
+    for (const dirPath of dirPaths) {
+      if (dirPath) ensureDir(dirPath)
+    }
+
     for (const file of dirFiles) {
       const rel = (file as any).webkitRelativePath || ""
       const parts = rel.split("/").slice(1)
       if (!parts.length) continue
       if (parts.some((segment) => segment.toLowerCase() === "system")) continue
       const dirPath = parts.slice(0, -1).join("/")
-      ensureDir(dirPath)
+      const entry = ensureDir(dirPath)
       if (file.name.toLowerCase().endsWith(".pdf")) {
-        const entry = ensureDir(dirPath)
         entry.files.push({
           file,
           path: parts.join("/"),
@@ -524,7 +781,7 @@ export default function Home() {
     })
 
     setDirectoryTree(Object.fromEntries(map))
-  }, [dirFiles])
+  }, [dirFiles, dirPaths])
 
   // compute queue from all pdfs
   useEffect(() => {
@@ -677,6 +934,26 @@ export default function Home() {
     return () => window.removeEventListener('keydown', onKey)
   }, [currentPdf, pdfUrl])
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key || '').toLowerCase() !== 't') return
+      const el = document.activeElement as HTMLElement | null
+      const tag = (el?.tagName || '').toUpperCase()
+      const isTyping = !!(
+        el && (
+          el.isContentEditable ||
+          tag === 'TEXTAREA' ||
+          (tag === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' && (el as HTMLInputElement).type !== 'button')
+        )
+      )
+      if (isTyping) return
+      e.preventDefault()
+      setShowMoodleModal(true)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   if (!mounted) return null
 
   // configuration wizard
@@ -815,8 +1092,15 @@ export default function Home() {
 
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
-    if (!segments.length) return path || "Inicio"
-    return segments[segments.length - 1]
+    const name = segments.length ? segments[segments.length - 1] : path || "Inicio"
+    const entry = directoryTree[path]
+    if (!entry) return name
+    if (entry.subdirs.length > 0) {
+      return `${name} {${entry.subdirs.length} materias}`
+    }
+    const total = entry.files.length
+    const completedCount = entry.files.filter((file) => completed[file.path]).length
+    return `${name} {${completedCount}/${total} pdf}`
   }
 
   const formatBreadcrumb = (path: string | null) => {
@@ -1026,6 +1310,121 @@ export default function Home() {
         </div>
       )}
     </div>
+
+    {showMoodleModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white dark:bg-gray-800 w-full max-w-lg mx-4 p-4 rounded shadow space-y-4 text-gray-800 dark:text-gray-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Sincronizar Moodle</h2>
+            <button onClick={() => setShowMoodleModal(false)} className="text-sm underline">Cerrar</button>
+          </div>
+          <div className="text-sm text-gray-600 dark:text-gray-400">
+            Carpeta destino actual: {formatBreadcrumb(viewWeek)}
+          </div>
+          <label className="flex flex-col gap-1 text-sm">
+            Token Moodle
+            <input
+              type="password"
+              value={moodleToken}
+              onChange={(e) => setMoodleToken(e.target.value)}
+              className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
+              placeholder="Token"
+            />
+          </label>
+          {moodleError && <div className="text-sm text-red-500">{moodleError}</div>}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold">IDs guardados</span>
+              <button
+                className="text-sm underline"
+                onClick={() => setShowAddFolderForm((prev) => !prev)}
+              >
+                {showAddFolderForm ? 'Cancelar' : 'Agregar carpeta'}
+              </button>
+            </div>
+            {showAddFolderForm && (
+              <form
+                onSubmit={handleAddMoodleFolder}
+                className="space-y-2 border border-dashed border-gray-300 dark:border-gray-600 rounded p-3"
+              >
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <label className="flex flex-col gap-1">
+                    Curso ID
+                    <input
+                      value={newCourseId}
+                      onChange={(e) => setNewCourseId(e.target.value)}
+                      className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
+                      placeholder="Ej: 12345"
+                      inputMode="numeric"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    Folder ID
+                    <input
+                      value={newFolderId}
+                      onChange={(e) => setNewFolderId(e.target.value)}
+                      className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
+                      placeholder="Ej: 67890"
+                      inputMode="numeric"
+                    />
+                  </label>
+                </div>
+                <label className="flex flex-col gap-1 text-sm">
+                  Nombre opcional
+                  <input
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
+                    placeholder="Ej: Algebra Semana 1"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-3 py-1"
+                  disabled={!!syncingFolderId}
+                >
+                  Descargar y guardar
+                </button>
+              </form>
+            )}
+            {moodleFolders.length ? (
+              <ul className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {moodleFolders.map((config) => (
+                  <li
+                    key={config.id}
+                    className="border border-gray-200 dark:border-gray-700 rounded p-2 text-sm space-y-1"
+                  >
+                    <div className="font-medium">{config.name || `Curso ${config.courseId}`}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Curso: {config.courseId} - Folder: {config.folderId}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Destino: {formatBreadcrumb(config.path || null)}</div>
+                    {config.lastSynced && (
+                      <div className="text-xs text-gray-500 dark:text-gray-400">Ultima descarga: {new Date(config.lastSynced).toLocaleString()}</div>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs"
+                        onClick={() => handleSyncExisting(config)}
+                        disabled={syncingFolderId === config.id}
+                      >
+                        {syncingFolderId === config.id ? 'Descargando...' : 'Descargar'}
+                      </button>
+                      <button
+                        className="border border-red-400 text-red-500 rounded px-2 py-1 text-xs"
+                        onClick={() => handleRemoveMoodleFolder(config.id)}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-gray-500 dark:text-gray-400">Aun no hay IDs guardados.</p>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
 
     {showDarkModal && (
       <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
