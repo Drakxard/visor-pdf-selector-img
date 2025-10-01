@@ -13,6 +13,7 @@ type PdfFile = {
   tableType: "theory" | "practice"
   isPdf: boolean
   url?: string
+  mediaType?: 'pdf' | 'video' | 'link'
 }
 
 type DirectoryEntry = {
@@ -151,6 +152,7 @@ export default function Home() {
   const [viewWeek, setViewWeek] = useState<string | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [embedUrl, setEmbedUrl] = useState<string | null>(null)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [viewerOpen, setViewerOpen] = useState(false)
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -341,11 +343,13 @@ export default function Home() {
   }
 
   const filterSystemEntries = (files: File[], directories: string[]) => {
-    const filteredFiles = files.filter(
-      (f) => !((f as any).webkitRelativePath || "").split("/").some((segment: string) => segment.toLowerCase() === "system"),
-    )
+    const isHidden = (segment: string) => segment.startsWith('.') || segment.toLowerCase() === 'system'
+    const filteredFiles = files.filter((f) => {
+      const rel = ((f as any).webkitRelativePath || '').split('/')
+      return !rel.some((segment: string) => isHidden(segment))
+    })
     const filteredDirs = directories.filter(
-      (dir) => !dir.split("/").some((segment) => segment.toLowerCase() === "system"),
+      (dir) => !dir.split('/').some((segment) => isHidden(segment))
     )
     return { files: filteredFiles, directories: filteredDirs }
   }
@@ -753,19 +757,24 @@ export default function Home() {
       const rel = (file as any).webkitRelativePath || ""
       const parts = rel.split("/").slice(1)
       if (!parts.length) continue
-      if (parts.some((segment) => segment.toLowerCase() === "system")) continue
+      if (parts.some((segment) => !segment || segment.toLowerCase() === "system" || segment.startsWith('.'))) continue
       const dirPath = parts.slice(0, -1).join("/")
       const entry = ensureDir(dirPath)
-      if (file.name.toLowerCase().endsWith(".pdf")) {
-        entry.files.push({
-          file,
-          path: parts.join("/"),
-          week: dirPath,
-          subject: "",
-          tableType: "theory",
-          isPdf: true,
-        })
+      const nameLower = file.name.toLowerCase()
+      const isPdf = nameLower.endsWith(".pdf")
+      const isVideo = /\.(mp4|webm|ogg|mov|mkv)$/.test(nameLower)
+      if (!isPdf && !isVideo) continue
+      const mediaType = isPdf ? 'pdf' : 'video'
+      const item: PdfFile = {
+        file,
+        path: parts.join("/"),
+        week: dirPath,
+        subject: "",
+        tableType: "theory",
+        isPdf,
+        mediaType,
       }
+      entry.files.push(item)
     }
 
     map.forEach((entry) => {
@@ -851,8 +860,17 @@ export default function Home() {
     if (!currentPdf) {
       setPdfUrl(null)
       setEmbedUrl(null)
+      setVideoUrl(null)
       return
     }
+    if (currentPdf.mediaType === 'video') {
+      const url = URL.createObjectURL(currentPdf.file)
+      setVideoUrl(url)
+      setPdfUrl(null)
+      setEmbedUrl(null)
+      return () => URL.revokeObjectURL(url)
+    }
+    setVideoUrl(null)
     if (currentPdf.isPdf) {
       const url = URL.createObjectURL(currentPdf.file)
       setPdfUrl(url)
@@ -1098,9 +1116,14 @@ export default function Home() {
     if (entry.subdirs.length > 0) {
       return `${name} {${entry.subdirs.length} materias}`
     }
-    const total = entry.files.length
-    const completedCount = entry.files.filter((file) => completed[file.path]).length
-    return `${name} {${completedCount}/${total} pdf}`
+    const pdfFiles = entry.files.filter((file) => file.mediaType !== 'video')
+    const videoFiles = entry.files.filter((file) => file.mediaType === 'video')
+    const completedPdf = pdfFiles.filter((file) => completed[file.path]).length
+    const pdfLabel = `${completedPdf}/${pdfFiles.length || 0} pdf`
+    const videoLabel = videoFiles.length
+      ? ` · ${videoFiles.length} video${videoFiles.length === 1 ? '' : 's'}`
+      : ''
+    return `${name} {${pdfLabel}${videoLabel}}`
   }
 
   const formatBreadcrumb = (path: string | null) => {
@@ -1162,6 +1185,9 @@ export default function Home() {
                       onClick={() => handleSelectFile(p)}
                     >
                       {p.file.name}
+                      {p.mediaType === 'video' && (
+                        <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+                      )}
                     </span>
                   </li>
                 ))}
@@ -1260,27 +1286,53 @@ export default function Home() {
             </div>
           )}
           <div className="flex-1">
-            {currentPdf && (pdfUrl || embedUrl) ? (
-              <iframe
-                ref={viewerRef}
-                onLoad={() =>
-                  viewerRef.current?.contentWindow?.postMessage(
-                    { type: 'setTheme', theme },
-                    '*',
-                  )
-                }
-                title={viewerOpen ? (currentPdf.isPdf ? 'Visor PDF' : 'Visor') : 'Previsualización'}
-                src={
-                  currentPdf.isPdf
-                    ? `/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
-                        currentPdf.file.name,
-                      )}&key=${encodeURIComponent(currentPdf.path)}`
-                    : embedUrl!
-                }
-                className="w-full h-full border-0"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
+            {currentPdf ? (
+              currentPdf.mediaType === 'video' && videoUrl ? (
+                <video
+                  key={videoUrl}
+                  controls
+                  className="w-full h-full"
+                  src={videoUrl}
+                >
+                  Tu navegador no soporta la reproducción de video.
+                </video>
+              ) : currentPdf.isPdf && pdfUrl ? (
+                <iframe
+                  ref={viewerRef}
+                  onLoad={() =>
+                    viewerRef.current?.contentWindow?.postMessage(
+                      { type: 'setTheme', theme },
+                      '*',
+                    )
+                  }
+                  title={viewerOpen ? 'Visor PDF' : 'Previsualización'}
+                  src={`/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
+                    currentPdf.file.name,
+                  )}&key=${encodeURIComponent(currentPdf.path)}`}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : embedUrl ? (
+                <iframe
+                  ref={viewerRef}
+                  onLoad={() =>
+                    viewerRef.current?.contentWindow?.postMessage(
+                      { type: 'setTheme', theme },
+                      '*',
+                    )
+                  }
+                  title={viewerOpen ? 'Visor' : 'Previsualización'}
+                  src={embedUrl}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
+                  Selecciona un archivo
+                </div>
+              )
             ) : (
               <div className="w-full h-full flex items-center justify-center text-sm text-gray-500">
                 Selecciona un archivo
@@ -1332,6 +1384,7 @@ export default function Home() {
             />
           </label>
           {moodleError && <div className="text-sm text-red-500">{moodleError}</div>}
+          <p className="text-xs text-gray-500 dark:text-gray-400">Los archivos de video descargados apareceran marcados como "Video" en la lista lateral.</p>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold">IDs guardados</span>
