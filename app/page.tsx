@@ -354,16 +354,6 @@ export default function Home() {
     return { files: filteredFiles, directories: filteredDirs }
   }
 
-  const ensureHttps = (value: string) => {
-    try {
-      const url = new URL(value)
-      url.protocol = 'https:'
-      return url.toString()
-    } catch {
-      return value.replace(/^http:\/\//i, 'https://')
-    }
-  }
-
   const refreshDirectory = useCallback(
     async (handle?: FileSystemDirectoryHandle | null) => {
       const target = handle ?? rootHandle
@@ -434,19 +424,22 @@ export default function Home() {
       setMoodleError(null)
       setSyncingFolderId(config.id)
       try {
-        const baseUrl = new URL('https://e-fich.unl.edu.ar/moodle/webservice/rest/server.php')
-        baseUrl.searchParams.set('wstoken', moodleToken)
-        baseUrl.searchParams.set('wsfunction', 'core_course_get_contents')
-        baseUrl.searchParams.set('moodlewsrestformat', 'json')
-        baseUrl.searchParams.set('courseid', String(config.courseId))
-        const resp = await fetch(baseUrl.toString())
-        if (!resp.ok) {
-          throw new Error(`Error HTTP ${resp.status}`)
-        }
-        const data = (await resp.json()) as any
-        if (!Array.isArray(data)) {
-          const message = data?.message || data?.error || 'Respuesta inesperada del servidor'
+        const resp = await fetch('/api/moodle/contents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: moodleToken,
+            courseId: config.courseId,
+          }),
+        })
+        const payload = await resp.json().catch(() => null)
+        if (!resp.ok || !payload?.ok) {
+          const message = payload?.error || `Error HTTP ${resp.status}`
           throw new Error(message)
+        }
+        const data = payload.data
+        if (!Array.isArray(data)) {
+          throw new Error('Respuesta inesperada del servidor')
         }
         let targetModule: any = null
         for (const section of data) {
@@ -475,19 +468,24 @@ export default function Home() {
         for (const item of contents) {
           const baseName = typeof item.filename === 'string' ? item.filename : ''
           const rawFileUrl = typeof item.fileurl === 'string' ? item.fileurl : ''
-          const fileUrl = rawFileUrl ? ensureHttps(rawFileUrl) : ''
-          const fallbackSource = fileUrl || rawFileUrl
-          const fallbackBase = fallbackSource ? fallbackSource.split('?')[0] : ''
+          const fallbackBase = rawFileUrl ? rawFileUrl.split('?')[0] : ''
           const fallback = fallbackBase ? fallbackBase.split('/').pop() || 'archivo.pdf' : 'archivo.pdf'
           const filename = baseName || fallback
-          if (!fileUrl) continue
-          const downloadUrl = new URL(fileUrl)
-          downloadUrl.searchParams.set('token', moodleToken)
-          const fileResp = await fetch(downloadUrl.toString())
-          if (!fileResp.ok) {
-            throw new Error(`No se pudo descargar ${filename} (${fileResp.status})`)
+          if (!rawFileUrl) continue
+          const downloadResp = await fetch('/api/moodle/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: rawFileUrl, token: moodleToken }),
+          })
+          if (!downloadResp.ok) {
+            let errorMessage = `Error HTTP ${downloadResp.status}`
+            try {
+              const errJson = await downloadResp.json()
+              if (errJson?.error) errorMessage = errJson.error
+            } catch {}
+            throw new Error(`No se pudo descargar ${filename} (${errorMessage})`)
           }
-          const buffer = await fileResp.arrayBuffer()
+          const buffer = await downloadResp.arrayBuffer()
           const fileHandle = await dirHandle.getFileHandle(filename, { create: true })
           if (!(await verifyPermission(fileHandle, 'readwrite'))) {
             throw new Error(`Sin permiso para escribir ${filename}`)
