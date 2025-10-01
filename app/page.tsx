@@ -354,6 +354,16 @@ export default function Home() {
     return { files: filteredFiles, directories: filteredDirs }
   }
 
+  const ensureHttps = (value: string) => {
+    try {
+      const url = new URL(value)
+      url.protocol = 'https:'
+      return url.toString()
+    } catch {
+      return value.replace(/^http:\/\//i, 'https://')
+    }
+  }
+
   const refreshDirectory = useCallback(
     async (handle?: FileSystemDirectoryHandle | null) => {
       const target = handle ?? rootHandle
@@ -424,7 +434,7 @@ export default function Home() {
       setMoodleError(null)
       setSyncingFolderId(config.id)
       try {
-        const baseUrl = new URL('http://e-fich.unl.edu.ar/moodle/webservice/rest/server.php')
+        const baseUrl = new URL('https://e-fich.unl.edu.ar/moodle/webservice/rest/server.php')
         baseUrl.searchParams.set('wstoken', moodleToken)
         baseUrl.searchParams.set('wsfunction', 'core_course_get_contents')
         baseUrl.searchParams.set('moodlewsrestformat', 'json')
@@ -464,14 +474,16 @@ export default function Home() {
         }
         for (const item of contents) {
           const baseName = typeof item.filename === 'string' ? item.filename : ''
-          const fileUrl = typeof item.fileurl === 'string' ? item.fileurl : ''
-          const fallback = fileUrl ? fileUrl.split('?')[0]?.split('/').pop() || 'archivo.pdf' : 'archivo.pdf'
+          const rawFileUrl = typeof item.fileurl === 'string' ? item.fileurl : ''
+          const fileUrl = rawFileUrl ? ensureHttps(rawFileUrl) : ''
+          const fallbackSource = fileUrl || rawFileUrl
+          const fallbackBase = fallbackSource ? fallbackSource.split('?')[0] : ''
+          const fallback = fallbackBase ? fallbackBase.split('/').pop() || 'archivo.pdf' : 'archivo.pdf'
           const filename = baseName || fallback
           if (!fileUrl) continue
-          const downloadUrl = fileUrl.includes('?')
-            ? `${fileUrl}&token=${encodeURIComponent(moodleToken)}`
-            : `${fileUrl}?token=${encodeURIComponent(moodleToken)}`
-          const fileResp = await fetch(downloadUrl)
+          const downloadUrl = new URL(fileUrl)
+          downloadUrl.searchParams.set('token', moodleToken)
+          const fileResp = await fetch(downloadUrl.toString())
           if (!fileResp.ok) {
             throw new Error(`No se pudo descargar ${filename} (${fileResp.status})`)
           }
