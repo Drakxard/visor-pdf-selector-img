@@ -76,6 +76,17 @@ type MoodleFolderConfig = {
   lastSynced?: string
 }
 
+type MoodleTargetOption = {
+  type: "theory" | "practice"
+  path: string
+}
+
+const buildTargetPath = (basePath: string, segment: string) => {
+  if (!basePath) return segment
+  const normalized = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath
+  return `${normalized}/${segment}`
+}
+
 const DB_NAME = "folder-handle-db"
 const STORE_NAME = "handles"
 
@@ -214,6 +225,7 @@ export default function Home() {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const [showMoodleModal, setShowMoodleModal] = useState(false)
+  const [showMoodleTargetPicker, setShowMoodleTargetPicker] = useState(false)
   const [moodleToken, setMoodleToken] = useState<string>(process.env.NEXT_PUBLIC_MOODLE_TOKEN || '')
   const [moodleFolders, setMoodleFolders] = useState<MoodleFolderConfig[]>([])
   const [syncingFolderId, setSyncingFolderId] = useState<string | null>(null)
@@ -222,10 +234,22 @@ export default function Home() {
   const [newCourseId, setNewCourseId] = useState('')
   const [newFolderId, setNewFolderId] = useState('')
   const [newFolderName, setNewFolderName] = useState('')
+  const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
+  const [moodleTargetOptions, setMoodleTargetOptions] = useState<MoodleTargetOption[]>([])
   const showToastMessage = useCallback((type: 'success' | 'error', text: string) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     setToast({ type, text })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
+  }, [])
+  const handleChooseMoodleTarget = useCallback((option: MoodleTargetOption) => {
+    setMoodleTargetPath(option.path)
+    setMoodleTargetOptions([])
+    setShowMoodleTargetPicker(false)
+    setShowMoodleModal(true)
+  }, [])
+  const handleDismissMoodleTargetPicker = useCallback(() => {
+    setMoodleTargetOptions([])
+    setShowMoodleTargetPicker(false)
   }, [])
   const findCourseIdForSubject = useCallback(
     (subject: string | null) => {
@@ -599,7 +623,7 @@ export default function Home() {
         showToastMessage('error', message)
         return
       }
-      const pathTarget = viewWeek ?? ''
+      const pathTarget = (moodleTargetPath ?? viewWeek) ?? ''
       const existing = moodleFolders.find((item) => item.path === pathTarget)
       const generatedId =
         existing?.id ||
@@ -638,6 +662,7 @@ export default function Home() {
       newFolderName,
       showToastMessage,
       viewWeek,
+      moodleTargetPath,
     ],
   )
 
@@ -718,9 +743,10 @@ export default function Home() {
     if (!showMoodleModal) {
       setShowAddFolderForm(false)
       setMoodleError(null)
+      setMoodleTargetPath(null)
       return
     }
-    const pathTarget = viewWeek ?? ''
+    const pathTarget = (moodleTargetPath ?? viewWeek) ?? ''
     const existing = moodleFolders.find((cfg) => cfg.path === pathTarget)
     if (existing) {
       setNewCourseId(String(existing.courseId ?? ''))
@@ -735,7 +761,13 @@ export default function Home() {
     }
     setShowAddFolderForm(true)
     setMoodleError(null)
-  }, [showMoodleModal, viewWeek, moodleFolders, findCourseIdForSubject])
+  }, [
+    showMoodleModal,
+    viewWeek,
+    moodleTargetPath,
+    moodleFolders,
+    findCourseIdForSubject,
+  ])
 
   useEffect(() => {
     ;(async () => {
@@ -1088,13 +1120,41 @@ export default function Home() {
           (tag === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' && (el as HTMLInputElement).type !== 'button')
         )
       )
-      if (isTyping) return
+      if (isTyping || showMoodleModal || showMoodleTargetPicker) return
       e.preventDefault()
-      setShowMoodleModal(true)
+      const currentPath = viewWeek ?? ''
+      const entry = directoryTree[currentPath]
+      if (!entry) {
+        setMoodleTargetPath(currentPath)
+        setShowMoodleModal(true)
+        return
+      }
+      const findByType = (type: 'theory' | 'practice') =>
+        entry.subdirs.find((dir) =>
+          type === 'theory'
+            ? isTheorySegment(getLastSegment(dir))
+            : isPracticeSegment(getLastSegment(dir)),
+        )
+      const theoryPath = findByType('theory') ?? buildTargetPath(entry.path, 'Teoria')
+      const practicePath = findByType('practice') ?? buildTargetPath(entry.path, 'Practica')
+      const rawOptions: MoodleTargetOption[] = []
+      if (theoryPath) rawOptions.push({ type: 'theory', path: theoryPath })
+      if (practicePath) rawOptions.push({ type: 'practice', path: practicePath })
+      const options = rawOptions.filter(
+        (option, index, arr) => arr.findIndex((item) => item.path === option.path) === index,
+      )
+      if (options.length <= 1) {
+        const target = options[0] ?? { type: 'theory', path: buildTargetPath(entry.path, 'Teoria') }
+        setMoodleTargetPath(target.path)
+        setShowMoodleModal(true)
+        return
+      }
+      setMoodleTargetOptions(options)
+      setShowMoodleTargetPicker(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [directoryTree, showMoodleModal, showMoodleTargetPicker, viewWeek])
 
   if (!mounted) return null
 
@@ -1231,6 +1291,7 @@ export default function Home() {
   const childDirectories = currentDirEntry.subdirs
   const selectedFiles = currentDirEntry.files
   const parentDirectory = currentDirEntry.parent
+  const activeMoodlePath = (moodleTargetPath ?? viewWeek) ?? ''
 
   const collectFiles = (path: string): PdfFile[] => {
     const entry = directoryTree[path]
@@ -1558,6 +1619,40 @@ export default function Home() {
       )}
     </div>
 
+    {showMoodleTargetPicker && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow dark:bg-gray-800 dark:text-gray-100">
+          <div>
+            <h2 className="text-lg font-semibold">Seleccionar destino</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Elige si deseas guardar esta descarga en teoría o práctica.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {moodleTargetOptions.map((option) => (
+              <button
+                key={option.path}
+                onClick={() => handleChooseMoodleTarget(option)}
+                className="rounded border border-gray-300 px-3 py-2 text-left text-sm shadow-sm transition hover:border-indigo-500 hover:shadow dark:border-gray-600 dark:hover:border-indigo-400"
+              >
+                <div className="text-base font-semibold">
+                  {option.type === 'theory' ? 'Teoría' : 'Práctica'}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-300">
+                  {formatBreadcrumb(option.path || null)}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end">
+            <button className="text-sm underline" onClick={handleDismissMoodleTargetPicker}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
     {showMoodleModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
         <div className="bg-white dark:bg-gray-800 w-full max-w-lg mx-4 p-4 rounded shadow space-y-4 text-gray-800 dark:text-gray-200">
@@ -1566,7 +1661,7 @@ export default function Home() {
             <button onClick={() => setShowMoodleModal(false)} className="text-sm underline">Cerrar</button>
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400">
-            Carpeta destino actual: {formatBreadcrumb(viewWeek)}
+            Carpeta destino actual: {formatBreadcrumb(activeMoodlePath || null)}
           </div>
           <label className="flex flex-col gap-1 text-sm">
             Token Moodle
