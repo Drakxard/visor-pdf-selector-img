@@ -18,7 +18,29 @@ const isTheorySegment = (segment: string) => {
 
 const isPracticeSegment = (segment: string) => {
   const normalized = normalizeSegment(segment)
-  return normalized === "practica" || normalized === "practice"
+  return (
+    normalized === "practica" ||
+    normalized === "practice" ||
+    normalized === "practico" ||
+    normalized === "practical"
+  )
+}
+
+const detectTableTypeFromFilename = (filename: string) => {
+  const normalized = normalizeSegment(filename)
+  if (!normalized) return null
+  if (
+    normalized.includes("practica") ||
+    normalized.includes("practical") ||
+    normalized.includes("practico") ||
+    /\btp\b/.test(normalized.replace(/[^a-z0-9 ]/g, " "))
+  ) {
+    return "practice" as const
+  }
+  if (normalized.includes("teoria") || normalized.includes("theory") || normalized.includes("teorico")) {
+    return "theory" as const
+  }
+  return null
 }
 
 const getLastSegment = (path: string) => {
@@ -74,6 +96,34 @@ type MoodleFolderConfig = {
   path: string
   name?: string
   lastSynced?: string
+}
+
+const buildTargetPath = (basePath: string, segment: string) => {
+  if (!basePath) return segment
+  const normalized = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath
+  return `${normalized}/${segment}`
+}
+
+const resolveDirectoryForTableType = (
+  tree: Record<string, DirectoryEntry>,
+  basePath: string,
+  type: "theory" | "practice",
+) => {
+  const entry = tree[basePath]
+  if (entry) {
+    const match = entry.subdirs.find((dir) => {
+      const segment = getLastSegment(dir)
+      return type === "theory" ? isTheorySegment(segment) : isPracticeSegment(segment)
+    })
+    if (match) return match
+  }
+  return buildTargetPath(basePath, type === "theory" ? "Teoria" : "Practica")
+}
+
+type MoodleDownloadPreview = {
+  filename: string
+  destinationPath: string
+  tableType: "theory" | "practice" | "unknown"
 }
 
 const DB_NAME = "folder-handle-db"
@@ -222,6 +272,8 @@ export default function Home() {
   const [newCourseId, setNewCourseId] = useState('')
   const [newFolderId, setNewFolderId] = useState('')
   const [newFolderName, setNewFolderName] = useState('')
+  const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
+  const [moodleDownloadPreview, setMoodleDownloadPreview] = useState<MoodleDownloadPreview[]>([])
   const showToastMessage = useCallback((type: 'success' | 'error', text: string) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     setToast({ type, text })
@@ -523,17 +575,46 @@ export default function Home() {
         if (!(await verifyPermission(dirHandle, 'readwrite'))) {
           throw new Error('Se requieren permisos de escritura en la carpeta destino')
         }
-        for (const item of contents) {
-          const baseName = typeof item.filename === 'string' ? item.filename : ''
-          const rawFileUrl = typeof item.fileurl === 'string' ? item.fileurl : ''
-          const fallbackBase = rawFileUrl ? rawFileUrl.split('?')[0] : ''
-          const fallback = fallbackBase ? fallbackBase.split('/').pop() || 'archivo.pdf' : 'archivo.pdf'
-          const filename = baseName || fallback
-          if (!rawFileUrl) continue
+        const plans = contents
+          .map((item) => {
+            const baseName = typeof item.filename === 'string' ? item.filename : ''
+            const rawFileUrl = typeof item.fileurl === 'string' ? item.fileurl : ''
+            if (!rawFileUrl) return null
+            const fallbackBase = rawFileUrl ? rawFileUrl.split('?')[0] : ''
+            const fallback = fallbackBase ? fallbackBase.split('/').pop() || 'archivo.pdf' : 'archivo.pdf'
+            const filename = baseName || fallback
+            const inferredType = detectTableTypeFromFilename(filename)
+            const destinationPath = inferredType
+              ? resolveDirectoryForTableType(directoryTree, config.path, inferredType)
+              : config.path
+            return {
+              filename,
+              fileurl: rawFileUrl,
+              destinationPath,
+              tableType: inferredType ?? 'unknown',
+            }
+          })
+          .filter((item): item is {
+            filename: string
+            fileurl: string
+            destinationPath: string
+            tableType: 'theory' | 'practice' | 'unknown'
+          } => !!item)
+        setMoodleDownloadPreview(
+          plans.map((plan) => ({
+            filename: plan.filename,
+            destinationPath: plan.destinationPath,
+            tableType: plan.tableType,
+          })),
+        )
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        const handleCache = new Map<string, FileSystemDirectoryHandle>()
+        handleCache.set(config.path, dirHandle)
+        for (const plan of plans) {
           const downloadResp = await fetch('/api/moodle/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: rawFileUrl, token: moodleToken }),
+            body: JSON.stringify({ url: plan.fileurl, token: moodleToken }),
           })
           if (!downloadResp.ok) {
             let errorMessage = `Error HTTP ${downloadResp.status}`
@@ -541,28 +622,39 @@ export default function Home() {
               const errJson = await downloadResp.json()
               if (errJson?.error) errorMessage = errJson.error
             } catch {}
-            throw new Error(`No se pudo descargar ${filename} (${errorMessage})`)
+            throw new Error(`No se pudo descargar ${plan.filename} (${errorMessage})`)
           }
           const buffer = await downloadResp.arrayBuffer()
-          const fileHandle = await dirHandle.getFileHandle(filename, { create: true })
+          const targetDirPath = plan.destinationPath || config.path
+          const targetDirHandle = handleCache.has(targetDirPath)
+            ? handleCache.get(targetDirPath)!
+            : await getDirectoryHandleForPath(rootHandle, targetDirPath)
+          if (!handleCache.has(targetDirPath)) {
+            handleCache.set(targetDirPath, targetDirHandle)
+          }
+          if (!(await verifyPermission(targetDirHandle, 'readwrite'))) {
+            throw new Error(`Sin permiso para escribir en ${formatBreadcrumb(targetDirPath)}`)
+          }
+          const fileHandle = await targetDirHandle.getFileHandle(plan.filename, { create: true })
           if (!(await verifyPermission(fileHandle, 'readwrite'))) {
-            throw new Error(`Sin permiso para escribir ${filename}`)
+            throw new Error(`Sin permiso para escribir ${plan.filename}`)
           }
           const writable = await fileHandle.createWritable()
           await writable.write(buffer)
           await writable.close()
         }
         await refreshDirectory(rootHandle)
-        return { ok: true as const, count: contents.length }
+        return { ok: true as const, count: plans.length }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Error inesperado al descargar'
         setMoodleError(message)
         return { ok: false as const, error: message }
       } finally {
         setSyncingFolderId(null)
+        setMoodleDownloadPreview([])
       }
     },
-    [rootHandle, moodleToken, refreshDirectory],
+    [rootHandle, moodleToken, refreshDirectory, directoryTree],
   )
 
   const handleSyncExisting = useCallback(
@@ -599,7 +691,7 @@ export default function Home() {
         showToastMessage('error', message)
         return
       }
-      const pathTarget = viewWeek ?? ''
+      const pathTarget = (moodleTargetPath ?? viewWeek) ?? ''
       const existing = moodleFolders.find((item) => item.path === pathTarget)
       const generatedId =
         existing?.id ||
@@ -638,6 +730,7 @@ export default function Home() {
       newFolderName,
       showToastMessage,
       viewWeek,
+      moodleTargetPath,
     ],
   )
 
@@ -718,9 +811,11 @@ export default function Home() {
     if (!showMoodleModal) {
       setShowAddFolderForm(false)
       setMoodleError(null)
+      setMoodleTargetPath(null)
+      setMoodleDownloadPreview([])
       return
     }
-    const pathTarget = viewWeek ?? ''
+    const pathTarget = (moodleTargetPath ?? viewWeek) ?? ''
     const existing = moodleFolders.find((cfg) => cfg.path === pathTarget)
     if (existing) {
       setNewCourseId(String(existing.courseId ?? ''))
@@ -735,7 +830,13 @@ export default function Home() {
     }
     setShowAddFolderForm(true)
     setMoodleError(null)
-  }, [showMoodleModal, viewWeek, moodleFolders, findCourseIdForSubject])
+  }, [
+    showMoodleModal,
+    viewWeek,
+    moodleTargetPath,
+    moodleFolders,
+    findCourseIdForSubject,
+  ])
 
   useEffect(() => {
     ;(async () => {
@@ -1088,13 +1189,15 @@ export default function Home() {
           (tag === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' && (el as HTMLInputElement).type !== 'button')
         )
       )
-      if (isTyping) return
+      if (isTyping || showMoodleModal) return
       e.preventDefault()
+      const currentPath = viewWeek ?? ''
+      setMoodleTargetPath(currentPath)
       setShowMoodleModal(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [showMoodleModal, viewWeek])
 
   if (!mounted) return null
 
@@ -1231,6 +1334,7 @@ export default function Home() {
   const childDirectories = currentDirEntry.subdirs
   const selectedFiles = currentDirEntry.files
   const parentDirectory = currentDirEntry.parent
+  const activeMoodlePath = (moodleTargetPath ?? viewWeek) ?? ''
 
   const collectFiles = (path: string): PdfFile[] => {
     const entry = directoryTree[path]
@@ -1566,8 +1670,23 @@ export default function Home() {
             <button onClick={() => setShowMoodleModal(false)} className="text-sm underline">Cerrar</button>
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400">
-            Carpeta destino actual: {formatBreadcrumb(viewWeek)}
+            Carpeta destino actual: {formatBreadcrumb(activeMoodlePath || null)}
           </div>
+          {moodleDownloadPreview.length > 0 && (
+            <div className="rounded border border-dashed border-gray-300 dark:border-gray-600 p-3 text-sm space-y-2">
+              <div className="font-semibold">Archivos detectados</div>
+              <ul className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                {moodleDownloadPreview.map((item) => (
+                  <li key={`${item.destinationPath}-${item.filename}`} className="flex flex-col">
+                    <span className="font-medium">{item.filename}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Guardar en: {formatBreadcrumb(item.destinationPath || null)} · {item.tableType === 'unknown' ? 'Sin clasificar' : item.tableType === 'theory' ? 'Teoría' : 'Práctica'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <label className="flex flex-col gap-1 text-sm">
             Token Moodle
             <input
