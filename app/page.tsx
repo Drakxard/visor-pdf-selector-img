@@ -1,9 +1,60 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+
+const normalizeSegment = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+
+const isTheorySegment = (segment: string) => {
+  const normalized = normalizeSegment(segment)
+  return normalized === "teoria" || normalized === "theory"
+}
+
+const isPracticeSegment = (segment: string) => {
+  const normalized = normalizeSegment(segment)
+  return normalized === "practica" || normalized === "practice"
+}
+
+const getLastSegment = (path: string) => {
+  const parts = path.split("/").filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ""
+}
+
+const extractSubjectPath = (path: string) => {
+  const segments = path.split("/").filter(Boolean)
+  if (!segments.length) return ""
+  if (segments.length === 1) return segments[0]
+  let endIndex = segments.length
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (isTheorySegment(segments[i]) || isPracticeSegment(segments[i])) {
+      endIndex = i
+      break
+    }
+  }
+  if (endIndex <= 0) return segments.join("/")
+  return segments.slice(0, endIndex).join("/") || segments.join("/")
+}
+
+const extractSubjectName = (path: string) => {
+  const subjectPath = extractSubjectPath(path)
+  const parts = subjectPath.split("/").filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ""
+}
+
+const detectTableTypeFromPath = (path: string): "theory" | "practice" | null => {
+  const segments = path.split("/").filter(Boolean)
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (isTheorySegment(segments[i])) return "theory"
+    if (isPracticeSegment(segments[i])) return "practice"
+  }
+  return null
+}
 
 type PdfFile = {
   file: File
@@ -14,6 +65,7 @@ type PdfFile = {
   isPdf: boolean
   url?: string
   mediaType?: 'pdf' | 'video' | 'link'
+  containerPath?: string
 }
 
 type DirectoryEntry = {
@@ -175,6 +227,7 @@ export default function Home() {
   const [moodleFolders, setMoodleFolders] = useState<MoodleFolderConfig[]>([])
   const [syncingFolderId, setSyncingFolderId] = useState<string | null>(null)
   const [moodleError, setMoodleError] = useState<string | null>(null)
+  const [moodleSelectedPath, setMoodleSelectedPath] = useState<string | null>(null)
   const [showAddFolderForm, setShowAddFolderForm] = useState(false)
   const [newCourseId, setNewCourseId] = useState('')
   const [newFolderId, setNewFolderId] = useState('')
@@ -184,6 +237,21 @@ export default function Home() {
     setToast({ type, text })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [])
+  const findCourseIdForSubject = useCallback(
+    (subject: string | null) => {
+      if (!subject) return null
+      const normalizedTarget = normalizeSegment(subject)
+      for (const config of moodleFolders) {
+        const configSubject = extractSubjectName(config.path || '')
+        if (!configSubject) continue
+        if (normalizeSegment(configSubject) === normalizedTarget) {
+          return config.courseId
+        }
+      }
+      return null
+    },
+    [moodleFolders],
+  )
   // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
@@ -530,6 +598,57 @@ export default function Home() {
     setMoodleFolders((prev) => prev.filter((item) => item.id !== id))
   }, [])
 
+  const moodleSectionOptions = useMemo(() => {
+    const basePath = viewWeek ?? ''
+    const entry = directoryTree[basePath]
+    const options: { path: string; type: 'theory' | 'practice' }[] = []
+    const baseType = detectTableTypeFromPath(basePath)
+
+    const addOption = (path: string, type: 'theory' | 'practice') => {
+      options.push({ path, type })
+    }
+
+    if (baseType) {
+      addOption(basePath, baseType)
+    } else if (entry) {
+      const seen = new Set<'theory' | 'practice'>()
+      const hasDirectTheory = entry.files.some((file) => file.tableType === 'theory')
+      const hasDirectPractice = entry.files.some((file) => file.tableType === 'practice')
+
+      if (hasDirectTheory) {
+        addOption(basePath, 'theory')
+        seen.add('theory')
+      }
+
+      if (hasDirectPractice) {
+        addOption(basePath, 'practice')
+        seen.add('practice')
+      }
+
+      const theorySubdirs = entry.subdirs.filter(
+        (sub) => detectTableTypeFromPath(sub) === 'theory',
+      )
+      const practiceSubdirs = entry.subdirs.filter(
+        (sub) => detectTableTypeFromPath(sub) === 'practice',
+      )
+
+      for (const sub of theorySubdirs) {
+        if (seen.has('theory')) break
+        seen.add('theory')
+        addOption(sub, 'theory')
+      }
+
+      for (const sub of practiceSubdirs) {
+        if (seen.has('practice')) break
+        seen.add('practice')
+        addOption(sub, 'practice')
+      }
+    }
+
+    const defaultPath = options[0]?.path ?? basePath
+    return { basePath, options, defaultPath }
+  }, [directoryTree, viewWeek])
+
   const handleAddMoodleFolder = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault()
@@ -541,33 +660,47 @@ export default function Home() {
         showToastMessage('error', message)
         return
       }
-      const pathTarget = viewWeek ?? ''
+      const pathTarget = moodleSelectedPath ?? moodleSectionOptions.defaultPath
+      const existing = moodleFolders.find((item) => item.path === pathTarget)
       const generatedId =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        existing?.id ||
+        (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`)
       const configToSync: MoodleFolderConfig = {
         id: generatedId,
         courseId,
         folderId,
         path: pathTarget,
-        name: newFolderName.trim() || undefined,
+        name:
+          newFolderName.trim() ||
+          existing?.name ||
+          (extractSubjectName(pathTarget) || undefined),
       }
       const result = await handleSyncMoodleFolder(configToSync)
       if (result.ok) {
         const timestamp = new Date().toISOString()
-        setMoodleFolders((prev) => [...prev, { ...configToSync, lastSynced: timestamp }])
+        setMoodleFolders((prev) => {
+          const filtered = prev.filter((item) => item.path !== pathTarget)
+          return [...filtered, { ...configToSync, lastSynced: timestamp }]
+        })
         showToastMessage('success', `Descargados ${result.count} archivos`)
         setMoodleError(null)
         setShowAddFolderForm(false)
-        setNewCourseId('')
-        setNewFolderId('')
-        setNewFolderName('')
       } else {
         showToastMessage('error', result.error)
       }
     },
-    [handleSyncMoodleFolder, newCourseId, newFolderId, newFolderName, showToastMessage, viewWeek],
+    [
+      handleSyncMoodleFolder,
+      moodleFolders,
+      moodleSectionOptions.defaultPath,
+      moodleSelectedPath,
+      newCourseId,
+      newFolderId,
+      newFolderName,
+      showToastMessage,
+    ],
   )
 
   const selectDirectory = async () => {
@@ -634,8 +767,6 @@ export default function Home() {
   }, [darkModeStart, mounted])
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('moodleToken')
-    if (storedToken && !moodleToken) setMoodleToken(storedToken)
     const storedFolders = localStorage.getItem('moodleFolders')
     if (storedFolders) {
       try {
@@ -644,6 +775,49 @@ export default function Home() {
       } catch {}
     }
   }, [])
+
+  useEffect(() => {
+    if (!showMoodleModal) {
+      setShowAddFolderForm(false)
+      setMoodleError(null)
+      setMoodleSelectedPath(null)
+      return
+    }
+    setShowAddFolderForm(true)
+    setMoodleError(null)
+    setMoodleSelectedPath((prev) => {
+      if (!prev) return moodleSectionOptions.defaultPath
+      const validPaths = new Set([
+        moodleSectionOptions.basePath,
+        ...moodleSectionOptions.options.map((opt) => opt.path),
+      ])
+      if (validPaths.has(prev)) return prev
+      return moodleSectionOptions.defaultPath
+    })
+  }, [showMoodleModal, moodleSectionOptions])
+
+  useEffect(() => {
+    if (!showMoodleModal) return
+    const pathTarget = moodleSelectedPath ?? moodleSectionOptions.defaultPath
+    const existing = moodleFolders.find((cfg) => cfg.path === pathTarget)
+    if (existing) {
+      setNewCourseId(String(existing.courseId ?? ''))
+      setNewFolderId(String(existing.folderId ?? ''))
+      setNewFolderName(existing.name ?? extractSubjectName(pathTarget) ?? '')
+    } else {
+      const subjectName = extractSubjectName(pathTarget)
+      const sharedCourseId = findCourseIdForSubject(subjectName)
+      setNewCourseId(sharedCourseId ? String(sharedCourseId) : '')
+      setNewFolderId('')
+      setNewFolderName(subjectName || '')
+    }
+  }, [
+    showMoodleModal,
+    moodleSelectedPath,
+    moodleSectionOptions,
+    moodleFolders,
+    findCourseIdForSubject,
+  ])
 
   useEffect(() => {
     ;(async () => {
@@ -721,11 +895,6 @@ export default function Home() {
 
   useEffect(() => {
     if (!mounted) return
-    localStorage.setItem('moodleToken', moodleToken)
-  }, [moodleToken, mounted])
-
-  useEffect(() => {
-    if (!mounted) return
     localStorage.setItem('moodleFolders', JSON.stringify(moodleFolders))
   }, [moodleFolders, mounted])
 
@@ -775,14 +944,30 @@ export default function Home() {
       const isVideo = /\.(mp4|webm|ogg|mov|mkv)$/.test(nameLower)
       if (!isPdf && !isVideo) continue
       const mediaType = isPdf ? 'pdf' : 'video'
+      const containerPath = dirPath
+      const subjectPath = extractSubjectPath(dirPath)
+      const subjectName = extractSubjectName(dirPath)
+      let tableType: "theory" | "practice" = 'theory'
+      const dirSegments = dirPath.split('/').filter(Boolean)
+      for (let i = dirSegments.length - 1; i >= 0; i--) {
+        if (isPracticeSegment(dirSegments[i])) {
+          tableType = 'practice'
+          break
+        }
+        if (isTheorySegment(dirSegments[i])) {
+          tableType = 'theory'
+          break
+        }
+      }
       const item: PdfFile = {
         file,
         path: parts.join("/"),
-        week: dirPath,
-        subject: "",
-        tableType: "theory",
+        week: subjectPath || dirPath,
+        subject: subjectName,
+        tableType,
         isPdf,
         mediaType,
+        containerPath,
       }
       entry.files.push(item)
     }
@@ -825,6 +1010,17 @@ export default function Home() {
       setViewWeek(null)
     }
   }, [viewWeek, directoryTree])
+
+  useEffect(() => {
+    if (!viewWeek) return
+    const lastSegment = getLastSegment(viewWeek)
+    if (isTheorySegment(lastSegment) || isPracticeSegment(lastSegment)) {
+      const parent = viewWeek.split('/').filter(Boolean).slice(0, -1).join('/')
+      if (parent !== viewWeek) {
+        setViewWeek(parent || null)
+      }
+    }
+  }, [viewWeek, setViewWeek])
 
   // restore last opened file when queue is ready
   useEffect(() => {
@@ -1118,22 +1314,93 @@ export default function Home() {
   const selectedFiles = currentDirEntry.files
   const parentDirectory = currentDirEntry.parent
 
+  const collectFiles = (path: string): PdfFile[] => {
+    const entry = directoryTree[path]
+    if (!entry) return []
+    const nested = entry.subdirs.flatMap((sub) => collectFiles(sub))
+    return [...entry.files, ...nested]
+  }
+
+  const theoryChildPaths = childDirectories.filter((dir) =>
+    isTheorySegment(getLastSegment(dir)),
+  )
+  const practiceChildPaths = childDirectories.filter((dir) =>
+    isPracticeSegment(getLastSegment(dir)),
+  )
+  const aggregatedChildSet = new Set([...theoryChildPaths, ...practiceChildPaths])
+  const otherChildDirectories = childDirectories.filter(
+    (dir) => !aggregatedChildSet.has(dir),
+  )
+
+  const directTheoryFiles = selectedFiles.filter(
+    (file) => file.tableType === 'theory',
+  )
+  const directPracticeFiles = selectedFiles.filter(
+    (file) => file.tableType === 'practice',
+  )
+
+  const collectAndSort = (paths: string[], direct: PdfFile[]) => {
+    const combined = [...direct, ...paths.flatMap((path) => collectFiles(path))]
+    return combined.sort((a, b) =>
+      a.file.name.localeCompare(b.file.name, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    )
+  }
+
+  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles)
+  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles)
+  const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
+  const showTheoryPractice =
+    currentDepth >= 2 &&
+    (theoryFiles.length > 0 || practiceFiles.length > 0 || aggregatedChildSet.size > 0)
+
+  const moodleDestinationPath = moodleSelectedPath ?? moodleSectionOptions.defaultPath
+  const moodleSectionChoices = moodleSectionOptions.options
+
+  const renderFileList = (files: PdfFile[]) => (
+    <ul className="space-y-1">
+      {files.map((p) => (
+        <li
+          key={p.path}
+          className={`flex items-center gap-2 ${
+            completed[p.path] ? 'line-through text-gray-400' : ''
+          }`}
+        >
+          <span
+            className="flex-1 truncate cursor-pointer"
+            title={p.file.name}
+            onClick={() => handleSelectFile(p)}
+          >
+            {p.file.name}
+            {p.mediaType === 'video' && (
+              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
     const name = segments.length ? segments[segments.length - 1] : path || "Inicio"
     const entry = directoryTree[path]
     if (!entry) return name
+    const extras: string[] = []
     if (entry.subdirs.length > 0) {
-      return `${name} {${entry.subdirs.length} materias}`
+      extras.push(
+        `${entry.subdirs.length} ${
+          entry.subdirs.length === 1 ? 'carpeta' : 'carpetas'
+        }`,
+      )
     }
-    const pdfFiles = entry.files.filter((file) => file.mediaType !== 'video')
-    const videoFiles = entry.files.filter((file) => file.mediaType === 'video')
-    const completedPdf = pdfFiles.filter((file) => completed[file.path]).length
-    const pdfLabel = `${completedPdf}/${pdfFiles.length || 0} pdf`
-    const videoLabel = videoFiles.length
-      ? ` · ${videoFiles.length} video${videoFiles.length === 1 ? '' : 's'}`
-      : ''
-    return `${name} {${pdfLabel}${videoLabel}}`
+    const videoCount = entry.files.filter((file) => file.mediaType === 'video').length
+    if (videoCount > 0) {
+      extras.push(`${videoCount} video${videoCount === 1 ? '' : 's'}`)
+    }
+    return extras.length ? `${name} · ${extras.join(' · ')}` : name
   }
 
   const formatBreadcrumb = (path: string | null) => {
@@ -1163,9 +1430,9 @@ export default function Home() {
             </div>
           )}
           <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
-          {childDirectories.length > 0 && (
+          {otherChildDirectories.length > 0 && (
             <ul className="space-y-1">
-              {childDirectories.map((dir) => (
+              {otherChildDirectories.map((dir) => (
                 <li key={dir} className="font-bold">
                   <button onClick={() => setViewWeek(dir)}>
                     {formatDirLabel(dir)}
@@ -1174,37 +1441,40 @@ export default function Home() {
               ))}
             </ul>
           )}
-          {selectedFiles.length > 0 && (
+          {showTheoryPractice ? (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">Teoría</h3>
+                {theoryFiles.length ? (
+                  renderFileList(theoryFiles)
+                ) : (
+                  <p className="text-xs text-gray-500">Sin archivos</p>
+                )}
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
+                {practiceFiles.length ? (
+                  renderFileList(practiceFiles)
+                ) : (
+                  <p className="text-xs text-gray-500">Sin archivos</p>
+                )}
+              </div>
+            </div>
+          ) : selectedFiles.length > 0 ? (
             <div className={childDirectories.length > 0 ? "space-y-1" : ""}>
               {childDirectories.length > 0 && (
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">
                   Archivos
                 </h3>
               )}
-              <ul className="space-y-1">
-                {selectedFiles.map((p) => (
-                  <li
-                    key={p.path}
-                    className={`flex items-center gap-2 ${
-                      completed[p.path] ? "line-through text-gray-400" : ""
-                    }`}
-                  >
-                    <span
-                      className="flex-1 truncate cursor-pointer"
-                      title={p.file.name}
-                      onClick={() => handleSelectFile(p)}
-                    >
-                      {p.file.name}
-                      {p.mediaType === 'video' && (
-                        <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              {renderFileList(selectedFiles)}
             </div>
-          )}
-          {childDirectories.length === 0 && selectedFiles.length === 0 && (
+          ) : null}
+          {(showTheoryPractice
+            ? theoryFiles.length === 0 &&
+              practiceFiles.length === 0 &&
+              otherChildDirectories.length === 0
+            : childDirectories.length === 0 && selectedFiles.length === 0) && (
             <p className="text-sm text-gray-500">Carpeta vacía</p>
           )}
         </aside>
@@ -1381,8 +1651,30 @@ export default function Home() {
             <button onClick={() => setShowMoodleModal(false)} className="text-sm underline">Cerrar</button>
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400">
-            Carpeta destino actual: {formatBreadcrumb(viewWeek)}
+            Carpeta destino actual: {formatBreadcrumb(moodleDestinationPath || null)}
           </div>
+          {moodleSectionChoices.length > 0 && (
+            <div className="space-y-2 text-sm">
+              <span className="font-semibold">Seleccionar carpeta de destino</span>
+              <div className="flex flex-wrap gap-4">
+                {moodleSectionChoices.map((option) => (
+                  <label
+                    key={option.path}
+                    className="flex items-center gap-2 cursor-pointer select-none"
+                  >
+                    <input
+                      type="radio"
+                      name="moodle-section"
+                      value={option.path}
+                      checked={moodleDestinationPath === option.path}
+                      onChange={() => setMoodleSelectedPath(option.path)}
+                    />
+                    {option.type === 'practice' ? 'Práctica' : 'Teoría'}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           <label className="flex flex-col gap-1 text-sm">
             Token Moodle
             <input
