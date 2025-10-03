@@ -1,9 +1,9 @@
-"use client"
+﻿"use client"
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 
-const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
+const days = ["Lunes", "Martes", "MiÃ©rcoles", "Jueves", "Viernes"]
 
 type PdfFile = {
   file: File
@@ -26,10 +26,12 @@ type DirectoryEntry = {
 
 type MoodleFolderConfig = {
   id: string
+  basePath: string
+  category: 'theory' | 'practice'
+  subjectKey: string
+  subjectName: string
   courseId: number
   folderId: number
-  path: string
-  name?: string
   lastSynced?: string
 }
 
@@ -101,9 +103,11 @@ const readAllEntries = async (
     relativePath: string,
   ): Promise<void> => {
     for await (const [name, handle] of (directory as any).entries()) {
+      if (isHiddenSegment(name)) continue
       if (handle.kind === "file") {
         const file = await handle.getFile()
         const rel = relativePath ? `${relativePath}/${name}` : name
+        if (rel.split('/').some((segment) => isHiddenSegment(segment))) continue
         Object.defineProperty(file, "webkitRelativePath", {
           value: `${dir.name}/${rel}`,
         })
@@ -115,21 +119,31 @@ const readAllEntries = async (
       }
     }
   }
-  await traverse(dir, "")
-  return { files, directories: Array.from(directories) }
-}
-
-const getDirectoryHandleForPath = async (
-  root: FileSystemDirectoryHandle,
-  path: string,
-) => {
-  if (!path) return root
-  const segments = path.split('/').filter(Boolean)
-  let current = root
-  for (const segment of segments) {
-    current = await current.getDirectoryHandle(segment, { create: true })
+  const legacyPath = typeof item.path === 'string' ? item.path : ''
+  if (!legacyPath) return null
+  const folderId = Number(item.folderId) || 0
+  if (!folderId) return null
+  const context = extractSubjectContext(legacyPath)
+  if (!context.basePath) return null
+  let category: 'theory' | 'practice' = 'theory'
+  const lastSegment = legacyPath.split('/').filter(Boolean).pop() || ''
+  if (matchesCategorySegment(lastSegment, 'practice')) {
+    category = 'practice'
   }
-  return current
+  const id =
+    typeof item.id === 'string'
+      ? item.id
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return {
+    id,
+    basePath: context.basePath,
+    category,
+    subjectKey: context.subjectKey,
+    subjectName: context.subjectName || 'Materia',
+    courseId: Number(item.courseId) || 0,
+    folderId,
+    lastSynced: item.lastSynced,
+  }
 }
 
 export default function Home() {
@@ -171,14 +185,13 @@ export default function Home() {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const [showMoodleModal, setShowMoodleModal] = useState(false)
-  const [moodleToken, setMoodleToken] = useState<string>(process.env.NEXT_PUBLIC_MOODLE_TOKEN || '')
+  const [moodleToken, setMoodleToken] = useState<string>('')
   const [moodleFolders, setMoodleFolders] = useState<MoodleFolderConfig[]>([])
   const [syncingFolderId, setSyncingFolderId] = useState<string | null>(null)
   const [moodleError, setMoodleError] = useState<string | null>(null)
-  const [showAddFolderForm, setShowAddFolderForm] = useState(false)
-  const [newCourseId, setNewCourseId] = useState('')
-  const [newFolderId, setNewFolderId] = useState('')
-  const [newFolderName, setNewFolderName] = useState('')
+  const [courseInput, setCourseInput] = useState('')
+  const [theoryFolderInput, setTheoryFolderInput] = useState('')
+  const [practiceFolderInput, setPracticeFolderInput] = useState('')
   const showToastMessage = useCallback((type: 'success' | 'error', text: string) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     setToast({ type, text })
@@ -188,6 +201,14 @@ export default function Home() {
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  const currentPath = useMemo(() => {
+    if (viewWeek) return viewWeek
+    if (currentPdf?.week) return currentPdf.week
+    return ''
+  }, [viewWeek, currentPdf])
+
+  const modalSubjectContext = useMemo(() => extractSubjectContext(currentPath), [currentPath])
 
   // const formatHM = (sec: number) => {
   //   const h = Math.floor(sec / 3600)
@@ -249,10 +270,10 @@ export default function Home() {
   // const toggleTimer = useCallback(() => {
   //   if (timerRunning) {
   //     pauseTimer()
-  //     setToast({ type: 'success', text: 'Cronómetro pausado' })
+  //     setToast({ type: 'success', text: 'CronÃ³metro pausado' })
   //   } else {
   //     startTimer()
-  //     setToast({ type: 'success', text: 'Cronómetro iniciado' })
+  //     setToast({ type: 'success', text: 'CronÃ³metro iniciado' })
   //   }
   //   if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
   //   toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
@@ -343,16 +364,58 @@ export default function Home() {
   }
 
   const filterSystemEntries = (files: File[], directories: string[]) => {
-    const isHidden = (segment: string) => segment.startsWith('.') || segment.toLowerCase() === 'system'
     const filteredFiles = files.filter((f) => {
       const rel = ((f as any).webkitRelativePath || '').split('/')
-      return !rel.some((segment: string) => isHidden(segment))
+      return !rel.some((segment: string) => isHiddenSegment(segment))
     })
     const filteredDirs = directories.filter(
-      (dir) => !dir.split('/').some((segment) => isHidden(segment))
+      (dir) => !dir.split('/').some((segment) => isHiddenSegment(segment))
     )
     return { files: filteredFiles, directories: filteredDirs }
   }
+  const resolveCategoryDirPath = useCallback(
+    (basePath: string, category: 'theory' | 'practice') => {
+      if (!basePath) return ''
+      const entry = directoryTree[basePath]
+      if (entry) {
+        const match = entry.subdirs.find((dir) => {
+          const segments = dir.split('/').filter(Boolean)
+          const last = segments[segments.length - 1] || ''
+          return matchesCategorySegment(last, category)
+        })
+        if (match) return match
+      }
+      const segments = basePath.split('/').filter(Boolean)
+      if (segments.length) {
+        const last = segments[segments.length - 1] || ''
+        if (matchesCategorySegment(last, category)) {
+          return basePath
+        }
+      }
+      return basePath
+    },
+    [directoryTree],
+  )
+
+  const collectCategoryFiles = useCallback(
+    (basePath: string, category: 'theory' | 'practice') => {
+      if (!basePath) return []
+      const normalized = basePath
+      const files: PdfFile[] = []
+      Object.values(directoryTree).forEach((entry) => {
+        if (!entry.path) return
+        if (entry.path === normalized || entry.path.startsWith(`${normalized}/`)) {
+          entry.files.forEach((file) => {
+            if (file.tableType === category) files.push(file)
+          })
+        }
+      })
+      return files.sort((a, b) =>
+        a.file.name.localeCompare(b.file.name, undefined, { numeric: true, sensitivity: 'base' }),
+      )
+    },
+    [directoryTree],
+  )
 
   const refreshDirectory = useCallback(
     async (handle?: FileSystemDirectoryHandle | null) => {
@@ -416,33 +479,47 @@ export default function Home() {
         setMoodleError(message)
         return { ok: false as const, error: message }
       }
-      if (!moodleToken) {
-        const message = 'Configura el token de Moodle'
+      const token = moodleToken.trim()
+      if (!token) {
+        const message = 'Ingresa el token de Moodle'
+        setMoodleError(message)
+        return { ok: false as const, error: message }
+      }
+      if (!config.courseId || config.courseId <= 0) {
+        const message = 'Curso invalido'
+        setMoodleError(message)
+        return { ok: false as const, error: message }
+      }
+      if (!config.folderId || config.folderId <= 0) {
+        const message = 'Folder invalido'
+        setMoodleError(message)
+        return { ok: false as const, error: message }
+      }
+      const targetPath = resolveCategoryDirPath(config.basePath, config.category)
+      if (!targetPath) {
+        const message = 'No se encontro la carpeta destino'
         setMoodleError(message)
         return { ok: false as const, error: message }
       }
       setMoodleError(null)
       setSyncingFolderId(config.id)
       try {
-        const resp = await fetch('/api/moodle/contents', {
+        const contentsResp = await fetch('/api/moodle/contents', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: moodleToken,
-            courseId: config.courseId,
-          }),
+          body: JSON.stringify({ token, courseId: config.courseId }),
         })
-        const payload = await resp.json().catch(() => null)
-        if (!resp.ok || !payload?.ok) {
-          const message = payload?.error || `Error HTTP ${resp.status}`
+        const payload = await contentsResp.json().catch(() => null)
+        if (!contentsResp.ok || !payload?.ok) {
+          const message = payload?.error || `Error HTTP ${contentsResp.status}`
           throw new Error(message)
         }
-        const data = payload.data
-        if (!Array.isArray(data)) {
+        const sections = payload.data
+        if (!Array.isArray(sections)) {
           throw new Error('Respuesta inesperada del servidor')
         }
         let targetModule: any = null
-        for (const section of data) {
+        for (const section of sections) {
           if (targetModule) break
           const modules = Array.isArray(section?.modules) ? section.modules : []
           for (const mod of modules) {
@@ -461,10 +538,11 @@ export default function Home() {
         if (!contents.length) {
           throw new Error('La carpeta no posee archivos disponibles')
         }
-        const dirHandle = await getDirectoryHandleForPath(rootHandle, config.path)
+        const dirHandle = await getDirectoryHandleForPath(rootHandle, targetPath)
         if (!(await verifyPermission(dirHandle, 'readwrite'))) {
           throw new Error('Se requieren permisos de escritura en la carpeta destino')
         }
+        let downloaded = 0
         for (const item of contents) {
           const baseName = typeof item.filename === 'string' ? item.filename : ''
           const rawFileUrl = typeof item.fileurl === 'string' ? item.fileurl : ''
@@ -475,7 +553,7 @@ export default function Home() {
           const downloadResp = await fetch('/api/moodle/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: rawFileUrl, token: moodleToken }),
+            body: JSON.stringify({ url: rawFileUrl, token }),
           })
           if (!downloadResp.ok) {
             let errorMessage = `Error HTTP ${downloadResp.status}`
@@ -493,9 +571,10 @@ export default function Home() {
           const writable = await fileHandle.createWritable()
           await writable.write(buffer)
           await writable.close()
+          downloaded += 1
         }
         await refreshDirectory(rootHandle)
-        return { ok: true as const, count: contents.length }
+        return { ok: true as const, count: downloaded }
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Error inesperado al descargar'
         setMoodleError(message)
@@ -504,72 +583,155 @@ export default function Home() {
         setSyncingFolderId(null)
       }
     },
-    [rootHandle, moodleToken, refreshDirectory],
+    [rootHandle, moodleToken, resolveCategoryDirPath, refreshDirectory],
   )
 
-  const handleSyncExisting = useCallback(
-    async (config: MoodleFolderConfig) => {
+  const handleCategorySync = useCallback(
+    async (category: 'theory' | 'practice') => {
+      const basePath = modalSubjectContext.basePath
+      const subjectKey = modalSubjectContext.subjectKey
+      const subjectName = modalSubjectContext.subjectName || 'Materia'
+      if (!basePath) {
+        setMoodleError('Navega hasta una materia antes de sincronizar')
+        return
+      }
+      const token = moodleToken.trim()
+      if (!token) {
+        setMoodleError('Ingresa el token de Moodle')
+        return
+      }
+      const parsedCourseId = Number(courseInput.trim())
+      if (!Number.isFinite(parsedCourseId) || parsedCourseId <= 0) {
+        setMoodleError('Ingresa un curso valido')
+        return
+      }
+      const folderValue = category === 'theory' ? theoryFolderInput : practiceFolderInput
+      const parsedFolderId = Number(folderValue.trim())
+      if (!Number.isFinite(parsedFolderId) || parsedFolderId <= 0) {
+        setMoodleError('Ingresa un folder valido')
+        return
+      }
+      const existing = moodleFolders.find(
+        (item) => item.basePath === basePath && item.category === category,
+      )
+      const config: MoodleFolderConfig = existing
+        ? {
+            ...existing,
+            courseId: parsedCourseId,
+            folderId: parsedFolderId,
+            subjectName,
+          }
+        : {
+            id:
+              typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            basePath,
+            category,
+            subjectKey,
+            subjectName,
+            courseId: parsedCourseId,
+            folderId: parsedFolderId,
+          }
       const result = await handleSyncMoodleFolder(config)
       if (result.ok) {
         const timestamp = new Date().toISOString()
-        setMoodleFolders((prev) =>
-          prev.map((item) =>
-            item.id === config.id ? { ...item, lastSynced: timestamp } : item,
-          ),
-        )
-        showToastMessage('success', `Descargados ${result.count} archivos`)
+        setMoodleFolders((prev) => {
+          const withCourse = prev.map((item) =>
+            item.subjectKey === subjectKey ? { ...item, courseId: parsedCourseId } : item,
+          )
+          const index = withCourse.findIndex(
+            (item) => item.basePath === basePath && item.category === category,
+          )
+          const entry = { ...config, lastSynced: timestamp }
+          if (index >= 0) {
+            const updated = [...withCourse]
+            updated[index] = entry
+            return updated
+          }
+          return [...withCourse, entry]
+        })
+        setCourseInput(String(parsedCourseId))
+        if (category === 'theory') {
+          setTheoryFolderInput(String(parsedFolderId))
+        } else {
+          setPracticeFolderInput(String(parsedFolderId))
+        }
         setMoodleError(null)
+        showToastMessage('success', `Descargados ${result.count} archivos`)
       } else {
+        setMoodleError(result.error)
         showToastMessage('error', result.error)
       }
     },
-    [handleSyncMoodleFolder, showToastMessage],
+    [
+      modalSubjectContext.basePath,
+      modalSubjectContext.subjectKey,
+      modalSubjectContext.subjectName,
+      moodleToken,
+      courseInput,
+      theoryFolderInput,
+      practiceFolderInput,
+      moodleFolders,
+      handleSyncMoodleFolder,
+      showToastMessage,
+    ],
   )
 
-  const handleRemoveMoodleFolder = useCallback((id: string) => {
-    setMoodleFolders((prev) => prev.filter((item) => item.id !== id))
-  }, [])
-
-  const handleAddMoodleFolder = useCallback(
-    async (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault()
-      const courseId = Number(newCourseId.trim())
-      const folderId = Number(newFolderId.trim())
-      if (!Number.isFinite(courseId) || courseId <= 0 || !Number.isFinite(folderId) || folderId <= 0) {
-        const message = 'Ingresa IDs numericos validos'
-        setMoodleError(message)
-        showToastMessage('error', message)
-        return
-      }
-      const pathTarget = viewWeek ?? ''
-      const generatedId =
-        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-      const configToSync: MoodleFolderConfig = {
-        id: generatedId,
-        courseId,
-        folderId,
-        path: pathTarget,
-        name: newFolderName.trim() || undefined,
-      }
-      const result = await handleSyncMoodleFolder(configToSync)
-      if (result.ok) {
-        const timestamp = new Date().toISOString()
-        setMoodleFolders((prev) => [...prev, { ...configToSync, lastSynced: timestamp }])
-        showToastMessage('success', `Descargados ${result.count} archivos`)
-        setMoodleError(null)
-        setShowAddFolderForm(false)
-        setNewCourseId('')
-        setNewFolderId('')
-        setNewFolderName('')
+  const handleClearCategory = useCallback(
+    (category: 'theory' | 'practice') => {
+      const basePath = modalSubjectContext.basePath
+      if (!basePath) return
+      setMoodleFolders((prev) =>
+        prev.filter((item) => !(item.basePath === basePath && item.category === category)),
+      )
+      if (category === 'theory') {
+        setTheoryFolderInput('')
       } else {
-        showToastMessage('error', result.error)
+        setPracticeFolderInput('')
       }
     },
-    [handleSyncMoodleFolder, newCourseId, newFolderId, newFolderName, showToastMessage, viewWeek],
+    [modalSubjectContext.basePath],
   )
 
+  const handleRemoveMoodleConfig = useCallback(
+    (config: MoodleFolderConfig) => {
+      setMoodleFolders((prev) => prev.filter((item) => item.id !== config.id))
+      if (config.basePath === modalSubjectContext.basePath) {
+        if (config.category === 'theory') setTheoryFolderInput('')
+        if (config.category === 'practice') setPracticeFolderInput('')
+      }
+    },
+    [modalSubjectContext.basePath],
+  )
+
+  useEffect(() => {
+    if (!showMoodleModal) return
+    const basePath = modalSubjectContext.basePath
+    if (!basePath) {
+      setCourseInput('')
+      setTheoryFolderInput('')
+      setPracticeFolderInput('')
+      return
+    }
+    const courseConfig = moodleFolders.find(
+      (item) => item.subjectKey === modalSubjectContext.subjectKey && item.courseId,
+    )
+    setCourseInput(courseConfig ? String(courseConfig.courseId) : '')
+    setTheoryFolderInput(theoryConfigForCurrent ? String(theoryConfigForCurrent.folderId) : '')
+    setPracticeFolderInput(practiceConfigForCurrent ? String(practiceConfigForCurrent.folderId) : '')
+  }, [
+    showMoodleModal,
+    modalSubjectContext.basePath,
+    modalSubjectContext.subjectKey,
+    moodleFolders,
+    theoryConfigForCurrent?.folderId,
+    practiceConfigForCurrent?.folderId,
+  ])
+
+  useEffect(() => {
+    if (showMoodleModal) setMoodleError(null)
+  }, [showMoodleModal])
   const selectDirectory = async () => {
     try {
       const handle = await (window as any).showDirectoryPicker()
@@ -634,15 +796,16 @@ export default function Home() {
   }, [darkModeStart, mounted])
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('moodleToken')
-    if (storedToken && !moodleToken) setMoodleToken(storedToken)
     const storedFolders = localStorage.getItem('moodleFolders')
-    if (storedFolders) {
-      try {
-        const parsed = JSON.parse(storedFolders) as MoodleFolderConfig[]
-        setMoodleFolders(parsed)
-      } catch {}
-    }
+    if (!storedFolders) return
+    try {
+      const parsed = JSON.parse(storedFolders)
+      if (!Array.isArray(parsed)) return
+      const upgraded = parsed
+        .map((item: any) => upgradeLegacyConfig(item))
+        .filter((item): item is MoodleFolderConfig => !!item)
+      setMoodleFolders(upgraded)
+    } catch {}
   }, [])
 
   useEffect(() => {
@@ -721,11 +884,6 @@ export default function Home() {
 
   useEffect(() => {
     if (!mounted) return
-    localStorage.setItem('moodleToken', moodleToken)
-  }, [moodleToken, mounted])
-
-  useEffect(() => {
-    if (!mounted) return
     localStorage.setItem('moodleFolders', JSON.stringify(moodleFolders))
   }, [moodleFolders, mounted])
 
@@ -767,7 +925,7 @@ export default function Home() {
       const rel = (file as any).webkitRelativePath || ""
       const parts = rel.split("/").slice(1)
       if (!parts.length) continue
-      if (parts.some((segment) => !segment || segment.toLowerCase() === "system" || segment.startsWith('.'))) continue
+      if (parts.some((segment) => !segment || isHiddenSegment(segment))) continue
       const dirPath = parts.slice(0, -1).join("/")
       const entry = ensureDir(dirPath)
       const nameLower = file.name.toLowerCase()
@@ -775,12 +933,15 @@ export default function Home() {
       const isVideo = /\.(mp4|webm|ogg|mov|mkv)$/.test(nameLower)
       if (!isPdf && !isVideo) continue
       const mediaType = isPdf ? 'pdf' : 'video'
+      const pathSegments = dirPath.split('/').filter(Boolean)
+      const tableType: 'theory' | 'practice' = pathSegments.some((segment) => matchesCategorySegment(segment, 'practice')) ? 'practice' : 'theory'
+      const { subjectName } = extractSubjectContext(dirPath)
       const item: PdfFile = {
         file,
         path: parts.join("/"),
         week: dirPath,
-        subject: "",
-        tableType: "theory",
+        subject: subjectName,
+        tableType,
         isPdf,
         mediaType,
       }
@@ -976,11 +1137,15 @@ export default function Home() {
       )
       if (isTyping) return
       e.preventDefault()
+      if (!modalSubjectContext.basePath) {
+        showToastMessage('error', 'Navega hasta una materia antes de sincronizar')
+        return
+      }
       setShowMoodleModal(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [modalSubjectContext.basePath, showToastMessage])
 
   if (!mounted) return null
 
@@ -999,7 +1164,7 @@ export default function Home() {
       case 1: {
         return (
           <main className="min-h-screen flex items-center justify-center p-4">
-            <p>Buscando configuración previa...</p>
+            <p>Buscando configuraciÃ³n previa...</p>
           </main>
         )
       }
@@ -1010,7 +1175,7 @@ export default function Home() {
     const dayMap: Record<string, number> = {
       Lunes: 1,
       Martes: 2,
-      Miércoles: 3,
+      MiÃ©rcoles: 3,
       Jueves: 4,
       Viernes: 5,
     }
@@ -1073,8 +1238,9 @@ export default function Home() {
     setToast({ type: 'success', text: 'Guardado en localStorage' })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
     try {
-      const norm = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
-      const canonical = canonicalSubjects.find(s => norm(s) === norm(currentPdf.subject)) || currentPdf.subject
+      const canonical =
+        canonicalSubjects.find((s) => normalizeKey(s) === normalizeKey(currentPdf.subject)) ||
+        currentPdf.subject
       const resp = await fetch("/api/progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1118,29 +1284,118 @@ export default function Home() {
   const selectedFiles = currentDirEntry.files
   const parentDirectory = currentDirEntry.parent
 
-  const formatDirLabel = (path: string) => {
-    const segments = path.split("/").filter(Boolean)
-    const name = segments.length ? segments[segments.length - 1] : path || "Inicio"
-    const entry = directoryTree[path]
-    if (!entry) return name
-    if (entry.subdirs.length > 0) {
-      return `${name} {${entry.subdirs.length} materias}`
-    }
-    const pdfFiles = entry.files.filter((file) => file.mediaType !== 'video')
-    const videoFiles = entry.files.filter((file) => file.mediaType === 'video')
-    const completedPdf = pdfFiles.filter((file) => completed[file.path]).length
-    const pdfLabel = `${completedPdf}/${pdfFiles.length || 0} pdf`
-    const videoLabel = videoFiles.length
-      ? ` · ${videoFiles.length} video${videoFiles.length === 1 ? '' : 's'}`
-      : ''
-    return `${name} {${pdfLabel}${videoLabel}}`
-  }
+  const currentSubjectContext = useMemo(
+    () => extractSubjectContext(currentDirEntry.path || currentPath),
+    [currentDirEntry.path, currentPath],
+  )
+  const isSubjectView = useMemo(() => {
+    const basePath = currentSubjectContext.basePath
+    if (!basePath) return false
+    const segments = basePath.split('/').filter(Boolean)
+    if (!segments.length) return false
+    const requiresWeek = normalizeKey(segments[0]).startsWith('semana')
+    if (requiresWeek && segments.length < 2) return false
+    if (currentDirEntry.path === basePath) return true
+    return currentDirEntry.path.startsWith(`${basePath}/`)
+  }, [currentSubjectContext.basePath, currentDirEntry.path])
+  const theoryFilesForSubject = useMemo(
+    () => collectCategoryFiles(currentSubjectContext.basePath, 'theory'),
+    [collectCategoryFiles, currentSubjectContext.basePath],
+  )
+  const practiceFilesForSubject = useMemo(
+    () => collectCategoryFiles(currentSubjectContext.basePath, 'practice'),
+    [collectCategoryFiles, currentSubjectContext.basePath],
+  )
+  const categoryDirSet = useMemo(() => {
+    const set = new Set<string>()
+    const basePath = currentSubjectContext.basePath
+    if (!basePath) return set
+    const entry = directoryTree[basePath]
+    if (!entry) return set
+    entry.subdirs.forEach((dir) => {
+      const last = dir.split('/').filter(Boolean).pop() || ''
+      if (matchesCategorySegment(last, 'theory') || matchesCategorySegment(last, 'practice')) {
+        set.add(dir)
+      }
+    })
+    return set
+  }, [currentSubjectContext.basePath, directoryTree])
+  const nonCategoryDirectories = childDirectories.filter((dir) => !categoryDirSet.has(dir))
+
+  const subjectConfigs = useMemo(
+    () =>
+      moodleFolders.filter((item) =>
+        item.subjectKey === modalSubjectContext.subjectKey && !!modalSubjectContext.subjectKey,
+      ),
+    [moodleFolders, modalSubjectContext.subjectKey],
+  )
+  const otherConfigs = useMemo(
+    () =>
+      moodleFolders.filter((item) => item.subjectKey !== modalSubjectContext.subjectKey),
+    [moodleFolders, modalSubjectContext.subjectKey],
+  )
+  const theoryConfigForCurrent = subjectConfigs.find(
+    (item) => item.basePath === modalSubjectContext.basePath && item.category === 'theory',
+  )
+  const practiceConfigForCurrent = subjectConfigs.find(
+    (item) => item.basePath === modalSubjectContext.basePath && item.category === 'practice',
+  )
+
+  const groupedSubjectConfigs = useMemo(() => {
+    const map = new Map<string, MoodleFolderConfig[]>()
+    subjectConfigs.forEach((cfg) => {
+      const existing = map.get(cfg.basePath) || []
+      existing.push(cfg)
+      map.set(cfg.basePath, existing)
+    })
+    return Array.from(map.entries())
+  }, [subjectConfigs])
+
+  const groupedOtherConfigs = useMemo(() => {
+    const map = new Map<string, MoodleFolderConfig[]>()
+    otherConfigs.forEach((cfg) => {
+      const existing = map.get(cfg.basePath) || []
+      existing.push(cfg)
+      map.set(cfg.basePath, existing)
+    })
+    return Array.from(map.entries())
+  }, [otherConfigs])
 
   const formatBreadcrumb = (path: string | null) => {
-    if (!path) return "Carpetas"
-    const segments = path.split("/").filter(Boolean)
-    return segments.length ? segments.join(" / ") : "Carpetas"
+    if (!path) return 'Inicio'
+    const segments = path.split('/').filter(Boolean)
+    return segments.length ? segments.join(' / ') : 'Inicio'
   }
+
+  const formatDirLabel = (path: string) => {
+    const segments = path.split('/')
+    const clean = segments.filter(Boolean)
+    return clean.length ? clean[clean.length - 1] : path || 'Inicio'
+  }
+
+  const renderFileList = (files: PdfFile[]) => (
+    <ul className="space-y-1">
+      {files.map((p) => (
+        <li
+          key={p.path}
+          className={`flex items-center gap-2 ${
+            completed[p.path] ? 'line-through text-gray-400' : ''
+          }`}
+        >
+          <span
+            className="flex-1 truncate cursor-pointer"
+            title={p.file.name}
+            onClick={() => handleSelectFile(p)}
+          >
+            {p.file.name}
+            {p.mediaType === 'video' && (
+              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
 
   // main interface
   return (
@@ -1157,55 +1412,47 @@ export default function Home() {
                   className="underline"
                   onClick={() => setViewWeek(parentDirectory || null)}
                 >
-                  ← Volver
+                  â† Volver
                 </button>
               )}
             </div>
           )}
           <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
-          {childDirectories.length > 0 && (
+          {nonCategoryDirectories.length > 0 && (
             <ul className="space-y-1">
-              {childDirectories.map((dir) => (
+              {nonCategoryDirectories.map((dir) => (
                 <li key={dir} className="font-bold">
-                  <button onClick={() => setViewWeek(dir)}>
-                    {formatDirLabel(dir)}
-                  </button>
+                  <button onClick={() => setViewWeek(dir)}>{formatDirLabel(dir)}</button>
                 </li>
               ))}
             </ul>
           )}
-          {selectedFiles.length > 0 && (
-            <div className={childDirectories.length > 0 ? "space-y-1" : ""}>
-              {childDirectories.length > 0 && (
-                <h3 className="text-sm font-semibold text-gray-500 uppercase">
-                  Archivos
-                </h3>
-              )}
-              <ul className="space-y-1">
-                {selectedFiles.map((p) => (
-                  <li
-                    key={p.path}
-                    className={`flex items-center gap-2 ${
-                      completed[p.path] ? "line-through text-gray-400" : ""
-                    }`}
-                  >
-                    <span
-                      className="flex-1 truncate cursor-pointer"
-                      title={p.file.name}
-                      onClick={() => handleSelectFile(p)}
-                    >
-                      {p.file.name}
-                      {p.mediaType === 'video' && (
-                        <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+          {isSubjectView ? (
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold uppercase text-gray-500">Teoria</h3>
+                {theoryFilesForSubject.length
+                  ? renderFileList(theoryFilesForSubject)
+                  : <p className="text-sm text-gray-500">Sin archivos de teoria</p>}
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold uppercase text-gray-500">Practica</h3>
+                {practiceFilesForSubject.length
+                  ? renderFileList(practiceFilesForSubject)
+                  : <p className="text-sm text-gray-500">Sin archivos de practica</p>}
+              </div>
             </div>
-          )}
-          {childDirectories.length === 0 && selectedFiles.length === 0 && (
-            <p className="text-sm text-gray-500">Carpeta vacía</p>
+          ) : selectedFiles.length > 0 ? (
+            <div className={nonCategoryDirectories.length > 0 ? 'space-y-1' : ''}>
+              {nonCategoryDirectories.length > 0 && (
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">Archivos</h3>
+              )}
+              {renderFileList(selectedFiles)}
+            </div>
+          ) : (
+            nonCategoryDirectories.length === 0 && (
+              <p className="text-sm text-gray-500">Carpeta vacia</p>
+            )
           )}
         </aside>
        <section
@@ -1231,7 +1478,7 @@ export default function Home() {
                     Inicio
                   </button>
                   <span>
-                    Días restantes: {currentPdf ? daysUntil(currentPdf) : ''}
+                    DÃ­as restantes: {currentPdf ? daysUntil(currentPdf) : ''}
                   </span>
                   <button
                     onClick={() =>
@@ -1241,14 +1488,14 @@ export default function Home() {
                       )
                     }
                   >
-                    {pdfFullscreen ? '🗗' : '⛶'}
+                    {pdfFullscreen ? 'ðŸ——' : 'â›¶'}
                   </button>
                   <button
                     onClick={() => {
                       setTheme(theme === 'light' ? 'dark' : 'light')
                     }}
                   >
-                    {theme === 'light' ? '🌞' : '🌙'}
+                    {theme === 'light' ? 'ðŸŒž' : 'ðŸŒ™'}
                   </button>
                   <button
                     onClick={() => {
@@ -1260,7 +1507,7 @@ export default function Home() {
                       )
                     }}
                   >
-                    ✕
+                    âœ•
                   </button>
                   {/* <span>Hoy: {formatHM(todaySeconds)}</span> */}
                 </div>
@@ -1269,20 +1516,20 @@ export default function Home() {
           ) : (
             <div className="flex flex-wrap items-center justify-between p-2 border-b gap-2">
               <div className="flex items-center gap-2">
-                <span>📄</span>
+                <span>ðŸ“„</span>
                 <span
                   className="truncate"
-                  title={currentPdf ? currentPdf.file.name : 'Sin selección'}
+                  title={currentPdf ? currentPdf.file.name : 'Sin selecciÃ³n'}
                 >
-                  {currentPdf ? currentPdf.file.name : 'Sin selección'}
+                  {currentPdf ? currentPdf.file.name : 'Sin selecciÃ³n'}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button onClick={prevPdf} disabled={queueIndex <= 0}>
-                  ←
+                  â†
                 </button>
                 <button onClick={nextPdf} disabled={queueIndex >= queue.length - 1}>
-                  →
+                  â†’
                 </button>
                 {currentPdf && (
                   <input
@@ -1304,7 +1551,7 @@ export default function Home() {
                   className="w-full h-full"
                   src={videoUrl}
                 >
-                  Tu navegador no soporta la reproducción de video.
+                  Tu navegador no soporta la reproducciÃ³n de video.
                 </video>
               ) : currentPdf.isPdf && pdfUrl ? (
                 <iframe
@@ -1315,7 +1562,7 @@ export default function Home() {
                       '*',
                     )
                   }
-                  title={viewerOpen ? 'Visor PDF' : 'Previsualización'}
+                  title={viewerOpen ? 'Visor PDF' : 'PrevisualizaciÃ³n'}
                   src={`/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
                     currentPdf.file.name,
                   )}&key=${encodeURIComponent(currentPdf.path)}`}
@@ -1332,7 +1579,7 @@ export default function Home() {
                       '*',
                     )
                   }
-                  title={viewerOpen ? 'Visor' : 'Previsualización'}
+                  title={viewerOpen ? 'Visor' : 'PrevisualizaciÃ³n'}
                   src={embedUrl}
                   className="w-full h-full border-0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -1364,7 +1611,7 @@ export default function Home() {
       </div>
     )}
     <div className="fixed top-2 right-2">
-      <button onClick={() => setShowSettings(!showSettings)}>⚙️</button>
+      <button onClick={() => setShowSettings(!showSettings)}>âš™ï¸</button>
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
           <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
@@ -1375,13 +1622,13 @@ export default function Home() {
 
     {showMoodleModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-        <div className="bg-white dark:bg-gray-800 w-full max-w-lg mx-4 p-4 rounded shadow space-y-4 text-gray-800 dark:text-gray-200">
+        <div className="bg-white dark:bg-gray-800 w-full max-w-2xl mx-4 p-4 rounded shadow space-y-4 text-gray-800 dark:text-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold">Sincronizar Moodle</h2>
             <button onClick={() => setShowMoodleModal(false)} className="text-sm underline">Cerrar</button>
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400">
-            Carpeta destino actual: {formatBreadcrumb(viewWeek)}
+            Carpeta actual: {formatBreadcrumb(modalSubjectContext.basePath || viewWeek)}
           </div>
           <label className="flex flex-col gap-1 text-sm">
             Token Moodle
@@ -1390,104 +1637,169 @@ export default function Home() {
               value={moodleToken}
               onChange={(e) => setMoodleToken(e.target.value)}
               className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
-              placeholder="Token"
+              placeholder="Ingresa tu token"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Curso ID
+            <input
+              value={courseInput}
+              onChange={(e) => setCourseInput(e.target.value)}
+              className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
+              placeholder="Ej: 1881"
+              inputMode="numeric"
             />
           </label>
           {moodleError && <div className="text-sm text-red-500">{moodleError}</div>}
-          <p className="text-xs text-gray-500 dark:text-gray-400">Los archivos de video descargados apareceran marcados como "Video" en la lista lateral.</p>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold">IDs guardados</span>
-              <button
-                className="text-sm underline"
-                onClick={() => setShowAddFolderForm((prev) => !prev)}
-              >
-                {showAddFolderForm ? 'Cancelar' : 'Agregar carpeta'}
-              </button>
-            </div>
-            {showAddFolderForm && (
-              <form
-                onSubmit={handleAddMoodleFolder}
-                className="space-y-2 border border-dashed border-gray-300 dark:border-gray-600 rounded p-3"
-              >
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <label className="flex flex-col gap-1">
-                    Curso ID
-                    <input
-                      value={newCourseId}
-                      onChange={(e) => setNewCourseId(e.target.value)}
-                      className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
-                      placeholder="Ej: 12345"
-                      inputMode="numeric"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    Folder ID
-                    <input
-                      value={newFolderId}
-                      onChange={(e) => setNewFolderId(e.target.value)}
-                      className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
-                      placeholder="Ej: 67890"
-                      inputMode="numeric"
-                    />
-                  </label>
-                </div>
-                <label className="flex flex-col gap-1 text-sm">
-                  Nombre opcional
-                  <input
-                    value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
-                    className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
-                    placeholder="Ej: Algebra Semana 1"
-                  />
-                </label>
+          <p className="text-xs text-gray-500 dark:text-gray-400">El mismo curso se reutiliza para todas las semanas de una materia.</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <section className="space-y-2 border border-gray-200 dark:border-gray-700 rounded p-3">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm">Teoria</span>
+                {theoryConfigForCurrent?.lastSynced && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    Ultima descarga: {new Date(theoryConfigForCurrent.lastSynced).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <label className="flex flex-col gap-1 text-sm">
+                Folder ID
+                <input
+                  value={theoryFolderInput}
+                  onChange={(e) => setTheoryFolderInput(e.target.value)}
+                  className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
+                  placeholder="ID carpeta teoria"
+                  inputMode="numeric"
+                />
+              </label>
+              <div className="flex gap-2">
                 <button
-                  type="submit"
-                  className="w-full text-sm border border-gray-300 dark:border-gray-600 rounded px-3 py-1"
+                  onClick={() => handleCategorySync('theory')}
+                  className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm"
                   disabled={!!syncingFolderId}
                 >
-                  Descargar y guardar
+                  {syncingFolderId ? 'Descargando...' : 'Descargar'}
                 </button>
-              </form>
-            )}
-            {moodleFolders.length ? (
-              <ul className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                {moodleFolders.map((config) => (
-                  <li
-                    key={config.id}
-                    className="border border-gray-200 dark:border-gray-700 rounded p-2 text-sm space-y-1"
+                {theoryConfigForCurrent && (
+                  <button
+                    onClick={() => handleClearCategory('theory')}
+                    className="px-3 py-1 border border-red-400 text-red-500 rounded text-sm"
+                    disabled={!!syncingFolderId}
                   >
-                    <div className="font-medium">{config.name || `Curso ${config.courseId}`}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">Curso: {config.courseId} - Folder: {config.folderId}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">Destino: {formatBreadcrumb(config.path || null)}</div>
-                    {config.lastSynced && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400">Ultima descarga: {new Date(config.lastSynced).toLocaleString()}</div>
-                    )}
-                    <div className="flex gap-2 pt-1">
-                      <button
-                        className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-xs"
-                        onClick={() => handleSyncExisting(config)}
-                        disabled={syncingFolderId === config.id}
-                      >
-                        {syncingFolderId === config.id ? 'Descargando...' : 'Descargar'}
-                      </button>
-                      <button
-                        className="border border-red-400 text-red-500 rounded px-2 py-1 text-xs"
-                        onClick={() => handleRemoveMoodleFolder(config.id)}
-                      >
-                        Eliminar
-                      </button>
+                    Limpiar
+                  </button>
+                )}
+              </div>
+            </section>
+            <section className="space-y-2 border border-gray-200 dark:border-gray-700 rounded p-3">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-sm">Practica</span>
+                {practiceConfigForCurrent?.lastSynced && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    Ultima descarga: {new Date(practiceConfigForCurrent.lastSynced).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <label className="flex flex-col gap-1 text-sm">
+                Folder ID
+                <input
+                  value={practiceFolderInput}
+                  onChange={(e) => setPracticeFolderInput(e.target.value)}
+                  className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-transparent"
+                  placeholder="ID carpeta practica"
+                  inputMode="numeric"
+                />
+              </label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleCategorySync('practice')}
+                  className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm"
+                  disabled={!!syncingFolderId}
+                >
+                  {syncingFolderId ? 'Descargando...' : 'Descargar'}
+                </button>
+                {practiceConfigForCurrent && (
+                  <button
+                    onClick={() => handleClearCategory('practice')}
+                    className="px-3 py-1 border border-red-400 text-red-500 rounded text-sm"
+                    disabled={!!syncingFolderId}
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
+            </section>
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold">Guardados de esta materia</h3>
+            {groupedSubjectConfigs.length ? (
+              <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {groupedSubjectConfigs.map(([base, configs]) => (
+                  <li
+                    key={base}
+                    className="border border-gray-200 dark:border-gray-700 rounded p-2 space-y-1 text-sm"
+                  >
+                    <div className="font-medium">{formatBreadcrumb(base)}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Curso: {configs[0]?.courseId || '-'}</div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {configs.map((cfg) => (
+                        <div
+                          key={cfg.id}
+                          className="flex items-center gap-2 border border-gray-200 dark:border-gray-600 rounded px-2 py-1 text-xs"
+                        >
+                          <span>{cfg.category === 'theory' ? 'Teoria' : 'Practica'} Â -  Folder {cfg.folderId}</span>
+                          <button
+                            className="text-red-500"
+                            onClick={() => handleRemoveMoodleConfig(cfg)}
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-gray-500 dark:text-gray-400">Aun no hay IDs guardados.</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Aun no hay IDs guardados para esta materia.</p>
             )}
           </div>
+          {groupedOtherConfigs.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-semibold">Otras materias</h3>
+              <ul className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                {groupedOtherConfigs.map(([base, configs]) => (
+                  <li
+                    key={base}
+                    className="border border-gray-200 dark:border-gray-700 rounded p-2 space-y-1 text-sm"
+                  >
+                    <div className="font-medium">{formatBreadcrumb(base)}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">Curso: {configs[0]?.courseId || '-'}</div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {configs.map((cfg) => (
+                        <div
+                          key={cfg.id}
+                          className="flex items-center gap-2 border border-gray-200 dark:border-gray-600 rounded px-2 py-1 text-xs"
+                        >
+                          <span>{cfg.category === 'theory' ? 'Teoria' : 'Practica'} Â -  Folder {cfg.folderId}</span>
+                          <button
+                            className="text-red-500"
+                            onClick={() => handleRemoveMoodleConfig(cfg)}
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
-    )}
+    )
+
 
     {showDarkModal && (
       <div className="fixed inset-0 flex items-center justify-center bg-black/50 z-50">
@@ -1499,7 +1811,7 @@ export default function Home() {
             </div>
             <div className="relative w-full">
               <div className="absolute w-full flex justify-center -top-5 pointer-events-none">
-                <span>↓</span>
+                <span>â†“</span>
               </div>
               <input
                 type="range"
@@ -1522,4 +1834,16 @@ export default function Home() {
   </>
   )
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
