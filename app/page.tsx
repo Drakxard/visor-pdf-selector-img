@@ -47,6 +47,68 @@ const extractSubjectName = (path: string) => {
   return parts.length ? parts[parts.length - 1] : ""
 }
 
+const isQuotaExceededError = (error: unknown) =>
+  error instanceof DOMException &&
+  (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")
+
+const setStoredItem = (key: string, value: string | null | undefined) => {
+  if (value === null || value === undefined) {
+    try {
+      localStorage.removeItem(key)
+    } catch (error) {
+      if (!isQuotaExceededError(error)) {
+        console.warn(`localStorage.removeItem failed for ${key}`, error)
+      }
+    }
+    try {
+      sessionStorage.removeItem(key)
+    } catch (error) {
+      console.warn(`sessionStorage.removeItem failed for ${key}`, error)
+    }
+    return
+  }
+
+  try {
+    localStorage.setItem(key, value)
+    try {
+      sessionStorage.removeItem(key)
+    } catch {}
+    return
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      console.warn(`localStorage quota exceeded while storing ${key}`, error)
+    } else {
+      console.warn(`localStorage.setItem failed for ${key}`, error)
+    }
+  }
+
+  try {
+    localStorage.removeItem(key)
+  } catch {}
+
+  try {
+    sessionStorage.setItem(key, value)
+  } catch (error) {
+    console.warn(`sessionStorage.setItem failed for ${key}`, error)
+  }
+}
+
+const getStoredItem = (key: string) => {
+  try {
+    const value = localStorage.getItem(key)
+    if (value !== null) return value
+  } catch (error) {
+    console.warn(`localStorage.getItem failed for ${key}`, error)
+  }
+
+  try {
+    return sessionStorage.getItem(key)
+  } catch (error) {
+    console.warn(`sessionStorage.getItem failed for ${key}`, error)
+    return null
+  }
+}
+
 type PdfFile = {
   file: File
   path: string
@@ -695,7 +757,7 @@ export default function Home() {
   // complete setup automatically when config is checked
   useEffect(() => {
     if (step === 1 && configFound !== null) {
-      if (configFound) localStorage.setItem("setupComplete", "1")
+      if (configFound) setStoredItem("setupComplete", "1")
       setSetupComplete(true)
     }
   }, [step, configFound])
@@ -714,10 +776,10 @@ export default function Home() {
   // theme and setup flag
   useEffect(() => {
     setMounted(true)
-    const storedStart = parseInt(localStorage.getItem('darkModeStart') || '19')
+    const storedStart = parseInt(getStoredItem('darkModeStart') ?? '19')
     setDarkModeStart(storedStart)
     applyTheme(storedStart)
-    const stored = localStorage.getItem("setupComplete")
+    const stored = getStoredItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
     }
@@ -725,12 +787,12 @@ export default function Home() {
 
   useEffect(() => {
     if (!mounted) return
-    localStorage.setItem('darkModeStart', darkModeStart.toString())
+    setStoredItem('darkModeStart', darkModeStart.toString())
     applyTheme(darkModeStart)
   }, [darkModeStart, mounted])
 
   useEffect(() => {
-    const storedFolders = localStorage.getItem('moodleFolders')
+    const storedFolders = getStoredItem('moodleFolders')
     if (storedFolders) {
       try {
         const parsed = JSON.parse(storedFolders) as MoodleFolderConfig[]
@@ -812,40 +874,40 @@ export default function Home() {
 
   // load completed from storage
   useEffect(() => {
-    const stored = localStorage.getItem("completed")
+    const stored = getStoredItem("completed")
     if (stored) setCompleted(JSON.parse(stored))
   }, [])
 
   // load subjects from storage
   useEffect(() => {
-    const storedNames = localStorage.getItem("names")
+    const storedNames = getStoredItem("names")
     if (storedNames) setNames(JSON.parse(storedNames))
-    const storedTheory = localStorage.getItem("theory")
+    const storedTheory = getStoredItem("theory")
     if (storedTheory) setTheory(JSON.parse(storedTheory))
-    const storedPractice = localStorage.getItem("practice")
+    const storedPractice = getStoredItem("practice")
     if (storedPractice) setPractice(JSON.parse(storedPractice))
   }, [])
 
   // persist completed
   useEffect(() => {
-    localStorage.setItem("completed", JSON.stringify(completed))
+    setStoredItem("completed", JSON.stringify(completed))
   }, [completed])
 
   useEffect(() => {
-    localStorage.setItem("names", JSON.stringify(names))
+    setStoredItem("names", JSON.stringify(names))
   }, [names])
 
   useEffect(() => {
-    localStorage.setItem("theory", JSON.stringify(theory))
+    setStoredItem("theory", JSON.stringify(theory))
   }, [theory])
 
   useEffect(() => {
-    localStorage.setItem("practice", JSON.stringify(practice))
+    setStoredItem("practice", JSON.stringify(practice))
   }, [practice])
 
   useEffect(() => {
     if (!mounted) return
-    localStorage.setItem('moodleFolders', JSON.stringify(moodleFolders))
+    setStoredItem('moodleFolders', JSON.stringify(moodleFolders))
   }, [moodleFolders, mounted])
 
 
@@ -975,7 +1037,7 @@ export default function Home() {
   // restore last opened file when queue is ready
   useEffect(() => {
     if (!restored && queue.length) {
-      const last = localStorage.getItem('lastPath')
+      const last = getStoredItem('lastPath')
       if (last) {
         const idx = queue.findIndex((f) => f.path === last)
         if (idx >= 0) {
@@ -1056,9 +1118,9 @@ export default function Home() {
   // remember last opened file
   useEffect(() => {
     if (currentPdf) {
-      localStorage.setItem('lastPath', currentPdf.path)
-      localStorage.setItem('lastWeek', currentPdf.week)
-      localStorage.setItem('lastSubject', currentPdf.subject)
+      setStoredItem('lastPath', currentPdf.path)
+      setStoredItem('lastWeek', currentPdf.week)
+      setStoredItem('lastSubject', currentPdf.subject)
     }
   }, [currentPdf])
 
@@ -1069,7 +1131,7 @@ export default function Home() {
         setPdfFullscreen(!!e.data.value)
       }
       if (e.data?.type === 'viewerPage') {
-        localStorage.setItem('lastPage', String(e.data.page))
+        setStoredItem('lastPage', String(e.data.page))
       }
       if (e.data?.type === 'openInBrowser') {
         // open current PDF blob in a new tab using the browser viewer
