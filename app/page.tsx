@@ -5,6 +5,48 @@ import { useTheme } from "next-themes"
 
 const days = ["Lunes", "Martes", "MiÃ©rcoles", "Jueves", "Viernes"]
 
+const normalizeSegment = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+
+const isTheorySegment = (segment: string) => {
+  const normalized = normalizeSegment(segment)
+  return normalized === "teoria" || normalized === "theory"
+}
+
+const isPracticeSegment = (segment: string) => {
+  const normalized = normalizeSegment(segment)
+  return normalized === "practica" || normalized === "practice"
+}
+
+const getLastSegment = (path: string) => {
+  const parts = path.split("/").filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ""
+}
+
+const extractSubjectPath = (path: string) => {
+  const segments = path.split("/").filter(Boolean)
+  if (!segments.length) return ""
+  if (segments.length === 1) return segments[0]
+  let endIndex = segments.length
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (isTheorySegment(segments[i]) || isPracticeSegment(segments[i])) {
+      endIndex = i
+      break
+    }
+  }
+  if (endIndex <= 0) return segments.join("/")
+  return segments.slice(0, endIndex).join("/") || segments.join("/")
+}
+
+const extractSubjectName = (path: string) => {
+  const subjectPath = extractSubjectPath(path)
+  const parts = subjectPath.split("/").filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ""
+}
+
 type PdfFile = {
   file: File
   path: string
@@ -14,6 +56,7 @@ type PdfFile = {
   isPdf: boolean
   url?: string
   mediaType?: 'pdf' | 'video' | 'link'
+  containerPath?: string
 }
 
 type DirectoryEntry = {
@@ -33,6 +76,17 @@ type MoodleFolderConfig = {
   courseId: number
   folderId: number
   lastSynced?: string
+}
+
+type MoodleTargetOption = {
+  type: "theory" | "practice"
+  path: string
+}
+
+const buildTargetPath = (basePath: string, segment: string) => {
+  if (!basePath) return segment
+  const normalized = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath
+  return `${normalized}/${segment}`
 }
 
 const DB_NAME = "folder-handle-db"
@@ -185,6 +239,7 @@ export default function Home() {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const [showMoodleModal, setShowMoodleModal] = useState(false)
+<<<<<<< HEAD
   const [moodleToken, setMoodleToken] = useState<string>('')
   const [moodleFolders, setMoodleFolders] = useState<MoodleFolderConfig[]>([])
   const [syncingFolderId, setSyncingFolderId] = useState<string | null>(null)
@@ -192,11 +247,49 @@ export default function Home() {
   const [courseInput, setCourseInput] = useState('')
   const [theoryFolderInput, setTheoryFolderInput] = useState('')
   const [practiceFolderInput, setPracticeFolderInput] = useState('')
+=======
+  const [showMoodleTargetPicker, setShowMoodleTargetPicker] = useState(false)
+  const [moodleToken, setMoodleToken] = useState<string>(process.env.NEXT_PUBLIC_MOODLE_TOKEN || '')
+  const [moodleFolders, setMoodleFolders] = useState<MoodleFolderConfig[]>([])
+  const [syncingFolderId, setSyncingFolderId] = useState<string | null>(null)
+  const [moodleError, setMoodleError] = useState<string | null>(null)
+  const [showAddFolderForm, setShowAddFolderForm] = useState(false)
+  const [newCourseId, setNewCourseId] = useState('')
+  const [newFolderId, setNewFolderId] = useState('')
+  const [newFolderName, setNewFolderName] = useState('')
+  const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
+  const [moodleTargetOptions, setMoodleTargetOptions] = useState<MoodleTargetOption[]>([])
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
   const showToastMessage = useCallback((type: 'success' | 'error', text: string) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     setToast({ type, text })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [])
+  const handleChooseMoodleTarget = useCallback((option: MoodleTargetOption) => {
+    setMoodleTargetPath(option.path)
+    setMoodleTargetOptions([])
+    setShowMoodleTargetPicker(false)
+    setShowMoodleModal(true)
+  }, [])
+  const handleDismissMoodleTargetPicker = useCallback(() => {
+    setMoodleTargetOptions([])
+    setShowMoodleTargetPicker(false)
+  }, [])
+  const findCourseIdForSubject = useCallback(
+    (subject: string | null) => {
+      if (!subject) return null
+      const normalizedTarget = normalizeSegment(subject)
+      for (const config of moodleFolders) {
+        const configSubject = extractSubjectName(config.path || '')
+        if (!configSubject) continue
+        if (normalizeSegment(configSubject) === normalizedTarget) {
+          return config.courseId
+        }
+      }
+      return null
+    },
+    [moodleFolders],
+  )
   // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
   // Avoid hydration mismatch: render only after mounted
@@ -678,6 +771,7 @@ export default function Home() {
     ],
   )
 
+<<<<<<< HEAD
   const handleClearCategory = useCallback(
     (category: 'theory' | 'practice') => {
       const basePath = modalSubjectContext.basePath
@@ -687,11 +781,68 @@ export default function Home() {
       )
       if (category === 'theory') {
         setTheoryFolderInput('')
+=======
+  const handleRemoveMoodleFolder = useCallback((id: string) => {
+    setMoodleFolders((prev) => prev.filter((item) => item.id !== id))
+  }, [])
+
+  const handleAddMoodleFolder = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      const courseId = Number(newCourseId.trim())
+      const folderId = Number(newFolderId.trim())
+      if (!Number.isFinite(courseId) || courseId <= 0 || !Number.isFinite(folderId) || folderId <= 0) {
+        const message = 'Ingresa IDs numericos validos'
+        setMoodleError(message)
+        showToastMessage('error', message)
+        return
+      }
+      const pathTarget = (moodleTargetPath ?? viewWeek) ?? ''
+      const existing = moodleFolders.find((item) => item.path === pathTarget)
+      const generatedId =
+        existing?.id ||
+        (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      const configToSync: MoodleFolderConfig = {
+        id: generatedId,
+        courseId,
+        folderId,
+        path: pathTarget,
+        name:
+          newFolderName.trim() ||
+          existing?.name ||
+          (extractSubjectName(pathTarget) || undefined),
+      }
+      const result = await handleSyncMoodleFolder(configToSync)
+      if (result.ok) {
+        const timestamp = new Date().toISOString()
+        setMoodleFolders((prev) => {
+          const filtered = prev.filter((item) => item.path !== pathTarget)
+          return [...filtered, { ...configToSync, lastSynced: timestamp }]
+        })
+        showToastMessage('success', `Descargados ${result.count} archivos`)
+        setMoodleError(null)
+        setShowAddFolderForm(false)
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
       } else {
         setPracticeFolderInput('')
       }
     },
+<<<<<<< HEAD
     [modalSubjectContext.basePath],
+=======
+    [
+      handleSyncMoodleFolder,
+      moodleFolders,
+      newCourseId,
+      newFolderId,
+      newFolderName,
+      showToastMessage,
+      viewWeek,
+      moodleTargetPath,
+    ],
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
   )
 
   const handleRemoveMoodleConfig = useCallback(
@@ -807,6 +958,36 @@ export default function Home() {
       setMoodleFolders(upgraded)
     } catch {}
   }, [])
+
+  useEffect(() => {
+    if (!showMoodleModal) {
+      setShowAddFolderForm(false)
+      setMoodleError(null)
+      setMoodleTargetPath(null)
+      return
+    }
+    const pathTarget = (moodleTargetPath ?? viewWeek) ?? ''
+    const existing = moodleFolders.find((cfg) => cfg.path === pathTarget)
+    if (existing) {
+      setNewCourseId(String(existing.courseId ?? ''))
+      setNewFolderId(String(existing.folderId ?? ''))
+      setNewFolderName(existing.name ?? extractSubjectName(pathTarget) ?? '')
+    } else {
+      const subjectName = extractSubjectName(pathTarget)
+      const sharedCourseId = findCourseIdForSubject(subjectName)
+      setNewCourseId(sharedCourseId ? String(sharedCourseId) : '')
+      setNewFolderId('')
+      setNewFolderName(subjectName || '')
+    }
+    setShowAddFolderForm(true)
+    setMoodleError(null)
+  }, [
+    showMoodleModal,
+    viewWeek,
+    moodleTargetPath,
+    moodleFolders,
+    findCourseIdForSubject,
+  ])
 
   useEffect(() => {
     ;(async () => {
@@ -933,6 +1114,7 @@ export default function Home() {
       const isVideo = /\.(mp4|webm|ogg|mov|mkv)$/.test(nameLower)
       if (!isPdf && !isVideo) continue
       const mediaType = isPdf ? 'pdf' : 'video'
+<<<<<<< HEAD
       const pathSegments = dirPath.split('/').filter(Boolean)
       const tableType: 'theory' | 'practice' = pathSegments.some((segment) => matchesCategorySegment(segment, 'practice')) ? 'practice' : 'theory'
       const { subjectName } = extractSubjectContext(dirPath)
@@ -940,10 +1122,32 @@ export default function Home() {
         file,
         path: parts.join("/"),
         week: dirPath,
+=======
+      const containerPath = dirPath
+      const subjectPath = extractSubjectPath(dirPath)
+      const subjectName = extractSubjectName(dirPath)
+      let tableType: "theory" | "practice" = 'theory'
+      const dirSegments = dirPath.split('/').filter(Boolean)
+      for (let i = dirSegments.length - 1; i >= 0; i--) {
+        if (isPracticeSegment(dirSegments[i])) {
+          tableType = 'practice'
+          break
+        }
+        if (isTheorySegment(dirSegments[i])) {
+          tableType = 'theory'
+          break
+        }
+      }
+      const item: PdfFile = {
+        file,
+        path: parts.join("/"),
+        week: subjectPath || dirPath,
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
         subject: subjectName,
         tableType,
         isPdf,
         mediaType,
+        containerPath,
       }
       entry.files.push(item)
     }
@@ -986,6 +1190,17 @@ export default function Home() {
       setViewWeek(null)
     }
   }, [viewWeek, directoryTree])
+
+  useEffect(() => {
+    if (!viewWeek) return
+    const lastSegment = getLastSegment(viewWeek)
+    if (isTheorySegment(lastSegment) || isPracticeSegment(lastSegment)) {
+      const parent = viewWeek.split('/').filter(Boolean).slice(0, -1).join('/')
+      if (parent !== viewWeek) {
+        setViewWeek(parent || null)
+      }
+    }
+  }, [viewWeek, setViewWeek])
 
   // restore last opened file when queue is ready
   useEffect(() => {
@@ -1135,8 +1350,9 @@ export default function Home() {
           (tag === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' && (el as HTMLInputElement).type !== 'button')
         )
       )
-      if (isTyping) return
+      if (isTyping || showMoodleModal || showMoodleTargetPicker) return
       e.preventDefault()
+<<<<<<< HEAD
       if (!modalSubjectContext.basePath) {
         showToastMessage('error', 'Navega hasta una materia antes de sincronizar')
         return
@@ -1146,6 +1362,41 @@ export default function Home() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [modalSubjectContext.basePath, showToastMessage])
+=======
+      const currentPath = viewWeek ?? ''
+      const entry = directoryTree[currentPath]
+      if (!entry) {
+        setMoodleTargetPath(currentPath)
+        setShowMoodleModal(true)
+        return
+      }
+      const findByType = (type: 'theory' | 'practice') =>
+        entry.subdirs.find((dir) =>
+          type === 'theory'
+            ? isTheorySegment(getLastSegment(dir))
+            : isPracticeSegment(getLastSegment(dir)),
+        )
+      const theoryPath = findByType('theory') ?? buildTargetPath(entry.path, 'Teoria')
+      const practicePath = findByType('practice') ?? buildTargetPath(entry.path, 'Practica')
+      const rawOptions: MoodleTargetOption[] = []
+      if (theoryPath) rawOptions.push({ type: 'theory', path: theoryPath })
+      if (practicePath) rawOptions.push({ type: 'practice', path: practicePath })
+      const options = rawOptions.filter(
+        (option, index, arr) => arr.findIndex((item) => item.path === option.path) === index,
+      )
+      if (options.length <= 1) {
+        const target = options[0] ?? { type: 'theory', path: buildTargetPath(entry.path, 'Teoria') }
+        setMoodleTargetPath(target.path)
+        setShowMoodleModal(true)
+        return
+      }
+      setMoodleTargetOptions(options)
+      setShowMoodleTargetPicker(true)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [directoryTree, showMoodleModal, showMoodleTargetPicker, viewWeek])
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
 
   if (!mounted) return null
 
@@ -1283,7 +1534,75 @@ export default function Home() {
   const childDirectories = currentDirEntry.subdirs
   const selectedFiles = currentDirEntry.files
   const parentDirectory = currentDirEntry.parent
+  const activeMoodlePath = (moodleTargetPath ?? viewWeek) ?? ''
 
+  const collectFiles = (path: string): PdfFile[] => {
+    const entry = directoryTree[path]
+    if (!entry) return []
+    const nested = entry.subdirs.flatMap((sub) => collectFiles(sub))
+    return [...entry.files, ...nested]
+  }
+
+  const theoryChildPaths = childDirectories.filter((dir) =>
+    isTheorySegment(getLastSegment(dir)),
+  )
+  const practiceChildPaths = childDirectories.filter((dir) =>
+    isPracticeSegment(getLastSegment(dir)),
+  )
+  const aggregatedChildSet = new Set([...theoryChildPaths, ...practiceChildPaths])
+  const otherChildDirectories = childDirectories.filter(
+    (dir) => !aggregatedChildSet.has(dir),
+  )
+
+  const directTheoryFiles = selectedFiles.filter(
+    (file) => file.tableType === 'theory',
+  )
+  const directPracticeFiles = selectedFiles.filter(
+    (file) => file.tableType === 'practice',
+  )
+
+  const collectAndSort = (paths: string[], direct: PdfFile[]) => {
+    const combined = [...direct, ...paths.flatMap((path) => collectFiles(path))]
+    return combined.sort((a, b) =>
+      a.file.name.localeCompare(b.file.name, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    )
+  }
+
+  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles)
+  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles)
+  const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
+  const showTheoryPractice =
+    currentDepth >= 2 &&
+    (theoryFiles.length > 0 || practiceFiles.length > 0 || aggregatedChildSet.size > 0)
+
+  const renderFileList = (files: PdfFile[]) => (
+    <ul className="space-y-1">
+      {files.map((p) => (
+        <li
+          key={p.path}
+          className={`flex items-center gap-2 ${
+            completed[p.path] ? 'line-through text-gray-400' : ''
+          }`}
+        >
+          <span
+            className="flex-1 truncate cursor-pointer"
+            title={p.file.name}
+            onClick={() => handleSelectFile(p)}
+          >
+            {p.file.name}
+            {p.mediaType === 'video' && (
+              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+
+<<<<<<< HEAD
   const currentSubjectContext = useMemo(
     () => extractSubjectContext(currentDirEntry.path || currentPath),
     [currentDirEntry.path, currentPath],
@@ -1360,6 +1679,27 @@ export default function Home() {
     })
     return Array.from(map.entries())
   }, [otherConfigs])
+=======
+  const formatDirLabel = (path: string) => {
+    const segments = path.split("/").filter(Boolean)
+    const name = segments.length ? segments[segments.length - 1] : path || "Inicio"
+    const entry = directoryTree[path]
+    if (!entry) return name
+    const extras: string[] = []
+    if (entry.subdirs.length > 0) {
+      extras.push(
+        `${entry.subdirs.length} ${
+          entry.subdirs.length === 1 ? 'carpeta' : 'carpetas'
+        }`,
+      )
+    }
+    const videoCount = entry.files.filter((file) => file.mediaType === 'video').length
+    if (videoCount > 0) {
+      extras.push(`${videoCount} video${videoCount === 1 ? '' : 's'}`)
+    }
+    return extras.length ? `${name} · ${extras.join(' · ')}` : name
+  }
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
 
   const formatBreadcrumb = (path: string | null) => {
     if (!path) return 'Inicio'
@@ -1418,15 +1758,22 @@ export default function Home() {
             </div>
           )}
           <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+<<<<<<< HEAD
           {nonCategoryDirectories.length > 0 && (
             <ul className="space-y-1">
               {nonCategoryDirectories.map((dir) => (
+=======
+          {otherChildDirectories.length > 0 && (
+            <ul className="space-y-1">
+              {otherChildDirectories.map((dir) => (
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
                 <li key={dir} className="font-bold">
                   <button onClick={() => setViewWeek(dir)}>{formatDirLabel(dir)}</button>
                 </li>
               ))}
             </ul>
           )}
+<<<<<<< HEAD
           {isSubjectView ? (
             <div className="space-y-3">
               <div>
@@ -1453,6 +1800,43 @@ export default function Home() {
             nonCategoryDirectories.length === 0 && (
               <p className="text-sm text-gray-500">Carpeta vacia</p>
             )
+=======
+          {showTheoryPractice ? (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">Teoría</h3>
+                {theoryFiles.length ? (
+                  renderFileList(theoryFiles)
+                ) : (
+                  <p className="text-xs text-gray-500">Sin archivos</p>
+                )}
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
+                {practiceFiles.length ? (
+                  renderFileList(practiceFiles)
+                ) : (
+                  <p className="text-xs text-gray-500">Sin archivos</p>
+                )}
+              </div>
+            </div>
+          ) : selectedFiles.length > 0 ? (
+            <div className={childDirectories.length > 0 ? "space-y-1" : ""}>
+              {childDirectories.length > 0 && (
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">
+                  Archivos
+                </h3>
+              )}
+              {renderFileList(selectedFiles)}
+            </div>
+          ) : null}
+          {(showTheoryPractice
+            ? theoryFiles.length === 0 &&
+              practiceFiles.length === 0 &&
+              otherChildDirectories.length === 0
+            : childDirectories.length === 0 && selectedFiles.length === 0) && (
+            <p className="text-sm text-gray-500">Carpeta vacía</p>
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
           )}
         </aside>
        <section
@@ -1620,6 +2004,40 @@ export default function Home() {
       )}
     </div>
 
+    {showMoodleTargetPicker && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow dark:bg-gray-800 dark:text-gray-100">
+          <div>
+            <h2 className="text-lg font-semibold">Seleccionar destino</h2>
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Elige si deseas guardar esta descarga en teoría o práctica.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {moodleTargetOptions.map((option) => (
+              <button
+                key={option.path}
+                onClick={() => handleChooseMoodleTarget(option)}
+                className="rounded border border-gray-300 px-3 py-2 text-left text-sm shadow-sm transition hover:border-indigo-500 hover:shadow dark:border-gray-600 dark:hover:border-indigo-400"
+              >
+                <div className="text-base font-semibold">
+                  {option.type === 'theory' ? 'Teoría' : 'Práctica'}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-300">
+                  {formatBreadcrumb(option.path || null)}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end">
+            <button className="text-sm underline" onClick={handleDismissMoodleTargetPicker}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
     {showMoodleModal && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
         <div className="bg-white dark:bg-gray-800 w-full max-w-2xl mx-4 p-4 rounded shadow space-y-4 text-gray-800 dark:text-gray-200">
@@ -1628,7 +2046,11 @@ export default function Home() {
             <button onClick={() => setShowMoodleModal(false)} className="text-sm underline">Cerrar</button>
           </div>
           <div className="text-sm text-gray-600 dark:text-gray-400">
+<<<<<<< HEAD
             Carpeta actual: {formatBreadcrumb(modalSubjectContext.basePath || viewWeek)}
+=======
+            Carpeta destino actual: {formatBreadcrumb(activeMoodlePath || null)}
+>>>>>>> 163668f5994ce8f50fe61d14d02865c10c6da890
           </div>
           <label className="flex flex-col gap-1 text-sm">
             Token Moodle
