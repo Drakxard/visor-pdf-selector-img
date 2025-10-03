@@ -33,7 +33,7 @@ export async function POST(req: Request) {
       data = JSON.parse(text);
     } catch (err) {
       return NextResponse.json(
-        { ok: false, error: "Respuesta inválida del servidor" },
+        { ok: false, error: "Respuesta invalida del servidor" },
         { status: 502 },
       );
     }
