@@ -656,8 +656,8 @@
         const cur = getCurrentPage();
         document.body.classList.toggle('zoomed', zoomLevel !== 1);
         for (const [pageNum, state] of pageStates.entries()) {
-          const w = baseWidth * scale;
-          const h = baseHeight * scale;
+          const w = Math.round(baseWidth * scale);
+          const h = Math.round(baseHeight * scale);
           state.wrapper.style.width = w + 'px';
           state.wrapper.style.height = h + 'px';
           state.layer.style.width = w + 'px';
@@ -668,8 +668,41 @@
           }
           const drawCanvas = state.wrapper.querySelector('.draw-canvas');
           if (drawCanvas) {
+            const hadDrawing = drawCanvas.dataset.hasDrawing === '1';
+            let snapshot = null;
+            if (hadDrawing && drawCanvas.width && drawCanvas.height) {
+              snapshot = document.createElement('canvas');
+              snapshot.width = drawCanvas.width;
+              snapshot.height = drawCanvas.height;
+              const snapshotCtx = snapshot.getContext('2d');
+              if (snapshotCtx) {
+                snapshotCtx.drawImage(drawCanvas, 0, 0);
+              }
+            }
             drawCanvas.width = w;
             drawCanvas.height = h;
+            drawCanvas._ctx = null;
+            drawCanvas._history = [];
+            if (hadDrawing && snapshot) {
+              const ctx = drawCanvas.getContext('2d');
+              if (ctx) {
+                ctx.drawImage(
+                  snapshot,
+                  0,
+                  0,
+                  snapshot.width,
+                  snapshot.height,
+                  0,
+                  0,
+                  drawCanvas.width,
+                  drawCanvas.height
+                );
+              }
+              drawCanvas.dataset.hasDrawing = '1';
+              if (currentPdfKey) {
+                saveDrawing(drawCanvas);
+              }
+            }
           }
           if (pageNum === cur) {
             state.renderedScale = 0;
@@ -3275,6 +3308,7 @@
         try {
           localStorage.setItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`, canvas.toDataURL());
         } catch (e) {}
+        canvas.dataset.hasDrawing = '1';
       }
 
       function loadDrawingsFromStorage() {
@@ -3284,8 +3318,19 @@
           if (data) {
             const ctx = canvas.getContext('2d');
             const img = new Image();
-            img.onload = () => ctx.drawImage(img,0,0,canvas.width,canvas.height);
+            img.onload = () => {
+              if (!ctx) return;
+              ctx.clearRect(0, 0, canvas.width, canvas.height);
+              ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+              canvas.dataset.hasDrawing = '1';
+              canvas._history = [];
+              canvas._ctx = null;
+            };
             img.src = data;
+          } else {
+            delete canvas.dataset.hasDrawing;
+            canvas._history = [];
+            canvas._ctx = null;
           }
         });
         updateDrawMode();
@@ -3296,8 +3341,12 @@
         if (!currentPdfKey) return;
         document.querySelectorAll('.draw-canvas').forEach(canvas => {
           const ctx = canvas.getContext('2d');
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          if (ctx) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
           canvas._history = [];
+          canvas._ctx = null;
+          delete canvas.dataset.hasDrawing;
           localStorage.removeItem(`drawing-${currentPdfKey}-page${canvas.dataset.page}`);
         });
         clearTextAnnotations();
