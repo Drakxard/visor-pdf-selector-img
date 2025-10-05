@@ -1,7 +1,8 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react"
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTheme } from "next-themes"
+import { usePathname } from "next/navigation"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -330,6 +331,74 @@ export default function Home() {
   )
   // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
+  const pathname = usePathname()
+  const routeScope = useMemo(() => {
+    const rawPath = pathname ?? ''
+    const segments = rawPath.split('/')
+      .filter(Boolean)
+      .map((segment) => decodeURIComponent(segment))
+    if (segments.length >= 2) {
+      const [modeSegment, subjectSegment] = segments
+      if (isTheorySegment(modeSegment) && subjectSegment) {
+        return {
+          scope: 'subject' as const,
+          tableType: 'theory' as const,
+          subject: subjectSegment,
+          normalizedSubject: normalizeSegment(subjectSegment),
+        }
+      }
+      if (isPracticeSegment(modeSegment) && subjectSegment) {
+        return {
+          scope: 'subject' as const,
+          tableType: 'practice' as const,
+          subject: subjectSegment,
+          normalizedSubject: normalizeSegment(subjectSegment),
+        }
+      }
+    }
+    return { scope: 'global' as const }
+  }, [pathname])
+
+  const getScopedStorageKey = useCallback(
+    (baseKey: string) => {
+      if (routeScope.scope === 'subject') {
+        return ${baseKey}::
+      }
+      return baseKey
+    },
+    [routeScope],
+  )
+
+  const getScopedStoredItem = useCallback(
+    (baseKey: string) => {
+      const scopedKey = getScopedStorageKey(baseKey)
+      const scopedValue = getStoredItem(scopedKey)
+      if (scopedValue !== null) return scopedValue
+      if (routeScope.scope === 'subject') {
+        return getStoredItem(baseKey)
+      }
+      return null
+    },
+    [getScopedStorageKey, routeScope],
+  )
+
+  const setScopedStoredItem = useCallback(
+    (baseKey: string, value: string | null | undefined) => {
+      const scopedKey = getScopedStorageKey(baseKey)
+      setStoredItem(scopedKey, value)
+    },
+    [getScopedStorageKey],
+  )
+
+  const scopedLastPathKey = useMemo(
+    () => getScopedStorageKey('lastPath'),
+    [getScopedStorageKey],
+  )
+
+  useEffect(() => {
+    setRestored(false)
+  }, [scopedLastPathKey])
+
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
 
@@ -1037,7 +1106,7 @@ export default function Home() {
   // restore last opened file when queue is ready
   useEffect(() => {
     if (!restored && queue.length) {
-      const last = getStoredItem('lastPath')
+      const last = getScopedStoredItem('lastPath')
       if (last) {
         const idx = queue.findIndex((f) => f.path === last)
         if (idx >= 0) {
@@ -1049,7 +1118,7 @@ export default function Home() {
       }
       setRestored(true)
     }
-  }, [queue, restored])
+  }, [queue, restored, getScopedStoredItem])
 
   const toEmbedUrl = (url: string) => {
     try {
@@ -1118,11 +1187,11 @@ export default function Home() {
   // remember last opened file
   useEffect(() => {
     if (currentPdf) {
-      setStoredItem('lastPath', currentPdf.path)
-      setStoredItem('lastWeek', currentPdf.week)
-      setStoredItem('lastSubject', currentPdf.subject)
+      setScopedStoredItem('lastPath', currentPdf.path)
+      setScopedStoredItem('lastWeek', currentPdf.week)
+      setScopedStoredItem('lastSubject', currentPdf.subject)
     }
-  }, [currentPdf])
+  }, [currentPdf, setScopedStoredItem])
 
   // listen for messages from the PDF viewer
   useEffect(() => {
@@ -1131,7 +1200,7 @@ export default function Home() {
         setPdfFullscreen(!!e.data.value)
       }
       if (e.data?.type === 'viewerPage') {
-        setStoredItem('lastPage', String(e.data.page))
+        setScopedStoredItem('lastPage', String(e.data.page))
       }
       if (e.data?.type === 'openInBrowser') {
         // open current PDF blob in a new tab using the browser viewer
@@ -1144,7 +1213,7 @@ export default function Home() {
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [currentPdf, pdfUrl])
+  }, [currentPdf, pdfUrl, setScopedStoredItem])
 
   // Global key: press 'a' (when not typing) to open current PDF in a new tab
   useEffect(() => {
