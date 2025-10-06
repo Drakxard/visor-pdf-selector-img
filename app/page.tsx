@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTheme } from "next-themes"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -137,6 +137,39 @@ type QuickLink = {
 }
 
 const QUICK_LINK_SLOT_COUNT = 6
+
+const DEFAULT_SUBJECT_QUICK_LINKS: QuickLink[] = [
+  {
+    id: "default-teoria-algebra",
+    label: "Teoría · Álgebra",
+    url: "/teoria/algebra",
+  },
+  {
+    id: "default-practica-algebra",
+    label: "Práctica · Álgebra",
+    url: "/practica/algebra",
+  },
+  {
+    id: "default-teoria-calculo",
+    label: "Teoría · Cálculo",
+    url: "/teoria/calculo",
+  },
+  {
+    id: "default-practica-calculo",
+    label: "Práctica · Cálculo",
+    url: "/practica/calculo",
+  },
+  {
+    id: "default-teoria-poo",
+    label: "Teoría · POO",
+    url: "/teoria/poo",
+  },
+  {
+    id: "default-practica-poo",
+    label: "Práctica · POO",
+    url: "/practica/poo",
+  },
+]
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -301,6 +334,7 @@ const getDirectoryHandleForPath = async (
 
 export default function Home() {
   const { setTheme, theme } = useTheme()
+  const router = useRouter()
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
   const [names, setNames] = useState<string[]>([])
@@ -1385,7 +1419,8 @@ export default function Home() {
   }, [showQuickLinks, showMoodleModal, showMoodleTargetPicker])
 
   const quickLinkSlots = useMemo(() => {
-    const filled = quickLinks.slice(0, QUICK_LINK_SLOT_COUNT)
+    const source = quickLinks.length ? quickLinks : DEFAULT_SUBJECT_QUICK_LINKS
+    const filled = source.slice(0, QUICK_LINK_SLOT_COUNT)
     const missing = QUICK_LINK_SLOT_COUNT - filled.length
     if (missing > 0) {
       const placeholders: QuickLink[] = []
@@ -1397,13 +1432,32 @@ export default function Home() {
     return filled
   }, [quickLinks])
 
-  const openQuickLink = useCallback((link: QuickLink) => {
-    if (!link.url) return
-    try {
-      window.open(link.url, '_blank', 'noopener,noreferrer')
-    } catch {}
-    setShowQuickLinks(false)
-  }, [])
+  const openQuickLink = useCallback(
+    (link: QuickLink) => {
+      const rawUrl = (link.url || '').trim()
+      if (!rawUrl) return
+      let handled = false
+      if (rawUrl.startsWith('/')) {
+        router.push(rawUrl)
+        handled = true
+      } else {
+        try {
+          const resolved = new URL(rawUrl, window.location.href)
+          if (resolved.origin === window.location.origin) {
+            router.push(`${resolved.pathname}${resolved.search}${resolved.hash}`)
+            handled = true
+          }
+        } catch {}
+      }
+      if (!handled) {
+        try {
+          window.open(rawUrl, '_blank', 'noopener,noreferrer')
+        } catch {}
+      }
+      setShowQuickLinks(false)
+    },
+    [router],
+  )
 
   if (!mounted) return null
 
