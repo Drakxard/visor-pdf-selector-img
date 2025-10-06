@@ -1384,6 +1384,27 @@ export default function Home() {
     return () => window.removeEventListener('keydown', onKey)
   }, [showQuickLinks, showMoodleModal, showMoodleTargetPicker])
 
+  const quickLinkSlots = useMemo(() => {
+    const filled = quickLinks.slice(0, QUICK_LINK_SLOT_COUNT)
+    const missing = QUICK_LINK_SLOT_COUNT - filled.length
+    if (missing > 0) {
+      const placeholders: QuickLink[] = []
+      for (let i = 0; i < missing; i += 1) {
+        placeholders.push({ id: `empty-${i}`, label: '', url: '' })
+      }
+      return [...filled, ...placeholders]
+    }
+    return filled
+  }, [quickLinks])
+
+  const openQuickLink = useCallback((link: QuickLink) => {
+    if (!link.url) return
+    try {
+      window.open(link.url, '_blank', 'noopener,noreferrer')
+    } catch {}
+    setShowQuickLinks(false)
+  }, [])
+
   if (!mounted) return null
 
   // configuration wizard
@@ -1586,25 +1607,6 @@ export default function Home() {
       ))}
     </ul>
   )
-
-  const quickLinkSlots = useMemo(() => {
-    const filled = quickLinks.slice(0, QUICK_LINK_SLOT_COUNT)
-    const missing = QUICK_LINK_SLOT_COUNT - filled.length
-    if (missing > 0) {
-      for (let i = 0; i < missing; i += 1) {
-        filled.push({ id: `empty-${i}`, label: '', url: '' })
-      }
-    }
-    return filled
-  }, [quickLinks])
-
-  const openQuickLink = useCallback((link: QuickLink) => {
-    if (!link.url) return
-    try {
-      window.open(link.url, '_blank', 'noopener,noreferrer')
-    } catch {}
-    setShowQuickLinks(false)
-  }, [])
 
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
