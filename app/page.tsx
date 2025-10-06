@@ -130,6 +130,56 @@ type DirectoryEntry = {
   files: PdfFile[]
 }
 
+type QuickLink = {
+  id: string
+  label: string
+  url: string
+}
+
+const QUICK_LINK_SLOT_COUNT = 6
+
+const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const result: QuickLink[] = []
+  raw.forEach((item, index) => {
+    if (typeof item === 'string') {
+      const url = item.trim()
+      if (!url) return
+      const key = url.toLowerCase()
+      if (seen.has(key)) return
+      seen.add(key)
+      result.push({ id: `${prefix}-${index}`, label: url, url })
+      return
+    }
+    if (!item || typeof item !== 'object') return
+    const obj = item as Record<string, unknown>
+    const rawUrlValue =
+      typeof obj['url'] === 'string'
+        ? (obj['url'] as string).trim()
+        : typeof obj['href'] === 'string'
+          ? (obj['href'] as string).trim()
+          : ''
+    if (!rawUrlValue) return
+    const key = rawUrlValue.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    const labelValue =
+      typeof obj['label'] === 'string' && (obj['label'] as string).trim()
+        ? (obj['label'] as string).trim()
+        : typeof obj['name'] === 'string' && (obj['name'] as string).trim()
+          ? (obj['name'] as string).trim()
+          : typeof obj['title'] === 'string' && (obj['title'] as string).trim()
+            ? (obj['title'] as string).trim()
+            : ''
+    const idValue =
+      typeof obj['id'] === 'string' && (obj['id'] as string).trim()
+        ? (obj['id'] as string).trim()
+        : `${prefix}-${index}`
+    result.push({ id: idValue, label: (labelValue || rawUrlValue), url: rawUrlValue })
+  })
+  return result.slice(0, QUICK_LINK_SLOT_COUNT)
+}
 type MoodleFolderConfig = {
   id: string
   courseId: number
@@ -287,6 +337,8 @@ export default function Home() {
   const viewerRef = useRef<HTMLIFrameElement>(null)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const [quickLinks, setQuickLinks] = useState<QuickLink[]>([])
+  const [showQuickLinks, setShowQuickLinks] = useState(false)
   const [showMoodleModal, setShowMoodleModal] = useState(false)
   const [showMoodleTargetPicker, setShowMoodleTargetPicker] = useState(false)
   const [moodleToken, setMoodleToken] = useState<string>(process.env.NEXT_PUBLIC_MOODLE_TOKEN || '')
@@ -587,6 +639,10 @@ export default function Home() {
       setNames(data.names || [])
       setTheory(data.theory || {})
       setPractice(data.practice || {})
+      const configLinks = normalizeQuickLinks(data.quickLinks ?? data.links ?? [], 'cfg')
+      if (configLinks.length) {
+        setQuickLinks(configLinks)
+      }
       return true
     }
     return false
@@ -957,6 +1013,16 @@ export default function Home() {
     if (storedPractice) setPractice(JSON.parse(storedPractice))
   }, [])
 
+  useEffect(() => {
+    const storedQuickLinks = getStoredItem('quickLinks')
+    if (!storedQuickLinks) return
+    try {
+      const parsed = JSON.parse(storedQuickLinks)
+      const normalized = normalizeQuickLinks(parsed, 'stored')
+      setQuickLinks(normalized)
+    } catch {}
+  }, [])
+
   // persist completed
   useEffect(() => {
     setStoredItem("completed", JSON.stringify(completed))
@@ -973,6 +1039,11 @@ export default function Home() {
   useEffect(() => {
     setStoredItem("practice", JSON.stringify(practice))
   }, [practice])
+
+  useEffect(() => {
+    if (!mounted) return
+    setStoredItem('quickLinks', JSON.stringify(quickLinks))
+  }, [quickLinks, mounted])
 
   useEffect(() => {
     if (!mounted) return
@@ -1287,6 +1358,32 @@ export default function Home() {
     return () => window.removeEventListener('keydown', onKey)
   }, [directoryTree, showMoodleModal, showMoodleTargetPicker, viewWeek])
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const key = (e.key || '').toLowerCase()
+      if (key === 'escape' && showQuickLinks) {
+        e.preventDefault()
+        setShowQuickLinks(false)
+        return
+      }
+      if (key !== 'h') return
+      const el = document.activeElement as HTMLElement | null
+      const tag = (el?.tagName || '').toUpperCase()
+      const isTyping = !!(
+        el && (
+          el.isContentEditable ||
+          tag === 'TEXTAREA' ||
+          (tag === 'INPUT' && (el as HTMLInputElement).type !== 'checkbox' && (el as HTMLInputElement).type !== 'button')
+        )
+      )
+      if (isTyping || showMoodleModal || showMoodleTargetPicker) return
+      e.preventDefault()
+      setShowQuickLinks((prev) => !prev)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showQuickLinks, showMoodleModal, showMoodleTargetPicker])
+
   if (!mounted) return null
 
   // configuration wizard
@@ -1489,6 +1586,25 @@ export default function Home() {
       ))}
     </ul>
   )
+
+  const quickLinkSlots = useMemo(() => {
+    const filled = quickLinks.slice(0, QUICK_LINK_SLOT_COUNT)
+    const missing = QUICK_LINK_SLOT_COUNT - filled.length
+    if (missing > 0) {
+      for (let i = 0; i < missing; i += 1) {
+        filled.push({ id: `empty-${i}`, label: '', url: '' })
+      }
+    }
+    return filled
+  }, [quickLinks])
+
+  const openQuickLink = useCallback((link: QuickLink) => {
+    if (!link.url) return
+    try {
+      window.open(link.url, '_blank', 'noopener,noreferrer')
+    } catch {}
+    setShowQuickLinks(false)
+  }, [])
 
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
@@ -1750,6 +1866,57 @@ export default function Home() {
       )}
     </div>
 
+    {showQuickLinks && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+        onClick={() => setShowQuickLinks(false)}
+      >
+        <div
+          className="w-full max-w-2xl space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Links rápidos</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-300">Presiona H o Escape para cerrar.</p>
+            </div>
+            <button className="text-sm underline" onClick={() => setShowQuickLinks(false)}>Cerrar</button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {quickLinkSlots.map((link, index) => (
+              <button
+                key={link.id}
+                type="button"
+                onClick={() => openQuickLink(link)}
+                disabled={!link.url}
+                className={`rounded border px-3 py-3 text-left transition ${
+                  link.url
+                    ? 'border-gray-300 hover:border-indigo-500 hover:shadow dark:border-gray-600 dark:hover:border-indigo-300'
+                    : 'border-dashed border-gray-300 text-gray-400 dark:border-gray-700'
+                }`}
+              >
+                <div className="flex items-baseline justify-between text-xs text-gray-500 dark:text-gray-400">
+                  <span>#{index + 1}</span>
+                  {link.url && <span>↗</span>}
+                </div>
+                <div className="mt-1 truncate font-semibold">
+                  {link.label || 'Espacio libre'}
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                  {link.url || 'Configura este enlace en tu archivo config.json'}
+                </div>
+              </button>
+            ))}
+          </div>
+          {!quickLinks.length && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Puedes declarar hasta 6 enlaces en <code>quickLinks</code> dentro de tu config.json.
+            </p>
+          )}
+        </div>
+      </div>
+    )}
+
     {showMoodleTargetPicker && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
         <div className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow dark:bg-gray-800 dark:text-gray-100">
@@ -1933,4 +2100,7 @@ export default function Home() {
   </>
   )
 }
+
+
+
 
