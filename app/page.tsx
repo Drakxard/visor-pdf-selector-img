@@ -414,7 +414,7 @@ export default function Home() {
   const getScopedStorageKey = useCallback(
     (baseKey: string) => {
       if (routeScope.scope === 'subject') {
-        return ${baseKey}::
+        return `${baseKey}::${routeScope.tableType}::${routeScope.normalizedSubject}`
       }
       return baseKey
     },
