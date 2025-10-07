@@ -1,6 +1,14 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  ChangeEvent,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { useTheme } from "next-themes"
 import { usePathname, useRouter } from "next/navigation"
 
@@ -385,6 +393,8 @@ export default function Home() {
   const [newFolderName, setNewFolderName] = useState('')
   const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
   const [moodleTargetOptions, setMoodleTargetOptions] = useState<MoodleTargetOption[]>([])
+  const subjectWeekInitializedRef = useRef(false)
+  const lastStoredWeekRef = useRef<string | null>(null)
   const showToastMessage = useCallback((type: 'success' | 'error', text: string) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     setToast({ type, text })
@@ -487,6 +497,44 @@ export default function Home() {
 
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
+
+  const subjectWeekOptions = useMemo(() => {
+    if (routeScope.scope !== 'subject') return [] as { value: string; label: string }[]
+    const targetSubject = routeScope.normalizedSubject
+    const targetTableType = routeScope.tableType
+    const seen = new Set<string>()
+    const options: { value: string; label: string }[] = []
+    Object.values(directoryTree).forEach((entry) => {
+      entry.files.forEach((file) => {
+        if (normalizeSegment(file.subject) !== targetSubject) return
+        if (file.tableType !== targetTableType) return
+        const basePath = file.containerPath ?? entry.path
+        if (!basePath) return
+        const weekPath = extractSubjectPath(basePath)
+        if (!weekPath || seen.has(weekPath) || !directoryTree[weekPath]) return
+        seen.add(weekPath)
+        const label = getLastSegment(weekPath) || weekPath
+        options.push({ value: weekPath, label })
+      })
+    })
+    options.sort((a, b) =>
+      a.value.localeCompare(b.value, undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    )
+    return options
+  }, [directoryTree, routeScope])
+
+  const subjectWeekOptionsKey = useMemo(
+    () => subjectWeekOptions.map((option) => option.value).join('|'),
+    [subjectWeekOptions],
+  )
+
+  useEffect(() => {
+    subjectWeekInitializedRef.current = false
+    lastStoredWeekRef.current = null
+  }, [routeScope, subjectWeekOptionsKey])
 
   // const formatHM = (sec: number) => {
   //   const h = Math.floor(sec / 3600)
@@ -1087,6 +1135,35 @@ export default function Home() {
 
   // build directory structure from selected directory
   useEffect(() => {
+    if (routeScope.scope !== 'subject') return
+    if (subjectWeekInitializedRef.current) return
+    if (!subjectWeekOptions.length) {
+      subjectWeekInitializedRef.current = true
+      return
+    }
+    const matchesCurrent = viewWeek
+      ? subjectWeekOptions.some(
+          (option) =>
+            viewWeek === option.value || viewWeek.startsWith(`${option.value}/`),
+        )
+      : false
+    if (matchesCurrent) {
+      subjectWeekInitializedRef.current = true
+      return
+    }
+    const stored = getScopedStoredItem('lastWeekSelection')
+    const storedOption = stored
+      ? subjectWeekOptions.find((option) => option.value === stored)
+      : undefined
+    const fallback = subjectWeekOptions[0]
+    const next = storedOption?.value ?? fallback?.value
+    if (next) {
+      setViewWeek(next)
+    }
+    subjectWeekInitializedRef.current = true
+  }, [getScopedStoredItem, routeScope, setViewWeek, subjectWeekOptions, viewWeek])
+
+  useEffect(() => {
     const map = new Map<string, DirectoryEntry>()
 
     const ensureDir = (path: string) => {
@@ -1190,6 +1267,18 @@ export default function Home() {
       setQueueIndex(0)
     }
   }, [directoryTree, completed])
+
+  useEffect(() => {
+    if (routeScope.scope !== 'subject') return
+    if (!viewWeek) return
+    const match = subjectWeekOptions.find(
+      (option) => viewWeek === option.value || viewWeek.startsWith(`${option.value}/`),
+    )
+    if (!match) return
+    if (lastStoredWeekRef.current === match.value) return
+    lastStoredWeekRef.current = match.value
+    setScopedStoredItem('lastWeekSelection', match.value)
+  }, [routeScope, setScopedStoredItem, subjectWeekOptions, viewWeek])
 
   useEffect(() => {
     if (viewWeek && !directoryTree[viewWeek]) {
@@ -1688,6 +1777,54 @@ export default function Home() {
     return segments.length ? segments.join(" / ") : "Carpetas"
   }
 
+  const selectedWeekValue = useMemo(() => {
+    if (routeScope.scope !== 'subject') return ''
+    if (!viewWeek) return ''
+    const match = subjectWeekOptions.find(
+      (option) => viewWeek === option.value || viewWeek.startsWith(`${option.value}/`),
+    )
+    return match?.value ?? ''
+  }, [routeScope, subjectWeekOptions, viewWeek])
+
+  const defaultWeekValue = useMemo(() => {
+    if (routeScope.scope !== 'subject') return ''
+    return selectedWeekValue || subjectWeekOptions[0]?.value || ''
+  }, [routeScope, selectedWeekValue, subjectWeekOptions])
+
+  const subjectDisplayName = useMemo(() => {
+    if (routeScope.scope !== 'subject') return null
+    const basePath = defaultWeekValue || ''
+    const segments = basePath.split('/').filter(Boolean)
+    if (segments.length) return segments[0]
+    return routeScope.subject
+  }, [defaultWeekValue, routeScope])
+
+  const extraBreadcrumbSegments = useMemo(() => {
+    if (!defaultWeekValue || !viewWeek) return [] as string[]
+    if (!viewWeek.startsWith(defaultWeekValue)) return []
+    const baseSegments = defaultWeekValue.split('/').filter(Boolean)
+    const currentSegments = viewWeek.split('/').filter(Boolean)
+    if (currentSegments.length <= baseSegments.length) return []
+    return currentSegments.slice(baseSegments.length)
+  }, [defaultWeekValue, viewWeek])
+
+  const subjectBreadcrumbText = useMemo(() => {
+    if (routeScope.scope !== 'subject') return ''
+    const parts: string[] = []
+    if (subjectDisplayName) parts.push(subjectDisplayName)
+    if (extraBreadcrumbSegments.length) parts.push(...extraBreadcrumbSegments)
+    return parts.join(' / ')
+  }, [extraBreadcrumbSegments, routeScope, subjectDisplayName])
+
+  const handleWeekChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const { value } = event.target
+      if (!value) return
+      setViewWeek(value)
+    },
+    [setViewWeek],
+  )
+
   // main interface
   return (
     <>
@@ -1708,7 +1845,30 @@ export default function Home() {
               )}
             </div>
           )}
-          <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+          {routeScope.scope === 'subject' && subjectWeekOptions.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="sr-only" htmlFor="subject-week-select">
+                Semana
+              </label>
+              <select
+                id="subject-week-select"
+                value={defaultWeekValue}
+                onChange={handleWeekChange}
+                className="border border-gray-300 dark:border-gray-700 rounded px-2 py-1 bg-transparent text-base md:text-lg"
+              >
+                {subjectWeekOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <h2 className="text-xl">
+                {subjectBreadcrumbText || formatBreadcrumb(viewWeek)}
+              </h2>
+            </div>
+          ) : (
+            <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+          )}
           {otherChildDirectories.length > 0 && (
             <ul className="space-y-1">
               {otherChildDirectories.map((dir) => (
