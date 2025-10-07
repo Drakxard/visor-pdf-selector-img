@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { useTheme } from "next-themes"
 import { usePathname, useRouter } from "next/navigation"
 
@@ -47,6 +47,13 @@ const extractSubjectName = (path: string) => {
   const parts = subjectPath.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : ""
 }
+
+const normalizePathSegments = (value: string) =>
+  value
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => normalizeSegment(segment))
+    .join("/")
 
 const isQuotaExceededError = (error: unknown) =>
   error instanceof DOMException &&
@@ -170,6 +177,11 @@ const DEFAULT_SUBJECT_QUICK_LINKS: QuickLink[] = [
     url: "/practica/poo",
   },
 ]
+
+type WeekOption = {
+  path: string
+  label: string
+}
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -369,6 +381,7 @@ export default function Home() {
   //   new Date().toISOString().split('T')[0],
   // )
   const viewerRef = useRef<HTMLIFrameElement>(null)
+  const initialWeekAppliedRef = useRef(false)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
   const [quickLinks, setQuickLinks] = useState<QuickLink[]>([])
@@ -445,6 +458,12 @@ export default function Home() {
     return { scope: 'global' as const }
   }, [pathname])
 
+  const weekSelectId = useId()
+  const routeScopeKey =
+    routeScope.scope === 'subject'
+      ? `${routeScope.tableType}::${routeScope.normalizedSubject}`
+      : 'global'
+
   const getScopedStorageKey = useCallback(
     (baseKey: string) => {
       if (routeScope.scope === 'subject') {
@@ -476,6 +495,45 @@ export default function Home() {
     [getScopedStorageKey],
   )
 
+  const subjectWeekOptions = useMemo<WeekOption[]>(() => {
+    if (routeScope.scope !== 'subject') return []
+    const normalizedSubject = routeScope.normalizedSubject
+    const unique = new Map<string, WeekOption>()
+    for (const path of Object.keys(directoryTree)) {
+      if (!path) continue
+      const subjectPath = extractSubjectPath(path)
+      if (!subjectPath) continue
+      const subjectName = extractSubjectName(subjectPath)
+      if (!subjectName) continue
+      if (normalizeSegment(subjectName) !== normalizedSubject) continue
+      const normalizedPathKey = normalizePathSegments(subjectPath)
+      if (unique.has(normalizedPathKey)) continue
+      const labelSegments = subjectPath.split('/').filter(Boolean)
+      const label = labelSegments.length
+        ? labelSegments.join(' / ')
+        : subjectName
+      unique.set(normalizedPathKey, { path: subjectPath, label })
+    }
+    return Array.from(unique.values()).sort((a, b) =>
+      a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: 'base' }),
+    )
+  }, [directoryTree, routeScope])
+
+  const weekOptionsKey = useMemo(
+    () => subjectWeekOptions.map((option) => normalizePathSegments(option.path)).join('|'),
+    [subjectWeekOptions],
+  )
+
+  const selectedWeekValue = useMemo(() => {
+    if (routeScope.scope !== 'subject') return ''
+    if (!viewWeek) return ''
+    const normalizedView = normalizePathSegments(viewWeek)
+    const matchedOption = subjectWeekOptions.find(
+      (option) => normalizePathSegments(option.path) === normalizedView,
+    )
+    return matchedOption ? matchedOption.path : ''
+  }, [routeScope, subjectWeekOptions, viewWeek])
+
   const scopedLastPathKey = useMemo(
     () => getScopedStorageKey('lastPath'),
     [getScopedStorageKey],
@@ -484,6 +542,49 @@ export default function Home() {
   useEffect(() => {
     setRestored(false)
   }, [scopedLastPathKey])
+
+  useEffect(() => {
+    initialWeekAppliedRef.current = false
+  }, [routeScopeKey, weekOptionsKey])
+
+  useEffect(() => {
+    if (initialWeekAppliedRef.current) return
+    if (routeScope.scope !== 'subject') {
+      initialWeekAppliedRef.current = true
+      return
+    }
+    if (!subjectWeekOptions.length) return
+    const storedWeek = getScopedStoredItem('lastWeek')
+    const matchedOption = storedWeek
+      ? subjectWeekOptions.find(
+          (option) =>
+            normalizePathSegments(option.path) === normalizePathSegments(storedWeek),
+        )
+      : null
+    const fallbackWeek = subjectWeekOptions[0]?.path ?? null
+    const targetWeek = matchedOption?.path ?? viewWeek ?? fallbackWeek
+    if (targetWeek && targetWeek !== viewWeek) {
+      setViewWeek(targetWeek)
+    }
+    initialWeekAppliedRef.current = true
+  }, [
+    getScopedStoredItem,
+    routeScope,
+    setViewWeek,
+    subjectWeekOptions,
+    viewWeek,
+  ])
+
+  useEffect(() => {
+    if (routeScope.scope !== 'subject') return
+    if (!viewWeek) return
+    const normalizedView = normalizePathSegments(viewWeek)
+    const matchedOption = subjectWeekOptions.find(
+      (option) => normalizePathSegments(option.path) === normalizedView,
+    )
+    if (!matchedOption) return
+    setScopedStoredItem('lastWeek', matchedOption.path)
+  }, [routeScope, setScopedStoredItem, subjectWeekOptions, viewWeek])
 
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
@@ -1708,7 +1809,39 @@ export default function Home() {
               )}
             </div>
           )}
-          <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+          <div className="flex flex-col gap-2">
+            <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+            {routeScope.scope === 'subject' && subjectWeekOptions.length > 0 && (
+              <div className="flex flex-col gap-1">
+                <label
+                  htmlFor={weekSelectId}
+                  className="text-xs font-semibold uppercase text-gray-500"
+                >
+                  Semana
+                </label>
+                <select
+                  id={weekSelectId}
+                  className="border rounded px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+                  value={selectedWeekValue}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setViewWeek(value ? value : null)
+                  }}
+                >
+                  {selectedWeekValue === '' && (
+                    <option value="" disabled>
+                      Selecciona una semana
+                    </option>
+                  )}
+                  {subjectWeekOptions.map((option) => (
+                    <option key={option.path} value={option.path}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           {otherChildDirectories.length > 0 && (
             <ul className="space-y-1">
               {otherChildDirectories.map((dir) => (
