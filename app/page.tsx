@@ -136,12 +136,6 @@ type QuickLink = {
   url: string
 }
 
-type WeekOption = {
-  path: string
-  label: string
-  prefixSegments: string[]
-}
-
 const QUICK_LINK_SLOT_COUNT = 6
 
 const DEFAULT_SUBJECT_QUICK_LINKS: QuickLink[] = [
@@ -423,7 +417,6 @@ export default function Home() {
   )
   // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
-  const [weekRestored, setWeekRestored] = useState(false)
   const pathname = usePathname()
   const routeScope = useMemo(() => {
     const rawPath = pathname ?? ''
@@ -488,24 +481,9 @@ export default function Home() {
     [getScopedStorageKey],
   )
 
-  const scopedLastWeekKey = useMemo(
-    () => getScopedStorageKey('lastWeek'),
-    [getScopedStorageKey],
-  )
-
   useEffect(() => {
     setRestored(false)
   }, [scopedLastPathKey])
-
-  useEffect(() => {
-    setWeekRestored(false)
-  }, [scopedLastWeekKey])
-
-  useEffect(() => {
-    if (routeScope.scope !== 'subject') {
-      if (weekRestored) setWeekRestored(false)
-    }
-  }, [routeScope, weekRestored])
 
   // Avoid hydration mismatch: render only after mounted
   const [mounted, setMounted] = useState(false)
@@ -733,56 +711,6 @@ export default function Home() {
       console.warn('No se pudo leer check-history-sem1.json', err)
     }
   }
-
-  const weekOptions = useMemo(() => {
-    if (routeScope.scope !== 'subject') return [] as WeekOption[]
-    const normalizedSubject = routeScope.normalizedSubject
-    const isTheory = routeScope.tableType === 'theory'
-    const options = new Map<string, WeekOption>()
-
-    Object.values(directoryTree).forEach((entry) => {
-      if (!entry.path) return
-      const segments = entry.path.split('/').filter(Boolean)
-      if (segments.length < 2) return
-      const normalizedSegments = segments.map(normalizeSegment)
-      const subjectIndex = normalizedSegments.findIndex(
-        (segment) => segment === normalizedSubject,
-      )
-      if (subjectIndex === -1) return
-
-      const modeIndices: number[] = []
-      for (let i = 0; i < segments.length; i++) {
-        const segment = segments[i]
-        const matches = isTheory ? isTheorySegment(segment) : isPracticeSegment(segment)
-        if (matches) modeIndices.push(i)
-      }
-      if (!modeIndices.length) return
-
-      const relevantIndices = [subjectIndex, ...modeIndices]
-        .filter((index) => index >= 0)
-      if (!relevantIndices.length) return
-
-      const firstRelevantIndex = Math.min(...relevantIndices)
-      if (firstRelevantIndex <= 0) return
-
-      const prefixSegments = segments.slice(0, firstRelevantIndex)
-      if (!prefixSegments.length) return
-
-      const key = prefixSegments.join('/').toLowerCase()
-      const label = prefixSegments.join(' / ')
-      const existing = options.get(key)
-      if (
-        !existing ||
-        segments.length < existing.path.split('/').filter(Boolean).length
-      ) {
-        options.set(key, { label, path: entry.path, prefixSegments })
-      }
-    })
-
-    return Array.from(options.values()).sort((a, b) =>
-      a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }),
-    )
-  }, [directoryTree, routeScope])
 
   const handleSyncMoodleFolder = useCallback(
     async (config: MoodleFolderConfig) => {
@@ -1270,35 +1198,6 @@ export default function Home() {
   }, [viewWeek, directoryTree])
 
   useEffect(() => {
-    if (routeScope.scope !== 'subject') return
-    if (weekRestored) return
-    if (!weekOptions.length) return
-
-    const storedWeek = getScopedStoredItem('lastWeek')
-    const available = new Set(weekOptions.map((option) => option.path))
-    let targetWeek: string | null = null
-    if (storedWeek && available.has(storedWeek)) {
-      targetWeek = storedWeek
-    } else if (viewWeek && available.has(viewWeek)) {
-      targetWeek = viewWeek
-    } else {
-      targetWeek = weekOptions[0]?.path ?? null
-    }
-
-    if (targetWeek && targetWeek !== viewWeek) {
-      setViewWeek(targetWeek)
-    }
-    setWeekRestored(true)
-  }, [routeScope, weekOptions, getScopedStoredItem, viewWeek, weekRestored, setViewWeek])
-
-  useEffect(() => {
-    if (routeScope.scope !== 'subject') return
-    if (!viewWeek) return
-    if (!weekOptions.some((option) => option.path === viewWeek)) return
-    setScopedStoredItem('lastWeek', viewWeek)
-  }, [routeScope, viewWeek, weekOptions, setScopedStoredItem])
-
-  useEffect(() => {
     if (!viewWeek) return
     const lastSegment = getLastSegment(viewWeek)
     if (isTheorySegment(lastSegment) || isPracticeSegment(lastSegment)) {
@@ -1683,18 +1582,6 @@ export default function Home() {
     }
   }
 
-  const handleSelectWeekOption = useCallback(
-    (path: string) => {
-      if (!path) {
-        setViewWeek(null)
-        return
-      }
-      setViewWeek(path)
-      setScopedStoredItem('lastWeek', path)
-    },
-    [setViewWeek, setScopedStoredItem],
-  )
-
   const fallbackDir: DirectoryEntry = {
     path: "",
     name: "",
@@ -1726,16 +1613,6 @@ export default function Home() {
   const otherChildDirectories = childDirectories.filter(
     (dir) => !aggregatedChildSet.has(dir),
   )
-
-  const selectedWeekOption =
-    weekOptions.find((option) => option.path === viewWeek) ?? null
-  const selectedWeekValue = selectedWeekOption?.path ?? (weekOptions[0]?.path ?? '')
-  const selectedWeekSuffixSegments = selectedWeekOption
-    ? selectedWeekOption.path
-        .split('/')
-        .filter(Boolean)
-        .slice(selectedWeekOption.prefixSegments.length)
-    : []
 
   const directTheoryFiles = selectedFiles.filter(
     (file) => file.tableType === 'theory',
@@ -1831,30 +1708,7 @@ export default function Home() {
               )}
             </div>
           )}
-          <h2 className="text-xl flex flex-wrap items-center gap-2">
-            {routeScope.scope === 'subject' && weekOptions.length > 0 ? (
-              <>
-                <select
-                  className="border rounded px-2 py-1 text-base dark:bg-gray-900 dark:border-gray-700"
-                  value={selectedWeekValue}
-                  onChange={(event) => handleSelectWeekOption(event.target.value)}
-                >
-                  {weekOptions.map((option) => (
-                    <option key={option.path} value={option.path}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                {selectedWeekSuffixSegments.length > 0 && (
-                  <span className="text-base md:text-lg">
-                    / {selectedWeekSuffixSegments.join(' / ')}
-                  </span>
-                )}
-              </>
-            ) : (
-              formatBreadcrumb(viewWeek)
-            )}
-          </h2>
+          <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
           {otherChildDirectories.length > 0 && (
             <ul className="space-y-1">
               {otherChildDirectories.map((dir) => (
