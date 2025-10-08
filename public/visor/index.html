@@ -175,6 +175,112 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    #transcription-modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.6);
+      z-index: 4000;
+    }
+    #transcription-modal.show {
+      display: flex;
+    }
+    .transcription-panel {
+      background: #2c2f33;
+      color: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      width: min(640px, 100%);
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    body.light-mode .transcription-panel {
+      background: #fff;
+      color: #202124;
+    }
+    .transcription-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .transcription-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .transcription-subtitle {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.7);
+    }
+    body.light-mode .transcription-subtitle {
+      color: rgba(32, 33, 36, 0.7);
+    }
+    .transcription-output {
+      font-family: 'SFMono-Regular', Menlo, Consolas, monospace;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 12px;
+      border-radius: 8px;
+      word-break: break-word;
+      white-space: pre-wrap;
+      font-size: 13px;
+    }
+    body.light-mode .transcription-output {
+      background: rgba(32, 33, 36, 0.04);
+      border-color: rgba(32, 33, 36, 0.12);
+    }
+    .transcription-list {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 8px;
+    }
+    .transcription-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .transcription-button {
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      background: transparent;
+      color: inherit;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+    .transcription-button:hover {
+      background: rgba(255, 255, 255, 0.08);
+    }
+    body.light-mode .transcription-button {
+      border-color: rgba(32, 33, 36, 0.3);
+    }
+    body.light-mode .transcription-button:hover {
+      background: rgba(32, 33, 36, 0.08);
+    }
+    .transcription-button.primary {
+      background: #4f46e5;
+      border-color: #4338ca;
+      color: #fff;
+    }
+    .transcription-button.primary:hover {
+      background: #4338ca;
+    }
+    body.light-mode .transcription-button.primary {
+      border-color: #4338ca;
+    }
+
     #draw-indicator {
       position: fixed;
       top: 10px;
@@ -771,6 +877,8 @@
           } catch {}
         }
       });
+      const GROQ_CONFIG_KEY = 'groq-vision-config';
+      const DEFAULT_GROQ_PROMPT_TEXT = 'Extrae el texto.';
       const dropZone = document.getElementById('drop-zone');
       const uploadArea = document.getElementById('upload-area');
       const fileInput = document.getElementById('file-input');
@@ -787,6 +895,10 @@
       // Overlay de carga
       let loadingOverlay = document.getElementById('loading-overlay');
       let loadingText = document.getElementById('loading-text');
+      let transcriptionModal = null;
+      let transcriptionOutput = null;
+      let transcriptionList = null;
+      let transcriptionCopyButton = null;
 
       container.addEventListener('scroll', () => {
         if (currentPdfKey) {
@@ -1532,6 +1644,152 @@
         container.removeAttribute('aria-busy');
       }
 
+      function getGroqVisionConfig() {
+        try {
+          const raw = localStorage.getItem(GROQ_CONFIG_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== 'object') return null;
+          const model = typeof parsed.model === 'string' ? parsed.model.trim() : '';
+          const promptValue = typeof parsed.prompt === 'string' ? parsed.prompt : '';
+          if (!model) return null;
+          return {
+            model,
+            prompt: promptValue.trim() || DEFAULT_GROQ_PROMPT_TEXT,
+          };
+        } catch (error) {
+          console.warn('No se pudo leer la configuración de Groq', error);
+          return null;
+        }
+      }
+
+      async function copyTextToClipboard(text) {
+        if (!text) return false;
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (error) {
+          console.warn('No se pudo copiar al portapapeles', error);
+          return false;
+        }
+      }
+
+      function escapeHtml(value) {
+        return value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function ensureTranscriptionModal() {
+        if (!transcriptionModal) {
+          transcriptionModal = document.createElement('div');
+          transcriptionModal.id = 'transcription-modal';
+          transcriptionModal.setAttribute('role', 'dialog');
+          transcriptionModal.setAttribute('aria-modal', 'true');
+
+          const panel = document.createElement('div');
+          panel.className = 'transcription-panel';
+          transcriptionModal.appendChild(panel);
+
+          const header = document.createElement('div');
+          header.className = 'transcription-header';
+          panel.appendChild(header);
+
+          const titleWrapper = document.createElement('div');
+          const title = document.createElement('h2');
+          title.className = 'transcription-title';
+          title.textContent = 'Transcripciones';
+          const subtitle = document.createElement('p');
+          subtitle.className = 'transcription-subtitle';
+          subtitle.textContent = 'Se copian automáticamente y puedes copiarlas de nuevo cuando lo necesites.';
+          titleWrapper.appendChild(title);
+          titleWrapper.appendChild(subtitle);
+          header.appendChild(titleWrapper);
+
+          const closeBtn = document.createElement('button');
+          closeBtn.type = 'button';
+          closeBtn.className = 'transcription-button';
+          closeBtn.textContent = 'Cerrar';
+          closeBtn.addEventListener('click', hideTranscriptionModal);
+          header.appendChild(closeBtn);
+
+          transcriptionOutput = document.createElement('div');
+          transcriptionOutput.className = 'transcription-output';
+          transcriptionOutput.setAttribute('role', 'status');
+          panel.appendChild(transcriptionOutput);
+
+          transcriptionList = document.createElement('ol');
+          transcriptionList.className = 'transcription-list';
+          panel.appendChild(transcriptionList);
+
+          const actions = document.createElement('div');
+          actions.className = 'transcription-actions';
+          panel.appendChild(actions);
+
+          transcriptionCopyButton = document.createElement('button');
+          transcriptionCopyButton.type = 'button';
+          transcriptionCopyButton.className = 'transcription-button primary';
+          transcriptionCopyButton.textContent = 'Copiar de nuevo';
+          transcriptionCopyButton.addEventListener('click', async () => {
+            const text = transcriptionOutput?.dataset.copyValue || '';
+            if (!text) {
+              showToast('No hay contenido para copiar', 'info');
+              return;
+            }
+            const copied = await copyTextToClipboard(text);
+            showToast(
+              copied ? 'Transcripciones copiadas al portapapeles' : 'No se pudo copiar',
+              copied ? 'success' : 'error',
+            );
+          });
+          actions.appendChild(transcriptionCopyButton);
+
+          const closeSecondary = document.createElement('button');
+          closeSecondary.type = 'button';
+          closeSecondary.className = 'transcription-button';
+          closeSecondary.textContent = 'Cerrar';
+          closeSecondary.addEventListener('click', hideTranscriptionModal);
+          actions.appendChild(closeSecondary);
+
+          transcriptionModal.addEventListener('click', (event) => {
+            if (event.target === transcriptionModal) {
+              hideTranscriptionModal();
+            }
+          });
+        }
+        if (!document.body.contains(transcriptionModal)) {
+          document.body.appendChild(transcriptionModal);
+        }
+        return transcriptionModal;
+      }
+
+      function hideTranscriptionModal() {
+        if (transcriptionModal) {
+          transcriptionModal.classList.remove('show');
+        }
+      }
+
+      function showTranscriptionModal(formattedText, items) {
+        const modal = ensureTranscriptionModal();
+        if (transcriptionOutput) {
+          transcriptionOutput.innerHTML = `<strong>${escapeHtml(formattedText)}</strong>`;
+          transcriptionOutput.dataset.copyValue = formattedText;
+        }
+        if (transcriptionList) {
+          transcriptionList.innerHTML = '';
+          items.forEach((item, index) => {
+            const li = document.createElement('li');
+            li.innerHTML = `<strong>${index + 1}.</strong> ${escapeHtml(item)}`;
+            transcriptionList.appendChild(li);
+          });
+        }
+        modal.classList.add('show');
+        transcriptionCopyButton?.focus({ preventScroll: true });
+      }
+
       // ========================================
       // VIRTUALIZACIÓN
       // ========================================
@@ -2110,6 +2368,11 @@
           activeElement.classList.contains('mq-editable-field')
         );
 
+        if (e.key === 'Escape' && transcriptionModal && transcriptionModal.classList.contains('show')) {
+          hideTranscriptionModal();
+          return;
+        }
+
         if (!isEditing && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'l') {
           e.preventDefault();
           drawMode = !drawMode;
@@ -2210,26 +2473,48 @@
               deactivateFocusMode('Selección cancelada');
               return;
             }
+            let keepSelections = false;
+            showOverlay('Transcribiendo selecciones…');
             try {
-              const pages = await exportInstantSelectionsToPdf();
-              if (pages > 0) {
-                deactivateFocusMode();
-                showToast(`PDF generado con ${pages} páginas`, 'success');
-              } else {
-                deactivateFocusMode();
-                showToast('No se pudieron generar páginas a partir de las selecciones', 'error');
+              const transcriptions = await transcribeInstantSelectionsWithGroq();
+              if (transcriptions === null) {
+                keepSelections = true;
+                return;
               }
+              const cleaned = transcriptions
+                .map((item) => (typeof item === 'string' ? item.trim() : ''))
+                .filter((item) => item.length);
+              if (!cleaned.length) {
+                showToast('No se recibieron transcripciones.', 'info');
+                return;
+              }
+              const formatted = `{${cleaned.join(', ')}}`;
+              const copied = await copyTextToClipboard(formatted);
+              if (copied) {
+                showToast('Transcripciones copiadas al portapapeles', 'success');
+              } else {
+                showToast('No se pudo copiar automáticamente', 'warning');
+              }
+              showTranscriptionModal(formatted, cleaned);
             } catch (error) {
-              console.error('Error exportando selecciones instantáneas:', error);
-              showToast('Error generando el PDF de selecciones', 'error');
+              console.error('Error transcribiendo selecciones:', error);
+              const message =
+                error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+                  ? error.message || 'Error transcribiendo selecciones'
+                  : 'Error transcribiendo selecciones';
+              showToast(message, 'error');
             } finally {
-              clearInstantSelections();
+              hideOverlay();
+              if (!keepSelections) {
+                clearInstantSelections();
+                deactivateFocusMode();
+              }
             }
             return;
           }
           clearInstantSelections();
           activateFocusMode('multi', 'Haz dos clics para seleccionar área');
-          showToast('Selecciona áreas con dos clics. Pulsa I nuevamente para generar el PDF.', 'info');
+          showToast('Selecciona áreas con dos clics. Pulsa I nuevamente para transcribir con Groq.', 'info');
           return;
         }
 
@@ -3032,17 +3317,19 @@
         showNavIndicator('Área añadida (' + instantSelections.length + ')');
       }
 
-      async function exportInstantSelectionsToPdf() {
-        if (!instantSelections.length) return 0;
-        if (!window.PDFLib || !window.PDFLib.PDFDocument) {
-          throw new Error('PDFLib no disponible');
+      async function transcribeInstantSelectionsWithGroq() {
+        if (!instantSelections.length) return [];
+        if (!pdfDoc) return [];
+        const config = getGroqVisionConfig();
+        if (!config || !config.model) {
+          showToast('Configura el modelo y el prompt en los ajustes (⚙️).', 'info');
+          return null;
         }
-        const resultDoc = await window.PDFLib.PDFDocument.create();
-        const pxToPt = 72 / 96;
         const ratio = window.devicePixelRatio || 1;
         const TARGET_LONG_SIDE = 1800;
         const MIN_RENDER_SCALE = 2;
         const MAX_RENDER_SCALE = 10;
+        const images = [];
 
         for (const selection of instantSelections) {
           const { pageNum, xp1, yp1, xp2, yp2 } = selection;
@@ -3092,31 +3379,34 @@
             ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
           }
 
-          const dataUrl = canvas.toDataURL('image/png');
-          const pngBytes = await (await fetch(dataUrl)).arrayBuffer();
-          const embedded = await resultDoc.embedPng(pngBytes);
-          const pageWidth = cssWidth * pxToPt;
-          const pageHeight = cssHeight * pxToPt;
-          const safePageWidth = Math.max(pageWidth, pxToPt);
-          const safePageHeight = Math.max(pageHeight, pxToPt);
-          const newPage = resultDoc.addPage([safePageWidth, safePageHeight]);
-          newPage.drawImage(embedded, {
-            x: (safePageWidth - pageWidth) / 2,
-            y: (safePageHeight - pageHeight) / 2,
-            width: pageWidth,
-            height: pageHeight,
-          });
+          images.push(canvas.toDataURL('image/png'));
         }
 
-        if (resultDoc.getPageCount() === 0) return 0;
+        if (!images.length) {
+          showToast('No hay selecciones válidas para enviar.', 'info');
+          return [];
+        }
 
-        const pdfBytes = await resultDoc.save();
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank');
-        if (!win) showToast('Permite ventanas emergentes para ver el PDF generado', 'warning');
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        return resultDoc.getPageCount();
+        const response = await fetch('/api/groq/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: config.model, prompt: config.prompt, images }),
+        });
+        if (!response.ok) {
+          let message = 'Error al transcribir las selecciones.';
+          try {
+            const errorData = await response.json();
+            if (errorData && typeof errorData.error === 'string') {
+              message = errorData.error;
+            }
+          } catch {}
+          throw new Error(message);
+        }
+        const data = await response.json();
+        const transcriptions = Array.isArray(data?.transcriptions)
+          ? data.transcriptions.map((item) => (typeof item === 'string' ? item : ''))
+          : [];
+        return transcriptions;
       }
 
       function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {

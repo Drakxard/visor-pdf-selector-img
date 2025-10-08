@@ -183,6 +183,10 @@ type WeekOption = {
   label: string
 }
 
+const GROQ_CONFIG_STORAGE_KEY = 'groq-vision-config'
+const GROQ_MODEL_LIST_STORAGE_KEY = 'groq-vision-models'
+const DEFAULT_GROQ_PROMPT = 'Extrae el texto.'
+
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
   const seen = new Set<string>()
@@ -370,6 +374,14 @@ export default function Home() {
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showDarkModal, setShowDarkModal] = useState(false)
+  const [showGroqModal, setShowGroqModal] = useState(false)
+  const [groqModel, setGroqModel] = useState('')
+  const [groqModels, setGroqModels] = useState<string[]>([])
+  const [groqPrompt, setGroqPrompt] = useState(DEFAULT_GROQ_PROMPT)
+  const [groqModelsError, setGroqModelsError] = useState<string | null>(null)
+  const [groqModelError, setGroqModelError] = useState<string | null>(null)
+  const [groqLoadingModels, setGroqLoadingModels] = useState(false)
+  const [groqSaving, setGroqSaving] = useState(false)
   const [darkModeStart, setDarkModeStart] = useState(19)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
@@ -403,6 +415,69 @@ export default function Home() {
     setToast({ type, text })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [])
+  const fetchGroqModels = useCallback(
+    async (forceRefresh = false) => {
+      setGroqLoadingModels(true)
+      setGroqModelsError(null)
+      try {
+        const response = await fetch('/api/groq/models', { cache: 'no-store' })
+        if (!response.ok) {
+          let message = 'No se pudieron obtener los modelos disponibles.'
+          try {
+            const data = await response.json()
+            if (data?.error && typeof data.error === 'string') {
+              message = data.error
+            }
+          } catch {}
+          setGroqModelsError(message)
+          return
+        }
+        const data = await response.json()
+        const nextModels: string[] = Array.isArray(data?.models)
+          ? data.models
+              .map((item: unknown) => (typeof item === 'string' ? item.trim() : null))
+              .filter((item: string | null): item is string => !!item)
+          : []
+        setGroqModels(nextModels)
+        setStoredItem(
+          GROQ_MODEL_LIST_STORAGE_KEY,
+          JSON.stringify({ models: nextModels, fetchedAt: Date.now() }),
+        )
+        if (!nextModels.includes(groqModel)) {
+          setGroqModel(nextModels[0] ?? '')
+        }
+        if (forceRefresh) {
+          showToastMessage('success', 'Modelos sincronizados correctamente')
+        }
+      } catch (error) {
+        console.error('Error loading Groq models', error)
+        setGroqModelsError('No se pudieron obtener los modelos disponibles.')
+      } finally {
+        setGroqLoadingModels(false)
+      }
+    },
+    [groqModel, showToastMessage],
+  )
+  const handleSaveGroqConfig = useCallback(() => {
+    if (!groqModel) {
+      setGroqModelError('Selecciona un modelo disponible.')
+      return
+    }
+    const trimmedPrompt = groqPrompt.trim() || DEFAULT_GROQ_PROMPT
+    setGroqSaving(true)
+    try {
+      setStoredItem(
+        GROQ_CONFIG_STORAGE_KEY,
+        JSON.stringify({ model: groqModel, prompt: trimmedPrompt }),
+      )
+      setGroqPrompt(trimmedPrompt)
+      setGroqModelError(null)
+      showToastMessage('success', 'Configuración guardada')
+      setShowGroqModal(false)
+    } finally {
+      setGroqSaving(false)
+    }
+  }, [groqModel, groqPrompt, showToastMessage])
   const handleChooseMoodleTarget = useCallback((option: MoodleTargetOption) => {
     setMoodleTargetPath(option.path)
     setMoodleTargetOptions([])
@@ -534,6 +609,46 @@ export default function Home() {
     return matchedOption ? matchedOption.path : ''
   }, [routeScope, subjectWeekOptions, viewWeek])
 
+  useEffect(() => {
+    let storedModel = ''
+    const storedConfigRaw = getStoredItem(GROQ_CONFIG_STORAGE_KEY)
+    if (storedConfigRaw) {
+      try {
+        const parsed = JSON.parse(storedConfigRaw)
+        if (parsed && typeof parsed === 'object') {
+          storedModel = typeof parsed.model === 'string' ? parsed.model : ''
+          const storedPrompt =
+            typeof parsed.prompt === 'string' && parsed.prompt.trim()
+              ? parsed.prompt
+              : DEFAULT_GROQ_PROMPT
+          if (storedModel) setGroqModel(storedModel)
+          setGroqPrompt(storedPrompt)
+        }
+      } catch (error) {
+        console.warn('No se pudo leer la configuración de Groq guardada', error)
+      }
+    }
+    const storedModelsRaw = getStoredItem(GROQ_MODEL_LIST_STORAGE_KEY)
+    if (storedModelsRaw) {
+      try {
+        const parsed = JSON.parse(storedModelsRaw)
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.models)) {
+          const cachedModels = parsed.models.filter(
+            (item: unknown): item is string => typeof item === 'string' && !!item.trim(),
+          )
+          if (cachedModels.length) {
+            setGroqModels(cachedModels)
+            if (!storedModel) {
+              setGroqModel(cachedModels[0])
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('No se pudo leer la lista de modelos de Groq guardada', error)
+      }
+    }
+  }, [])
+
   const scopedLastPathKey = useMemo(
     () => getScopedStorageKey('lastPath'),
     [getScopedStorageKey],
@@ -542,6 +657,18 @@ export default function Home() {
   useEffect(() => {
     setRestored(false)
   }, [scopedLastPathKey])
+
+  useEffect(() => {
+    if (!showGroqModal) return
+    if (groqModels.length || groqLoadingModels) return
+    void fetchGroqModels(false)
+  }, [fetchGroqModels, groqLoadingModels, groqModels.length, showGroqModal])
+
+  useEffect(() => {
+    if (groqModel) {
+      setGroqModelError(null)
+    }
+  }, [groqModel])
 
   useEffect(() => {
     initialWeekAppliedRef.current = false
@@ -2050,10 +2177,118 @@ export default function Home() {
       {showSettings && (
         <div className="absolute right-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-2 space-y-2 text-sm text-gray-800 dark:text-gray-200">
           <button className="block w-full text-left" onClick={selectDirectory}>Reseleccionar carpeta</button>
+          <button
+            className="block w-full text-left"
+            onClick={() => {
+              setShowSettings(false)
+              setGroqModelsError(null)
+              setGroqModelError(null)
+              setShowGroqModal(true)
+            }}
+          >
+            Configurar modelo y promt
+          </button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
       )}
     </div>
+
+    {showGroqModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        onClick={() => setShowGroqModal(false)}
+      >
+        <div
+          className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Configurar modelo y prompt</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Selecciona el modelo de visión de Groq y el prompt por defecto que se enviará a cada selección.
+              </p>
+            </div>
+            <button className="text-sm underline" onClick={() => setShowGroqModal(false)}>
+              Cerrar
+            </button>
+          </div>
+          <div className="space-y-2">
+            <label className="flex items-center justify-between gap-2 text-sm font-medium" htmlFor="groq-model">
+              <span>Modelo</span>
+              <button
+                type="button"
+                className="text-xs underline"
+                onClick={() => {
+                  void fetchGroqModels(true)
+                }}
+                disabled={groqLoadingModels}
+              >
+                {groqLoadingModels ? 'Sincronizando…' : '[recarga/sincronizar]'}
+              </button>
+            </label>
+            <select
+              id="groq-model"
+              value={groqModel}
+              onChange={(event) => setGroqModel(event.target.value)}
+              className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+            >
+              <option value="">Selecciona un modelo</option>
+              {groqModels.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+            {groqModelError && (
+              <p className="text-xs text-red-500" role="alert">
+                {groqModelError}
+              </p>
+            )}
+            {groqModelsError && (
+              <p className="text-xs text-red-400" role="alert">
+                {groqModelsError}
+              </p>
+            )}
+            {!groqModels.length && !groqModelsError && (
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Sincroniza para cargar los modelos disponibles.
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="groq-prompt">
+              Prompt
+            </label>
+            <textarea
+              id="groq-prompt"
+              value={groqPrompt}
+              onChange={(event) => setGroqPrompt(event.target.value)}
+              rows={4}
+              className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+            />
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              className="px-3 py-1 border rounded text-sm dark:border-gray-600"
+              onClick={() => setShowGroqModal(false)}
+              disabled={groqSaving}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1 rounded bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              onClick={handleSaveGroqConfig}
+              disabled={groqSaving}
+            >
+              {groqSaving ? 'Guardando…' : 'Guardar'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {showQuickLinks && (
       <div
