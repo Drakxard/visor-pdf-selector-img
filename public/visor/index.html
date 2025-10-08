@@ -20,6 +20,7 @@
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js" defer></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mathquill/0.10.1/mathquill.min.css" />
 
   <style>
@@ -884,9 +885,11 @@
       let selections = []; // { id, pageNum, xp1, yp1, xp2, yp2, elem }
 
       let focusMode = false;
+      let focusModeType = null; // 'focus' | 'multi'
       let focusStart = null;
       let focusPreview = null;
       let focusCancelTipShown = false;
+      let instantSelections = []; // { id, pageNum, xp1, yp1, xp2, yp2, layer, elem }
 
       function updateFocusPreview(e) {
         if (!focusMode || !focusStart || !focusPreview) return;
@@ -904,6 +907,26 @@
         focusPreview.style.top = y1 + 'px';
         focusPreview.style.width = Math.max(1, x2 - x1) + 'px';
         focusPreview.style.height = Math.max(1, y2 - y1) + 'px';
+      }
+
+      function activateFocusMode(type, indicatorText) {
+        focusMode = true;
+        focusModeType = type;
+        focusStart = null;
+        focusPreview?.remove();
+        focusPreview = null;
+        document.removeEventListener('mousemove', updateFocusPreview);
+        if (indicatorText) showNavIndicator(indicatorText);
+      }
+
+      function deactivateFocusMode(toastText = '') {
+        focusMode = false;
+        focusModeType = null;
+        focusStart = null;
+        focusPreview?.remove();
+        focusPreview = null;
+        document.removeEventListener('mousemove', updateFocusPreview);
+        if (toastText) showToast(toastText, 'info');
       }
 
       let theoryHandle = null;
@@ -1767,6 +1790,7 @@
               const yp = ly / layer.offsetHeight;
               if (!focusStart) {
                 focusStart = { pageNum, xp, yp, layer };
+                focusPreview?.remove();
                 focusPreview = document.createElement('div');
                 focusPreview.className = 'selection-rect';
                 layer.appendChild(focusPreview);
@@ -1784,11 +1808,20 @@
                 showToast('Inicio restablecido en esta página', 'info');
                 return;
               }
+              const start = focusStart;
               focusPreview?.remove();
               focusPreview = null;
               document.removeEventListener('mousemove', updateFocusPreview);
-              focusArea(pageNum, focusStart.xp, focusStart.yp, xp, yp);
               focusStart = null;
+              if (focusModeType === 'multi') {
+                if (Math.abs(start.xp - xp) < 0.001 || Math.abs(start.yp - yp) < 0.001) {
+                  showToast('Área demasiado pequeña', 'info');
+                  return;
+                }
+                addInstantSelectionRect(layer, pageNum, start.xp, start.yp, xp, yp);
+              } else {
+                focusArea(pageNum, start.xp, start.yp, xp, yp);
+              }
               return;
             }
 
@@ -2151,16 +2184,52 @@
           e.preventDefault();
           if (!pdfDoc) return;
           if (captureMode) { showToast('Finaliza la captura (Ctrl+I) antes de enfocar', 'info'); return; }
-          focusMode = !focusMode;
-          focusStart = null;
-          focusPreview?.remove();
-          focusPreview = null;
-          document.removeEventListener('mousemove', updateFocusPreview);
-          if (focusMode) {
-            showNavIndicator('Haz dos clics para enfocar');
-          } else {
-            showToast('Enfoque cancelado', 'info');
+          if (focusMode && focusModeType === 'multi') {
+            showToast('Termina las selecciones (tecla I) antes de enfocar', 'info');
+            return;
           }
+          if (!focusMode || focusModeType !== 'focus') {
+            activateFocusMode('focus', 'Haz dos clics para enfocar');
+          } else {
+            deactivateFocusMode('Enfoque cancelado');
+          }
+          return;
+        }
+
+        if (e.key.toLowerCase() === 'i' && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey && !isEditing) {
+          e.preventDefault();
+          if (!pdfDoc) return;
+          if (captureMode) { showToast('Finaliza la captura (Ctrl+I) antes de seleccionar áreas', 'info'); return; }
+          if (focusMode && focusModeType === 'focus') {
+            showToast('Sal del enfoque (tecla O) antes de crear selecciones múltiples', 'info');
+            return;
+          }
+          if (focusMode && focusModeType === 'multi') {
+            if (!instantSelections.length) {
+              clearInstantSelections();
+              deactivateFocusMode('Selección cancelada');
+              return;
+            }
+            try {
+              const pages = await exportInstantSelectionsToPdf();
+              if (pages > 0) {
+                deactivateFocusMode();
+                showToast(`PDF generado con ${pages} páginas`, 'success');
+              } else {
+                deactivateFocusMode();
+                showToast('No se pudieron generar páginas a partir de las selecciones', 'error');
+              }
+            } catch (error) {
+              console.error('Error exportando selecciones instantáneas:', error);
+              showToast('Error generando el PDF de selecciones', 'error');
+            } finally {
+              clearInstantSelections();
+            }
+            return;
+          }
+          clearInstantSelections();
+          activateFocusMode('multi', 'Haz dos clics para seleccionar área');
+          showToast('Selecciona áreas con dos clics. Pulsa I nuevamente para generar el PDF.', 'info');
           return;
         }
 
@@ -2848,6 +2917,7 @@
       function clearAllSelections() {
         selections.forEach(s => s.elem?.remove());
         selections = [];
+        clearInstantSelections();
       }
 
       async function ensureCategoryHandle(cat) {
@@ -2918,6 +2988,107 @@
         } catch (e) {
           console.warn('No se pudieron cargar carpetas de categorías');
         }
+      }
+
+      function clearInstantSelections() {
+        if (!instantSelections.length) return;
+        const affectedLayers = new Set();
+        instantSelections.forEach(sel => {
+          if (sel.elem?.parentNode) sel.elem.remove();
+          if (sel.layer) affectedLayers.add(sel.layer);
+        });
+        instantSelections = [];
+        affectedLayers.forEach((layer) => {
+          if (layer && !layer.querySelector('.selection-rect')) layer.style.pointerEvents = 'none';
+        });
+      }
+
+      function addInstantSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
+        const rect = document.createElement('div');
+        rect.className = 'selection-rect instant-selection';
+        rect.dataset.page = String(pageNum);
+        rect.dataset.xp1 = String(xp1);
+        rect.dataset.yp1 = String(yp1);
+        rect.dataset.xp2 = String(xp2);
+        rect.dataset.yp2 = String(yp2);
+        layer.appendChild(rect);
+        layer.style.pointerEvents = 'auto';
+        rect.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = instantSelections.findIndex((s) => s.elem === rect);
+          if (idx !== -1) instantSelections.splice(idx, 1);
+          rect.remove();
+          if (!layer.querySelector('.selection-rect')) layer.style.pointerEvents = 'none';
+          showToast('Área eliminada', 'info');
+        });
+
+        repositionSelectionsForLayer(layer);
+
+        instantSelections.push({
+          id: Date.now() + '_' + Math.random().toString(36).slice(2),
+          pageNum, xp1, yp1, xp2, yp2, layer, elem: rect
+        });
+
+        showNavIndicator('Área añadida (' + instantSelections.length + ')');
+      }
+
+      async function exportInstantSelectionsToPdf() {
+        if (!instantSelections.length) return 0;
+        if (!window.PDFLib || !window.PDFLib.PDFDocument) {
+          throw new Error('PDFLib no disponible');
+        }
+        const resultDoc = await window.PDFLib.PDFDocument.create();
+        const pxToPt = 72 / 96;
+        const ratio = window.devicePixelRatio || 1;
+
+        for (const selection of instantSelections) {
+          const { pageNum, xp1, yp1, xp2, yp2 } = selection;
+          const widthFrac = Math.abs(xp2 - xp1);
+          const heightFrac = Math.abs(yp2 - yp1);
+          if (widthFrac === 0 || heightFrac === 0) continue;
+
+          const page = await pdfDoc.getPage(pageNum);
+          const scale = Math.max(2, ratio * 2);
+          const viewport = page.getViewport({ scale });
+          const x1 = Math.min(xp1, xp2) * viewport.width;
+          const y1 = Math.min(yp1, yp2) * viewport.height;
+          const w = widthFrac * viewport.width;
+          const h = heightFrac * viewport.height;
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(w));
+          canvas.height = Math.max(1, Math.round(h));
+          const ctx = canvas.getContext('2d');
+          ctx.translate(-x1, -y1);
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          const state = pageStates.get(pageNum);
+          const drawCanvas = state?.wrapper?.querySelector('.draw-canvas');
+          if (drawCanvas) {
+            const sx2 = Math.round(Math.min(xp1, xp2) * drawCanvas.width);
+            const sy2 = Math.round(Math.min(yp1, yp2) * drawCanvas.height);
+            const sw2 = Math.max(1, Math.round(widthFrac * drawCanvas.width));
+            const sh2 = Math.max(1, Math.round(heightFrac * drawCanvas.height));
+            ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
+          }
+
+          const dataUrl = canvas.toDataURL('image/png');
+          const pngBytes = await (await fetch(dataUrl)).arrayBuffer();
+          const embedded = await resultDoc.embedPng(pngBytes);
+          const pageWidth = canvas.width * pxToPt;
+          const pageHeight = canvas.height * pxToPt;
+          const newPage = resultDoc.addPage([pageWidth, pageHeight]);
+          newPage.drawImage(embedded, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+        }
+
+        if (resultDoc.getPageCount() === 0) return 0;
+
+        const pdfBytes = await resultDoc.save();
+        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const win = window.open(url, '_blank');
+        if (!win) showToast('Permite ventanas emergentes para ver el PDF generado', 'warning');
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        return resultDoc.getPageCount();
       }
 
       function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
