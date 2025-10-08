@@ -888,22 +888,37 @@
       let focusPreview = null;
       let focusCancelTipShown = false;
 
-      function updateFocusPreview(e) {
-        if (!focusMode || !focusStart || !focusPreview) return;
-        const layer = focusStart.layer;
+      let instantMode = false;
+      let instantStart = null;
+      let instantPreview = null;
+      let instantSelections = [];
+
+      function updateSelectionPreview(start, preview, e) {
+        if (!start || !preview) return;
+        const layer = start.layer;
         const rect = layer.getBoundingClientRect();
         const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
         const y = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
         const xp = x / rect.width;
         const yp = y / rect.height;
-        const x1 = Math.min(focusStart.xp, xp) * rect.width;
-        const y1 = Math.min(focusStart.yp, yp) * rect.height;
-        const x2 = Math.max(focusStart.xp, xp) * rect.width;
-        const y2 = Math.max(focusStart.yp, yp) * rect.height;
-        focusPreview.style.left = x1 + 'px';
-        focusPreview.style.top = y1 + 'px';
-        focusPreview.style.width = Math.max(1, x2 - x1) + 'px';
-        focusPreview.style.height = Math.max(1, y2 - y1) + 'px';
+        const x1 = Math.min(start.xp, xp) * rect.width;
+        const y1 = Math.min(start.yp, yp) * rect.height;
+        const x2 = Math.max(start.xp, xp) * rect.width;
+        const y2 = Math.max(start.yp, yp) * rect.height;
+        preview.style.left = x1 + 'px';
+        preview.style.top = y1 + 'px';
+        preview.style.width = Math.max(1, x2 - x1) + 'px';
+        preview.style.height = Math.max(1, y2 - y1) + 'px';
+      }
+
+      function updateFocusPreview(e) {
+        if (!focusMode) return;
+        updateSelectionPreview(focusStart, focusPreview, e);
+      }
+
+      function updateInstantPreview(e) {
+        if (!instantMode) return;
+        updateSelectionPreview(instantStart, instantPreview, e);
       }
 
       let theoryHandle = null;
@@ -1759,6 +1774,38 @@
               return;
             }
 
+            if (instantMode) {
+              e.preventDefault();
+              e.stopPropagation();
+              const xp = x / layer.offsetWidth;
+              const yp = y / layer.offsetHeight;
+              if (!instantStart) {
+                instantStart = { pageNum, xp, yp, layer };
+                instantPreview = document.createElement('div');
+                instantPreview.className = 'selection-rect';
+                layer.appendChild(instantPreview);
+                document.addEventListener('mousemove', updateInstantPreview);
+                showNavIndicator('Punto inicial marcado (PDF)');
+                return;
+              }
+              if (instantStart.pageNum !== pageNum) {
+                instantStart = { pageNum, xp, yp, layer };
+                instantPreview?.remove();
+                instantPreview = document.createElement('div');
+                instantPreview.className = 'selection-rect';
+                layer.appendChild(instantPreview);
+                document.addEventListener('mousemove', updateInstantPreview);
+                showToast('Inicio restablecido en esta página', 'info');
+                return;
+              }
+              instantPreview?.remove();
+              instantPreview = null;
+              document.removeEventListener('mousemove', updateInstantPreview);
+              addInstantSelectionRect(layer, pageNum, instantStart.xp, instantStart.yp, xp, yp);
+              instantStart = null;
+              return;
+            }
+
             if (focusMode) {
               e.preventDefault();
               e.stopPropagation();
@@ -1835,6 +1882,7 @@
         pageStates.clear();
         visibleSet.clear();
         renderQueue.length = 0;
+        cancelInstantMode(false);
 
         while (container.firstChild) container.removeChild(container.firstChild);
 
@@ -2151,6 +2199,7 @@
           e.preventDefault();
           if (!pdfDoc) return;
           if (captureMode) { showToast('Finaliza la captura (Ctrl+I) antes de enfocar', 'info'); return; }
+          if (instantMode) { showToast('Finaliza la exportación con "i" antes de enfocar', 'info'); return; }
           focusMode = !focusMode;
           focusStart = null;
           focusPreview?.remove();
@@ -2160,6 +2209,19 @@
             showNavIndicator('Haz dos clics para enfocar');
           } else {
             showToast('Enfoque cancelado', 'info');
+          }
+          return;
+        }
+
+        if (e.key.toLowerCase() === 'i' && !e.repeat && !e.ctrlKey && !e.altKey && !isEditing) {
+          e.preventDefault();
+          if (!pdfDoc) return;
+          if (captureMode) { showToast('Finaliza la captura (Ctrl+I) antes de exportar', 'info'); return; }
+          if (focusMode) { showToast('Finaliza el enfoque ("o") antes de exportar', 'info'); return; }
+          if (!instantMode) {
+            startInstantMode();
+          } else {
+            await finalizeInstantMode();
           }
           return;
         }
@@ -2247,6 +2309,9 @@
               showNavIndicator('Haz dos clics para enfocar');
               focusCancelTipShown = true;
             }
+          }
+          if (instantMode) {
+            cancelInstantMode();
           }
           const fo = document.getElementById('focus-overlay');
           if (fo) fo.remove();
@@ -2850,6 +2915,11 @@
         selections = [];
       }
 
+      function clearInstantSelections() {
+        instantSelections.forEach(s => s.elem?.remove());
+        instantSelections = [];
+      }
+
       async function ensureCategoryHandle(cat) {
         if (!db) await initDB();
         await loadCategoryHandles(); // precarga si existen
@@ -2949,6 +3019,160 @@
         });
 
         showNavIndicator('Selección añadida (' + selections.length + ')');
+      }
+
+      function addInstantSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
+        if (xp1 === xp2 || yp1 === yp2) {
+          showToast('Selección demasiado pequeña', 'info');
+          return;
+        }
+        const rect = document.createElement('div');
+        rect.className = 'selection-rect instant-selection';
+        rect.dataset.page = String(pageNum);
+        rect.dataset.xp1 = String(xp1);
+        rect.dataset.yp1 = String(yp1);
+        rect.dataset.xp2 = String(xp2);
+        rect.dataset.yp2 = String(yp2);
+        layer.appendChild(rect);
+        layer.style.pointerEvents = 'auto';
+        rect.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = instantSelections.findIndex(s => s.elem === rect);
+          if (idx !== -1) instantSelections.splice(idx, 1);
+          rect.remove();
+          showToast('Selección eliminada', 'info');
+          if (instantSelections.length) {
+            showNavIndicator(`Selecciones PDF: ${instantSelections.length}`);
+          } else {
+            showNavIndicator('Sin selecciones PDF');
+          }
+        });
+
+        repositionSelectionsForLayer(layer);
+
+        instantSelections.push({
+          id: Date.now() + '_' + Math.random().toString(36).slice(2),
+          pageNum, xp1, yp1, xp2, yp2, elem: rect, layer
+        });
+
+        showNavIndicator(`Selecciones PDF: ${instantSelections.length}`);
+      }
+
+      function startInstantMode() {
+        instantMode = true;
+        instantStart = null;
+        instantPreview?.remove();
+        instantPreview = null;
+        document.removeEventListener('mousemove', updateInstantPreview);
+        clearInstantSelections();
+        showToast('Modo PDF: haz dos clics para marcar cada página. Presiona "i" para generar.', 'info');
+        showNavIndicator('Selecciona áreas para el PDF ("i" para generar)');
+      }
+
+      function cancelInstantMode(showMessage = true) {
+        const wasActive = instantMode;
+        instantStart = null;
+        instantPreview?.remove();
+        instantPreview = null;
+        document.removeEventListener('mousemove', updateInstantPreview);
+        if (instantSelections.length) {
+          clearInstantSelections();
+        }
+        instantMode = false;
+        if (wasActive && showMessage) {
+          showToast('Exportación a PDF cancelada', 'info');
+          showNavIndicator('Selección cancelada');
+        }
+      }
+
+      async function finalizeInstantMode() {
+        if (!instantMode) return;
+        instantStart = null;
+        instantPreview?.remove();
+        instantPreview = null;
+        document.removeEventListener('mousemove', updateInstantPreview);
+        if (!instantSelections.length) {
+          showToast('No hay selecciones para exportar', 'info');
+          return;
+        }
+        const success = await generateInstantPdf();
+        if (success) {
+          showNavIndicator('PDF generado');
+        }
+      }
+
+      async function generateInstantPdf() {
+        showOverlay('Generando PDF…');
+        try {
+          const pdfDoc = await PDFLib.PDFDocument.create();
+          let processed = 0;
+          for (const s of instantSelections) {
+            const state = pageStates.get(s.pageNum);
+            if (!state) continue;
+            if (!state.canvas.width || !state.canvas.height) {
+              await renderPage(s.pageNum, state);
+            }
+            const canvas = state.canvas;
+            if (!canvas) continue;
+            const sx = Math.round(Math.min(s.xp1, s.xp2) * canvas.width);
+            const sy = Math.round(Math.min(s.yp1, s.yp2) * canvas.height);
+            const sw = Math.max(1, Math.round(Math.abs(s.xp2 - s.xp1) * canvas.width));
+            const sh = Math.max(1, Math.round(Math.abs(s.yp2 - s.yp1) * canvas.height));
+
+            const out = document.createElement('canvas');
+            out.width = sw;
+            out.height = sh;
+            const octx = out.getContext('2d');
+            if (!octx) continue;
+            octx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+            const drawCanvas = state.wrapper.querySelector('.draw-canvas');
+            if (drawCanvas) {
+              octx.drawImage(drawCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+            }
+
+            const captureBlob = await new Promise((resolve, reject) => {
+              out.toBlob((result) => {
+                if (result) resolve(result);
+                else reject(new Error('No se pudo generar la imagen'));
+              }, 'image/png', 0.92);
+            });
+            const bytes = new Uint8Array(await captureBlob.arrayBuffer());
+            const img = await pdfDoc.embedPng(bytes);
+            const page = pdfDoc.addPage([out.width, out.height]);
+            page.drawImage(img, { x: 0, y: 0, width: out.width, height: out.height });
+            processed++;
+          }
+
+          if (!processed) {
+            showToast('No se pudieron procesar las selecciones', 'error');
+            return false;
+          }
+
+          const pdfBytes = await pdfDoc.save();
+          const pdfBlob = new Blob([pdfBytes], { type: 'application/pdf' });
+          const url = URL.createObjectURL(pdfBlob);
+          let opened = window.open(url, '_blank');
+          if (!opened) {
+            const link = document.createElement('a');
+            link.href = url;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+          }
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          showToast(`PDF generado con ${processed} ${processed === 1 ? 'página' : 'páginas'}`, 'success');
+          clearInstantSelections();
+          instantMode = false;
+          return true;
+        } catch (err) {
+          console.error('Error generando PDF instantáneo', err);
+          showToast('Error generando PDF', 'error');
+          return false;
+        } finally {
+          hideOverlay();
+        }
       }
 
       async function focusArea(pageNum, xp1, yp1, xp2, yp2) {
