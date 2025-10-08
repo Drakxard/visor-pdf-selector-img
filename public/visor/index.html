@@ -3040,6 +3040,9 @@
         const resultDoc = await window.PDFLib.PDFDocument.create();
         const pxToPt = 72 / 96;
         const ratio = window.devicePixelRatio || 1;
+        const targetDpi = 300;
+        const minScale = targetDpi / 96;
+        const MAX_SCALE = 8;
 
         for (const selection of instantSelections) {
           const { pageNum, xp1, yp1, xp2, yp2 } = selection;
@@ -3048,8 +3051,14 @@
           if (widthFrac === 0 || heightFrac === 0) continue;
 
           const page = await pdfDoc.getPage(pageNum);
-          const scale = Math.max(2, ratio * 2);
-          const viewport = page.getViewport({ scale });
+          const rotation = page.rotate || 0;
+          const baseViewport = page.getViewport({ scale: 1, rotation });
+          const selectionWidthPt = widthFrac * baseViewport.width * pxToPt;
+          const selectionHeightPt = heightFrac * baseViewport.height * pxToPt;
+          if (selectionWidthPt === 0 || selectionHeightPt === 0) continue;
+
+          const scale = Math.min(MAX_SCALE, Math.max(minScale, ratio * 2, 2));
+          const viewport = page.getViewport({ scale, rotation });
           const x1 = Math.min(xp1, xp2) * viewport.width;
           const y1 = Math.min(yp1, yp2) * viewport.height;
           const w = widthFrac * viewport.width;
@@ -3058,8 +3067,13 @@
           canvas.width = Math.max(1, Math.round(w));
           canvas.height = Math.max(1, Math.round(h));
           const ctx = canvas.getContext('2d');
+          if (!ctx) continue;
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.save();
           ctx.translate(-x1, -y1);
           await page.render({ canvasContext: ctx, viewport }).promise;
+          ctx.restore();
 
           const state = pageStates.get(pageNum);
           const drawCanvas = state?.wrapper?.querySelector('.draw-canvas');
@@ -3074,10 +3088,8 @@
           const dataUrl = canvas.toDataURL('image/png');
           const pngBytes = await (await fetch(dataUrl)).arrayBuffer();
           const embedded = await resultDoc.embedPng(pngBytes);
-          const pageWidth = canvas.width * pxToPt;
-          const pageHeight = canvas.height * pxToPt;
-          const newPage = resultDoc.addPage([pageWidth, pageHeight]);
-          newPage.drawImage(embedded, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+          const newPage = resultDoc.addPage([selectionWidthPt, selectionHeightPt]);
+          newPage.drawImage(embedded, { x: 0, y: 0, width: selectionWidthPt, height: selectionHeightPt });
         }
 
         if (resultDoc.getPageCount() === 0) return 0;
