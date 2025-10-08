@@ -69,6 +69,44 @@
     body.light-mode .control-btn:hover { background: rgba(0,0,0,0.1); }
 
 
+    .settings-popover {
+      position: fixed;
+      background: #323639;
+      border: 1px solid #5f6368;
+      border-radius: 8px;
+      padding: 4px 0;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+      z-index: 210;
+      min-width: 220px;
+      display: none;
+    }
+    .settings-popover.show { display: block; }
+    .settings-popover button {
+      width: 100%;
+      background: transparent;
+      border: none;
+      color: #e8eaed;
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .settings-popover button:hover {
+      background: rgba(255,255,255,0.08);
+    }
+    body.light-mode .settings-popover {
+      background: #fff;
+      border-color: #dadce0;
+      box-shadow: 0 12px 24px rgba(0,0,0,0.15);
+    }
+    body.light-mode .settings-popover button {
+      color: #202124;
+    }
+    body.light-mode .settings-popover button:hover {
+      background: rgba(0,0,0,0.06);
+    }
+
+
     body.embedded #app-header { display: none; }
     body.embedded #pdf-container,
     body.embedded #drop-zone { top: 0; }
@@ -406,6 +444,84 @@
     .permission-btn.secondary { background: #f8f9fa; color: #5f6368; border: 1px solid #dadce0; }
     .permission-btn.secondary:hover { background: #e8f0fe; }
 
+    .config-modal-content { max-width: 520px; }
+    .config-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+    .config-field label { font-size: 14px; font-weight: 600; color: #1f1f1f; }
+    .model-sync-row { display: flex; align-items: center; gap: 8px; }
+    #groq-model-select {
+      flex: 1;
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      padding: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      background: #fff;
+      color: #202124;
+    }
+    #groq-model-select:disabled { opacity: 0.6; cursor: not-allowed; }
+    #groq-prompt-input {
+      width: 100%;
+      min-height: 120px;
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 14px;
+      resize: vertical;
+      font-family: inherit;
+    }
+    .sync-button {
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      background: #f8f9fa;
+      color: #202124;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .sync-button:disabled { opacity: 0.6; cursor: progress; }
+    .sync-button:not(:disabled):hover { background: #e8f0fe; }
+    .small-muted { font-size: 12px; color: #666; }
+    .config-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+    .config-actions button {
+      border: 1px solid #dadce0;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      background: #f8f9fa;
+      color: #202124;
+    }
+    .config-actions button:hover { background: #e8f0fe; }
+    .config-actions .primary {
+      background: #1a73e8;
+      border-color: #1a73e8;
+      color: #fff;
+    }
+    .config-actions .primary:hover { background: #1558b0; }
+
+    #groq-result-text {
+      background: #f1f3f4;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .copy-link-button {
+      background: none;
+      border: none;
+      color: #1a73e8;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0;
+      text-decoration: underline;
+    }
+    .copy-link-button:hover { color: #0f5cc4; }
+
     .toast {
       position: fixed; bottom: 20px; right: 20px; background: #323639; color: #e8eaed; padding: 12px 20px; border-radius: 8px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 2000; opacity: 0; transform: translateY(20px);
@@ -514,6 +630,11 @@
         <button class="control-btn" id="folder-btn" title="Configurar carpeta">⚙️</button>
       </div>
 
+      <div id="settings-popover" class="settings-popover" role="menu" aria-hidden="true">
+        <button type="button" id="open-permission-settings">Configurar carpeta</button>
+        <button type="button" id="open-groq-settings">Configurar modelo y prompt</button>
+      </div>
+
       <button class="control-btn" id="theme-toggle" title="Cambiar tema">🌙</button>
       <button class="control-btn" id="info-btn" title="Ayuda">ℹ️</button>
     </div>
@@ -587,6 +708,7 @@
         • Clic dentro de la selección para eliminarla<br>
         • <kbd>Ctrl</kbd> + <kbd>I</kbd> nuevamente para guardar todas las selecciones<br>
         • Se admite marcar en varias páginas<br>
+        • Pulsa <kbd>I</kbd> dos veces para transcribir el texto de varias áreas con GROQ<br>
         <small>Las imágenes se guardan en la carpeta elegida</small>
       </div>
     </div>
@@ -621,6 +743,47 @@
           <button class="category-btn teo" id="pdf-choose-teo">Teoría</button>
           <button class="category-btn prac" id="pdf-choose-prac">Práctica</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="groq-config-modal" class="info-modal hidden" role="dialog" aria-modal="true" aria-labelledby="groq-config-title">
+    <div class="info-content config-modal-content">
+      <div class="info-header">
+        <h3 id="groq-config-title">⚙️ Configurar modelo y prompt</h3>
+        <button class="close-info" id="close-groq-config">×</button>
+      </div>
+      <div class="info-body">
+        <div class="config-field">
+          <label for="groq-model-select">Modelo</label>
+          <div class="model-sync-row">
+            <select id="groq-model-select" aria-label="Modelo de Groq"></select>
+            <button class="sync-button" id="groq-sync-models" type="button">[recarga/sincronizar]</button>
+          </div>
+          <div class="small-muted" id="groq-last-sync">Modelos sin sincronizar</div>
+        </div>
+        <div class="config-field">
+          <label for="groq-prompt-input">Prompt</label>
+          <textarea id="groq-prompt-input" placeholder="Extrae el texto."></textarea>
+        </div>
+        <div class="config-actions">
+          <button type="button" id="groq-cancel-config">Cancelar</button>
+          <button type="button" class="primary" id="groq-save-config">Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="groq-result-modal" class="info-modal hidden" role="dialog" aria-modal="true" aria-labelledby="groq-result-title">
+    <div class="info-content">
+      <div class="info-header">
+        <h3 id="groq-result-title">📝 Transcripciones</h3>
+        <button class="close-info" id="close-groq-result">×</button>
+      </div>
+      <div class="info-body">
+        <p class="small-muted">Se copió automáticamente al portapapeles.</p>
+        <pre id="groq-result-text"></pre>
+        <button type="button" class="copy-link-button" id="groq-copy-again">[copiar de nuevo]</button>
       </div>
     </div>
   </div>
@@ -869,6 +1032,22 @@
       const pdfModal = document.getElementById('pdf-modal');
       const closePdfModalBtn = document.getElementById('close-pdf-modal');
       const pdfModalBody = document.getElementById('pdf-modal-body');
+      const settingsPopover = document.getElementById('settings-popover');
+      const openPermissionSettingsBtn = document.getElementById('open-permission-settings');
+      const openGroqSettingsBtn = document.getElementById('open-groq-settings');
+      const groqConfigModal = document.getElementById('groq-config-modal');
+      const groqConfigCloseBtn = document.getElementById('close-groq-config');
+      const groqConfigCancelBtn = document.getElementById('groq-cancel-config');
+      const groqConfigSaveBtn = document.getElementById('groq-save-config');
+      const groqModelSelect = document.getElementById('groq-model-select');
+      const groqSyncBtn = document.getElementById('groq-sync-models');
+      const groqPromptInput = document.getElementById('groq-prompt-input');
+      const groqLastSyncLabel = document.getElementById('groq-last-sync');
+      const groqResultModal = document.getElementById('groq-result-modal');
+      const groqResultCloseBtn = document.getElementById('close-groq-result');
+      const groqResultText = document.getElementById('groq-result-text');
+      const groqCopyAgainBtn = document.getElementById('groq-copy-again');
+      const permissionModal = document.getElementById('permission-modal');
 
       const drawIndicator = document.createElement('div');
       drawIndicator.id = 'draw-indicator';
@@ -890,6 +1069,222 @@
       let focusPreview = null;
       let focusCancelTipShown = false;
       let instantSelections = []; // { id, pageNum, xp1, yp1, xp2, yp2, layer, elem }
+
+      const GROQ_CONFIG_STORAGE_KEY = 'groq-config-v1';
+      const GROQ_MODEL_CACHE_KEY = 'groq-model-cache-v1';
+      const DEFAULT_GROQ_PROMPT = 'Extrae el texto.';
+      const GROQ_TARGET_LONG_SIDE = 1800;
+      const GROQ_MIN_RENDER_SCALE = 2;
+      const GROQ_MAX_RENDER_SCALE = 10;
+      let groqConfig = { model: '', prompt: DEFAULT_GROQ_PROMPT };
+      let groqModelCache = { models: [], lastSynced: 0 };
+
+      function loadGroqConfigFromStorage() {
+        try {
+          const raw = localStorage.getItem(GROQ_CONFIG_STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+              groqConfig.model = typeof parsed.model === 'string' ? parsed.model : '';
+              groqConfig.prompt = typeof parsed.prompt === 'string' && parsed.prompt.trim()
+                ? parsed.prompt
+                : DEFAULT_GROQ_PROMPT;
+            }
+          }
+        } catch (error) {
+          console.warn('No se pudo cargar configuración de GROQ', error);
+        }
+        if (!groqConfig.prompt) groqConfig.prompt = DEFAULT_GROQ_PROMPT;
+      }
+
+      function saveGroqConfigToStorage() {
+        try {
+          localStorage.setItem(GROQ_CONFIG_STORAGE_KEY, JSON.stringify(groqConfig));
+        } catch (error) {
+          console.warn('No se pudo guardar configuración de GROQ', error);
+        }
+      }
+
+      function loadGroqModelCacheFromStorage() {
+        try {
+          const raw = localStorage.getItem(GROQ_MODEL_CACHE_KEY);
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.models)) {
+            groqModelCache.models = parsed.models
+              .map((item) => {
+                if (!item) return null;
+                if (typeof item === 'string') return { id: item };
+                if (typeof item === 'object') {
+                  return {
+                    id: typeof item.id === 'string' ? item.id : '',
+                    description: typeof item.description === 'string'
+                      ? item.description
+                      : (typeof item.display_name === 'string' ? item.display_name : ''),
+                  };
+                }
+                return null;
+              })
+              .filter((item) => item && item.id);
+            groqModelCache.lastSynced = typeof parsed.lastSynced === 'number' ? parsed.lastSynced : 0;
+          }
+        } catch (error) {
+          console.warn('No se pudo cargar modelos de GROQ', error);
+        }
+      }
+
+      function saveGroqModelCacheToStorage() {
+        try {
+          localStorage.setItem(GROQ_MODEL_CACHE_KEY, JSON.stringify(groqModelCache));
+        } catch (error) {
+          console.warn('No se pudo guardar modelos de GROQ', error);
+        }
+      }
+
+      function populateGroqModelOptions(models) {
+        if (!groqModelSelect) return;
+        groqModelSelect.innerHTML = '';
+        if (!models || !models.length) {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = 'Sin modelos disponibles';
+          groqModelSelect.appendChild(option);
+          groqModelSelect.disabled = true;
+          return;
+        }
+        groqModelSelect.disabled = false;
+        models.forEach((model) => {
+          const option = document.createElement('option');
+          option.value = model.id;
+          option.textContent = model.description ? `${model.id} — ${model.description}` : model.id;
+          groqModelSelect.appendChild(option);
+        });
+        if (groqConfig.model && models.some((m) => m.id === groqConfig.model)) {
+          groqModelSelect.value = groqConfig.model;
+        } else {
+          groqModelSelect.value = models[0].id;
+        }
+      }
+
+      function updateGroqLastSyncLabel() {
+        if (!groqLastSyncLabel) return;
+        if (!groqModelCache.lastSynced) {
+          groqLastSyncLabel.textContent = 'Modelos sin sincronizar';
+          return;
+        }
+        const date = new Date(groqModelCache.lastSynced);
+        groqLastSyncLabel.textContent = `Última sincronización: ${date.toLocaleString()}`;
+      }
+
+      async function syncGroqModels(showToastMessage = true) {
+        if (!groqSyncBtn) return;
+        const prevText = groqSyncBtn.textContent;
+        groqSyncBtn.disabled = true;
+        groqSyncBtn.textContent = 'Sincronizando…';
+        try {
+          const response = await fetch('/api/groq/models', { headers: { Accept: 'application/json' } });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            const message = data?.error || 'Error sincronizando modelos';
+            throw new Error(message);
+          }
+          const rawModels = Array.isArray(data?.data)
+            ? data.data
+            : Array.isArray(data?.models)
+              ? data.models
+              : [];
+          const parsedModels = rawModels
+            .map((item) => {
+              if (!item) return null;
+              if (typeof item === 'string') return { id: item };
+              if (typeof item === 'object') {
+                const id = typeof item.id === 'string' ? item.id : '';
+                if (!id) return null;
+                return {
+                  id,
+                  description: typeof item.description === 'string'
+                    ? item.description
+                    : (typeof item.display_name === 'string' ? item.display_name : ''),
+                };
+              }
+              return null;
+            })
+            .filter((model) => model && model.id);
+          groqModelCache.models = parsedModels;
+          groqModelCache.lastSynced = Date.now();
+          saveGroqModelCacheToStorage();
+          populateGroqModelOptions(parsedModels);
+          updateGroqLastSyncLabel();
+          if (showToastMessage) showToast('Modelos de GROQ sincronizados', 'success');
+        } catch (error) {
+          console.error('Error sincronizando modelos de GROQ:', error);
+          if (showToastMessage) showToast('No se pudieron cargar los modelos de GROQ', 'error');
+        } finally {
+          groqSyncBtn.disabled = false;
+          groqSyncBtn.textContent = prevText || '[recarga/sincronizar]';
+        }
+      }
+
+      function openGroqConfigModal(autoSync = false) {
+        if (!groqConfigModal) return;
+        if (groqPromptInput) {
+          groqPromptInput.value = groqConfig.prompt || DEFAULT_GROQ_PROMPT;
+        }
+        populateGroqModelOptions(groqModelCache.models);
+        updateGroqLastSyncLabel();
+        if ((!groqModelCache.models || !groqModelCache.models.length) && autoSync !== false) {
+          syncGroqModels(false);
+        }
+        groqConfigModal.classList.remove('hidden');
+      }
+
+      function closeGroqConfigModal() {
+        if (!groqConfigModal) return;
+        groqConfigModal.classList.add('hidden');
+      }
+
+      async function copyTextToClipboard(text) {
+        if (!navigator.clipboard) return false;
+        try {
+          await navigator.clipboard.writeText(text);
+          return true;
+        } catch (error) {
+          console.warn('No se pudo copiar al portapapeles', error);
+          return false;
+        }
+      }
+
+      function closeGroqResultModal() {
+        if (!groqResultModal) return;
+        groqResultModal.classList.add('hidden');
+      }
+
+      async function showGroqResults(transcripts) {
+        if (!groqResultModal || !groqResultText) return;
+        const cleaned = transcripts.map((value, index) => {
+          const text = (value || '').toString().trim();
+          return text || `contenido${index + 1}`;
+        });
+        const displayText = `{${cleaned.join(', ')}}`;
+        groqResultText.textContent = displayText;
+        groqResultModal.classList.remove('hidden');
+        const copied = await copyTextToClipboard(displayText);
+        if (copied) {
+          showToast('Transcripciones copiadas', 'success');
+        } else {
+          showToast('No se pudo copiar automáticamente', 'warning');
+        }
+      }
+
+      function getActiveGroqConfig() {
+        return {
+          model: groqConfig.model,
+          prompt: (groqConfig.prompt || DEFAULT_GROQ_PROMPT).trim() || DEFAULT_GROQ_PROMPT,
+        };
+      }
+
+      loadGroqConfigFromStorage();
+      loadGroqModelCacheFromStorage();
 
       function updateFocusPreview(e) {
         if (!focusMode || !focusStart || !focusPreview) return;
@@ -2210,26 +2605,12 @@
               deactivateFocusMode('Selección cancelada');
               return;
             }
-            try {
-              const pages = await exportInstantSelectionsToPdf();
-              if (pages > 0) {
-                deactivateFocusMode();
-                showToast(`PDF generado con ${pages} páginas`, 'success');
-              } else {
-                deactivateFocusMode();
-                showToast('No se pudieron generar páginas a partir de las selecciones', 'error');
-              }
-            } catch (error) {
-              console.error('Error exportando selecciones instantáneas:', error);
-              showToast('Error generando el PDF de selecciones', 'error');
-            } finally {
-              clearInstantSelections();
-            }
+            await processInstantSelectionsWithGroq();
             return;
           }
           clearInstantSelections();
-          activateFocusMode('multi', 'Haz dos clics para seleccionar área');
-          showToast('Selecciona áreas con dos clics. Pulsa I nuevamente para generar el PDF.', 'info');
+          activateFocusMode('multi', 'Haz dos clics para seleccionar áreas (I: transcribir)');
+          showToast('Selecciona áreas con dos clics. Pulsa I nuevamente para transcribir con GROQ.', 'info');
           return;
         }
 
@@ -2853,11 +3234,87 @@
         return notes;
       }
       const folderBtn = document.getElementById('folder-btn');
-      folderBtn && folderBtn.addEventListener('click', () => {});
+      function closeSettingsPopover() {
+        if (!settingsPopover) return;
+        settingsPopover.classList.remove('show');
+        settingsPopover.setAttribute('aria-hidden', 'true');
+      }
+      function openSettingsPopover() {
+        if (!settingsPopover || !folderBtn) return;
+        const rect = folderBtn.getBoundingClientRect();
+        settingsPopover.classList.add('show');
+        const width = settingsPopover.offsetWidth;
+        const left = Math.max(8, rect.right - width);
+        settingsPopover.style.top = `${rect.bottom + 8}px`;
+        settingsPopover.style.left = `${left}px`;
+        settingsPopover.setAttribute('aria-hidden', 'false');
+      }
+      folderBtn?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        if (!settingsPopover) return;
+        if (settingsPopover.classList.contains('show')) {
+          closeSettingsPopover();
+        } else {
+          openSettingsPopover();
+        }
+      });
+      document.addEventListener('click', (event) => {
+        if (!settingsPopover || settingsPopover.classList.contains('show')) {
+          if (
+            settingsPopover &&
+            settingsPopover.classList.contains('show') &&
+            !settingsPopover.contains(event.target) &&
+            event.target !== folderBtn
+          ) {
+            closeSettingsPopover();
+          }
+        }
+      });
+      openPermissionSettingsBtn?.addEventListener('click', () => {
+        closeSettingsPopover();
+        if (permissionModal) permissionModal.classList.remove('hidden');
+      });
+      openGroqSettingsBtn?.addEventListener('click', () => {
+        closeSettingsPopover();
+        openGroqConfigModal(true);
+      });
+
       const grantBtn = document.getElementById('grant-access-btn');
       grantBtn && grantBtn.addEventListener('click', () => {});
       const skipBtn = document.getElementById('skip-access-btn');
       skipBtn && skipBtn.addEventListener('click', () => {});
+
+      groqConfigCloseBtn?.addEventListener('click', closeGroqConfigModal);
+      groqConfigCancelBtn?.addEventListener('click', closeGroqConfigModal);
+      groqConfigModal?.addEventListener('click', (event) => {
+        if (event.target === groqConfigModal) closeGroqConfigModal();
+      });
+      groqSyncBtn?.addEventListener('click', () => syncGroqModels(true));
+      groqConfigSaveBtn?.addEventListener('click', () => {
+        if (!groqModelSelect || groqModelSelect.disabled || !groqModelSelect.value) {
+          showToast('Sin modelo seleccionado', 'error');
+          return;
+        }
+        groqConfig.model = groqModelSelect.value;
+        groqConfig.prompt = (groqPromptInput?.value || '').trim() || DEFAULT_GROQ_PROMPT;
+        saveGroqConfigToStorage();
+        closeGroqConfigModal();
+        showToast('Configuración de GROQ guardada', 'success');
+      });
+
+      groqResultCloseBtn?.addEventListener('click', closeGroqResultModal);
+      groqResultModal?.addEventListener('click', (event) => {
+        if (event.target === groqResultModal) closeGroqResultModal();
+      });
+      groqCopyAgainBtn?.addEventListener('click', async () => {
+        if (!groqResultText) return;
+        const copied = await copyTextToClipboard(groqResultText.textContent || '');
+        if (copied) {
+          showToast('Contenido copiado nuevamente', 'success');
+        } else {
+          showToast('No se pudo copiar', 'error');
+        }
+      });
 
       // ========================================
       // MODAL INFO
@@ -3032,91 +3489,101 @@
         showNavIndicator('Área añadida (' + instantSelections.length + ')');
       }
 
-      async function exportInstantSelectionsToPdf() {
-        if (!instantSelections.length) return 0;
-        if (!window.PDFLib || !window.PDFLib.PDFDocument) {
-          throw new Error('PDFLib no disponible');
-        }
-        const resultDoc = await window.PDFLib.PDFDocument.create();
-        const pxToPt = 72 / 96;
+      async function renderInstantSelection(selection) {
+        if (!pdfDoc) return null;
+        const { pageNum, xp1, yp1, xp2, yp2 } = selection;
+        const widthFrac = Math.abs(xp2 - xp1);
+        const heightFrac = Math.abs(yp2 - yp1);
+        if (widthFrac === 0 || heightFrac === 0) return null;
+
+        const page = await pdfDoc.getPage(pageNum);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const cssWidth = widthFrac * baseViewport.width;
+        const cssHeight = heightFrac * baseViewport.height;
         const ratio = window.devicePixelRatio || 1;
-        const TARGET_LONG_SIDE = 1800;
-        const MIN_RENDER_SCALE = 2;
-        const MAX_RENDER_SCALE = 10;
+        const longestSide = Math.max(cssWidth, cssHeight);
+        const desiredScale = longestSide ? Math.max(1, GROQ_TARGET_LONG_SIDE / longestSide) : 1;
+        const renderScale = Math.min(
+          GROQ_MAX_RENDER_SCALE,
+          Math.max(GROQ_MIN_RENDER_SCALE, desiredScale * ratio),
+        );
+        const viewport = page.getViewport({ scale: renderScale });
+        const minXp = Math.min(xp1, xp2);
+        const minYp = Math.min(yp1, yp2);
+        const x1 = minXp * viewport.width;
+        const y1 = minYp * viewport.height;
+        const w = widthFrac * viewport.width;
+        const h = heightFrac * viewport.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(w));
+        canvas.height = Math.max(1, Math.round(h));
+        const ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) return null;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        await page.render({
+          canvasContext: ctx,
+          viewport,
+          transform: [1, 0, 0, 1, -x1, -y1],
+        }).promise;
 
-        for (const selection of instantSelections) {
-          const { pageNum, xp1, yp1, xp2, yp2 } = selection;
-          const widthFrac = Math.abs(xp2 - xp1);
-          const heightFrac = Math.abs(yp2 - yp1);
-          if (widthFrac === 0 || heightFrac === 0) continue;
-
-          const page = await pdfDoc.getPage(pageNum);
-          const baseViewport = page.getViewport({ scale: 1 });
-          const cssWidth = widthFrac * baseViewport.width;
-          const cssHeight = heightFrac * baseViewport.height;
-          const longestSide = Math.max(cssWidth, cssHeight);
-          const desiredScale = longestSide ? Math.max(1, TARGET_LONG_SIDE / longestSide) : 1;
-          const renderScale = Math.min(
-            MAX_RENDER_SCALE,
-            Math.max(MIN_RENDER_SCALE, desiredScale * ratio),
-          );
-          const viewport = page.getViewport({ scale: renderScale });
-          const minXp = Math.min(xp1, xp2);
-          const minYp = Math.min(yp1, yp2);
-          const x1 = minXp * viewport.width;
-          const y1 = minYp * viewport.height;
-          const w = widthFrac * viewport.width;
-          const h = heightFrac * viewport.height;
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round(w));
-          canvas.height = Math.max(1, Math.round(h));
-          const ctx = canvas.getContext('2d', { alpha: false });
-          if (!ctx) continue;
-          ctx.fillStyle = '#fff';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          await page.render({
-            canvasContext: ctx,
-            viewport,
-            transform: [1, 0, 0, 1, -x1, -y1],
-          }).promise;
-
-          const state = pageStates.get(pageNum);
-          const drawCanvas = state?.wrapper?.querySelector('.draw-canvas');
-          if (drawCanvas) {
-            const sx2 = Math.round(minXp * drawCanvas.width);
-            const sy2 = Math.round(minYp * drawCanvas.height);
-            const sw2 = Math.max(1, Math.round(widthFrac * drawCanvas.width));
-            const sh2 = Math.max(1, Math.round(heightFrac * drawCanvas.height));
-            ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
-          }
-
-          const dataUrl = canvas.toDataURL('image/png');
-          const pngBytes = await (await fetch(dataUrl)).arrayBuffer();
-          const embedded = await resultDoc.embedPng(pngBytes);
-          const pageWidth = cssWidth * pxToPt;
-          const pageHeight = cssHeight * pxToPt;
-          const safePageWidth = Math.max(pageWidth, pxToPt);
-          const safePageHeight = Math.max(pageHeight, pxToPt);
-          const newPage = resultDoc.addPage([safePageWidth, safePageHeight]);
-          newPage.drawImage(embedded, {
-            x: (safePageWidth - pageWidth) / 2,
-            y: (safePageHeight - pageHeight) / 2,
-            width: pageWidth,
-            height: pageHeight,
-          });
+        const state = pageStates.get(pageNum);
+        const drawCanvas = state?.wrapper?.querySelector('.draw-canvas');
+        if (drawCanvas) {
+          const sx2 = Math.round(minXp * drawCanvas.width);
+          const sy2 = Math.round(minYp * drawCanvas.height);
+          const sw2 = Math.max(1, Math.round(widthFrac * drawCanvas.width));
+          const sh2 = Math.max(1, Math.round(heightFrac * drawCanvas.height));
+          ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
         }
 
-        if (resultDoc.getPageCount() === 0) return 0;
+        return canvas.toDataURL('image/png');
+      }
 
-        const pdfBytes = await resultDoc.save();
-        const blob = new Blob([pdfBytes], { type: 'application/pdf' });
-        const url = URL.createObjectURL(blob);
-        const win = window.open(url, '_blank');
-        if (!win) showToast('Permite ventanas emergentes para ver el PDF generado', 'warning');
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        return resultDoc.getPageCount();
+      async function processInstantSelectionsWithGroq() {
+        if (!instantSelections.length) return [];
+        const config = getActiveGroqConfig();
+        if (!config.model) {
+          showToast('Configura el modelo en ajustes (⚙️)', 'warning');
+          openGroqConfigModal(true);
+          return [];
+        }
+
+        showOverlay('Transcribiendo capturas…');
+        const transcripts = [];
+        try {
+          for (const selection of instantSelections) {
+            const image = await renderInstantSelection(selection);
+            if (!image) continue;
+            const response = await fetch('/api/groq/transcribe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image, model: config.model, prompt: config.prompt }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              const message = data?.error || 'Error transcribiendo con GROQ';
+              throw new Error(message);
+            }
+            transcripts.push((data?.text || '').toString());
+          }
+          if (transcripts.length) {
+            await showGroqResults(transcripts);
+          } else {
+            showToast('No se recibieron transcripciones', 'warning');
+          }
+        } catch (error) {
+          console.error('Error transcribiendo con GROQ:', error);
+          const message = error?.message ? String(error.message) : 'Error transcribiendo con GROQ';
+          showToast(message, 'error');
+        } finally {
+          hideOverlay();
+          clearInstantSelections();
+          deactivateFocusMode();
+        }
+        return transcripts;
       }
 
       function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
