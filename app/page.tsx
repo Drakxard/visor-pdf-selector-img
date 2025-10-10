@@ -2029,7 +2029,7 @@ export default function Home() {
       return
     }
     const nextId = lastPropositionId + 1
-    const creationUrl = `${normalizedBase}/nuevaproposicion/id=${nextId}?subtema=${encodeURIComponent(trimmedTitle)}`
+    const creationUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(trimmedTitle)}`
     window.open(creationUrl, '_blank', 'noopener,noreferrer')
     setPropositionsByPath((prev) => {
       const prevEntries = prev[activePropositionPath] ?? []
