@@ -148,6 +148,20 @@ type QuickLink = {
 type PropositionEntry = {
   id: number
   title: string
+  read?: boolean
+}
+
+const sortPropositions = (entries: PropositionEntry[]) => {
+  const unread: PropositionEntry[] = []
+  const read: PropositionEntry[] = []
+  entries.forEach((entry) => {
+    if (entry.read) {
+      read.push(entry)
+    } else {
+      unread.push(entry)
+    }
+  })
+  return [...unread, ...read]
 }
 
 const QUICK_LINK_SLOT_COUNT = 6
@@ -1233,13 +1247,20 @@ export default function Home() {
               const record = item as Record<string, unknown>
               const id = Number(record['id'])
               const titleRaw = typeof record['title'] === 'string' ? record['title'].trim() : ''
+              const readValue = record['read']
+              const read =
+                typeof readValue === 'boolean'
+                  ? readValue
+                  : typeof readValue === 'string'
+                    ? readValue.toLowerCase() === 'true'
+                    : false
               if (!Number.isInteger(id) || id < 0) return null
               if (!titleRaw) return null
-              return { id, title: titleRaw }
+              return { id, title: titleRaw, read }
             })
             .filter((entry): entry is PropositionEntry => entry !== null)
           if (entries.length) {
-            normalized[key] = entries
+            normalized[key] = sortPropositions(entries)
           }
         })
         setPropositionsByPath(normalized)
@@ -1934,6 +1955,17 @@ export default function Home() {
   const activePropositionPath = viewWeek ?? ''
   const activePropositions = propositionsByPath[activePropositionPath] ?? []
   const hasActivePropositions = activePropositions.length > 0
+  const unreadPropositions = activePropositions.filter((entry) => !entry.read).length
+  const allPropositionsRead = hasActivePropositions && unreadPropositions === 0
+  const anyPropositionRead = activePropositions.some((entry) => entry.read)
+  const propositionStatusIcon = allPropositionsRead
+    ? '✔'
+    : anyPropositionRead
+      ? '⬛'
+      : '⬜'
+  const propositionToggleLabel = allPropositionsRead
+    ? 'Marcar todas las proposiciones como no leídas'
+    : 'Marcar todas las proposiciones como leídas'
 
   const collectFiles = (path: string): PdfFile[] => {
     const entry = directoryTree[path]
@@ -2020,6 +2052,17 @@ export default function Home() {
     }
     const targetUrl = `${normalizedBase}/proposicion/${entry.id}`
     window.open(targetUrl, '_blank', 'noopener,noreferrer')
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      if (!prevEntries.length) return prev
+      const nextEntries = prevEntries.map((item) =>
+        item.id === entry.id ? { ...item, read: true } : item,
+      )
+      return {
+        ...prev,
+        [activePropositionPath]: sortPropositions(nextEntries),
+      }
+    })
   }
 
   const handleRemoveProposition = (entry: PropositionEntry) => {
@@ -2033,7 +2076,10 @@ export default function Home() {
         const { [activePropositionPath]: _removed, ...rest } = prev
         return rest
       }
-      return { ...prev, [activePropositionPath]: nextEntries }
+      return {
+        ...prev,
+        [activePropositionPath]: sortPropositions(nextEntries),
+      }
     })
   }
 
@@ -2053,14 +2099,35 @@ export default function Home() {
     window.open(creationUrl, '_blank', 'noopener,noreferrer')
     setPropositionsByPath((prev) => {
       const prevEntries = prev[activePropositionPath] ?? []
+      const nextEntries = sortPropositions([
+        ...prevEntries,
+        { id: nextId, title: trimmedTitle, read: false },
+      ])
       return {
         ...prev,
-        [activePropositionPath]: [...prevEntries, { id: nextId, title: trimmedTitle }],
+        [activePropositionPath]: nextEntries,
       }
     })
     setLastPropositionId(nextId)
     setNewPropositionTitle('')
     setShowPropositionInput(false)
+  }
+
+  const handleToggleAllPropositions = () => {
+    if (!hasActivePropositions) return
+    const markAsRead = !allPropositionsRead
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      if (!prevEntries.length) return prev
+      const nextEntries = prevEntries.map((item) => ({
+        ...item,
+        read: markAsRead,
+      }))
+      return {
+        ...prev,
+        [activePropositionPath]: sortPropositions(nextEntries),
+      }
+    })
   }
 
   const formatDirLabel = (path: string) => {
@@ -2173,7 +2240,25 @@ export default function Home() {
               </div>
               <div>
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-gray-500 uppercase">Proposiciones</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase">
+                      Proposiciones
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={handleToggleAllPropositions}
+                      disabled={!hasActivePropositions}
+                      className={`text-sm transition-colors ${
+                        hasActivePropositions
+                          ? 'cursor-pointer text-gray-700 hover:text-gray-900 dark:text-gray-200 dark:hover:text-white'
+                          : 'cursor-not-allowed text-gray-400 dark:text-gray-500'
+                      }`}
+                      aria-label={propositionToggleLabel}
+                      title={propositionToggleLabel}
+                    >
+                      {propositionStatusIcon}
+                    </button>
+                  </div>
                   <button
                     type="button"
                     className="rounded border border-gray-300 px-2 text-xs leading-6 dark:border-gray-600"
@@ -2222,7 +2307,9 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => handleOpenProposition(entry)}
-                          className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
+                          className={`flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid ${
+                            entry.read ? 'text-gray-400 line-through' : ''
+                          }`}
                         >
                           {entry.title}
                         </button>
