@@ -145,6 +145,11 @@ type QuickLink = {
   url: string
 }
 
+type PropositionEntry = {
+  id: number
+  title: string
+}
+
 const QUICK_LINK_SLOT_COUNT = 6
 
 const DEFAULT_SUBJECT_QUICK_LINKS: QuickLink[] = [
@@ -188,6 +193,9 @@ type WeekOption = {
 const GROQ_CONFIG_STORAGE_KEY = 'groq-vision-config'
 const GROQ_MODEL_LIST_STORAGE_KEY = 'groq-vision-models'
 const DEFAULT_DARK_MODE_START = 23
+const PROPOSITION_STORAGE_KEY = 'propositionsByPath'
+const PROPOSITION_LAST_ID_STORAGE_KEY = 'propositionLastId'
+const PROPOSITION_BASE_URL_STORAGE_KEY = 'propositionBaseUrl'
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -398,6 +406,12 @@ export default function Home() {
   const initialWeekAppliedRef = useRef(false)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const [propositionsByPath, setPropositionsByPath] = useState<Record<string, PropositionEntry[]>>({})
+  const [lastPropositionId, setLastPropositionId] = useState(0)
+  const [propositionBaseUrl, setPropositionBaseUrl] = useState('')
+  const [showPropositionInput, setShowPropositionInput] = useState(false)
+  const [newPropositionTitle, setNewPropositionTitle] = useState('')
+  const propositionInputRef = useRef<HTMLInputElement>(null)
   const [quickLinks, setQuickLinks] = useState<QuickLink[]>([])
   const [showQuickLinks, setShowQuickLinks] = useState(false)
   const [showMoodleModal, setShowMoodleModal] = useState(false)
@@ -1205,6 +1219,45 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    const storedPropositionsRaw = getStoredItem(PROPOSITION_STORAGE_KEY)
+    if (storedPropositionsRaw) {
+      try {
+        const parsed = JSON.parse(storedPropositionsRaw) as Record<string, unknown>
+        const normalized: Record<string, PropositionEntry[]> = {}
+        Object.entries(parsed).forEach(([key, value]) => {
+          if (!Array.isArray(value)) return
+          const entries = value
+            .map((item) => {
+              if (!item || typeof item !== 'object') return null
+              const record = item as Record<string, unknown>
+              const id = Number(record['id'])
+              const titleRaw = typeof record['title'] === 'string' ? record['title'].trim() : ''
+              if (!Number.isInteger(id) || id < 0) return null
+              if (!titleRaw) return null
+              return { id, title: titleRaw }
+            })
+            .filter((entry): entry is PropositionEntry => entry !== null)
+          if (entries.length) {
+            normalized[key] = entries
+          }
+        })
+        setPropositionsByPath(normalized)
+      } catch {}
+    }
+    const storedLastIdRaw = getStoredItem(PROPOSITION_LAST_ID_STORAGE_KEY)
+    if (storedLastIdRaw !== null) {
+      const parsedId = parseInt(storedLastIdRaw, 10)
+      if (!Number.isNaN(parsedId) && parsedId >= 0) {
+        setLastPropositionId(parsedId)
+      }
+    }
+    const storedBaseUrl = getStoredItem(PROPOSITION_BASE_URL_STORAGE_KEY)
+    if (storedBaseUrl !== null) {
+      setPropositionBaseUrl(storedBaseUrl)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!showMoodleModal) {
       setShowAddFolderForm(false)
       setMoodleError(null)
@@ -1317,6 +1370,40 @@ export default function Home() {
   useEffect(() => {
     setStoredItem("practice", JSON.stringify(practice))
   }, [practice])
+
+  useEffect(() => {
+    setStoredItem(
+      PROPOSITION_STORAGE_KEY,
+      JSON.stringify(propositionsByPath),
+    )
+  }, [propositionsByPath])
+
+  useEffect(() => {
+    setStoredItem(
+      PROPOSITION_LAST_ID_STORAGE_KEY,
+      lastPropositionId.toString(),
+    )
+  }, [lastPropositionId])
+
+  useEffect(() => {
+    setStoredItem(
+      PROPOSITION_BASE_URL_STORAGE_KEY,
+      propositionBaseUrl ? propositionBaseUrl : null,
+    )
+  }, [propositionBaseUrl])
+
+  useEffect(() => {
+    if (!showPropositionInput) return
+    const timer = window.setTimeout(() => {
+      propositionInputRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [showPropositionInput])
+
+  useEffect(() => {
+    setShowPropositionInput(false)
+    setNewPropositionTitle('')
+  }, [viewWeek])
 
   useEffect(() => {
     if (!mounted) return
@@ -1839,6 +1926,9 @@ export default function Home() {
   const selectedFiles = currentDirEntry.files
   const parentDirectory = currentDirEntry.parent
   const activeMoodlePath = (moodleTargetPath ?? viewWeek) ?? ''
+  const activePropositionPath = viewWeek ?? ''
+  const activePropositions = propositionsByPath[activePropositionPath] ?? []
+  const hasActivePropositions = activePropositions.length > 0
 
   const collectFiles = (path: string): PdfFile[] => {
     const entry = directoryTree[path]
@@ -1880,7 +1970,13 @@ export default function Home() {
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
-    (theoryFiles.length > 0 || practiceFiles.length > 0 || aggregatedChildSet.size > 0)
+    (
+      theoryFiles.length > 0 ||
+      practiceFiles.length > 0 ||
+      aggregatedChildSet.size > 0 ||
+      hasActivePropositions ||
+      showPropositionInput
+    )
 
   const renderFileList = (files: PdfFile[]) => (
     <ul className="space-y-1">
@@ -1905,6 +2001,47 @@ export default function Home() {
       ))}
     </ul>
   )
+
+  const handleCancelAddProposition = () => {
+    setShowPropositionInput(false)
+    setNewPropositionTitle('')
+  }
+
+  const handleOpenProposition = (entry: PropositionEntry) => {
+    const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
+    if (!normalizedBase) {
+      showToastMessage('error', 'Configura la URL base de proposiciones en ajustes.')
+      return
+    }
+    const targetUrl = `${normalizedBase}/proposicion/${entry.id}`
+    window.open(targetUrl, '_blank', 'noopener,noreferrer')
+  }
+
+  const handleCreateProposition = () => {
+    const trimmedTitle = newPropositionTitle.trim()
+    if (!trimmedTitle) {
+      showToastMessage('error', 'Ingresa un nombre para el subtema.')
+      return
+    }
+    const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
+    if (!normalizedBase) {
+      showToastMessage('error', 'Configura la URL base de proposiciones en ajustes.')
+      return
+    }
+    const nextId = lastPropositionId + 1
+    const creationUrl = `${normalizedBase}/nuevaproposicion/id=${nextId}?subtema=${encodeURIComponent(trimmedTitle)}`
+    window.open(creationUrl, '_blank', 'noopener,noreferrer')
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      return {
+        ...prev,
+        [activePropositionPath]: [...prevEntries, { id: nextId, title: trimmedTitle }],
+      }
+    })
+    setLastPropositionId(nextId)
+    setNewPropositionTitle('')
+    setShowPropositionInput(false)
+  }
 
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
@@ -2012,6 +2149,70 @@ export default function Home() {
                   renderFileList(practiceFiles)
                 ) : (
                   <p className="text-xs text-gray-500">Sin archivos</p>
+                )}
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase">Proposiciones</h3>
+                  <button
+                    type="button"
+                    className="rounded border border-gray-300 px-2 text-xs leading-6 dark:border-gray-600"
+                    onClick={() => {
+                      setNewPropositionTitle('')
+                      setShowPropositionInput(true)
+                      window.setTimeout(() => {
+                        propositionInputRef.current?.focus()
+                      }, 0)
+                    }}
+                    aria-label="Agregar proposición"
+                  >
+                    +
+                  </button>
+                </div>
+                {showPropositionInput && (
+                  <div className="mt-2 space-y-1">
+                    <input
+                      ref={propositionInputRef}
+                      value={newPropositionTitle}
+                      onChange={(event) => setNewPropositionTitle(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          handleCreateProposition()
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault()
+                          handleCancelAddProposition()
+                        }
+                      }}
+                      className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900"
+                      placeholder="Nombre del subtema"
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Presiona Enter para crear la proposición.
+                    </p>
+                  </div>
+                )}
+                {activePropositions.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {activePropositions.map((entry) => (
+                      <li key={entry.id}>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenProposition(entry)}
+                          className="text-left text-sm underline decoration-dotted hover:decoration-solid"
+                        >
+                          {entry.title}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : !showPropositionInput ? (
+                  <p className="mt-2 text-xs text-gray-500">Sin proposiciones</p>
+                ) : null}
+                {!propositionBaseUrl && !showPropositionInput && (
+                  <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                    Configura la URL base en ajustes para habilitar los enlaces.
+                  </p>
                 )}
               </div>
             </div>
@@ -2203,6 +2404,21 @@ export default function Home() {
             }}
           >
             Configurar modelo y promt
+          </button>
+          <button
+            className="block w-full text-left"
+            onClick={() => {
+              setShowSettings(false)
+              const input = window.prompt(
+                'Ingresa la URL base de proposiciones',
+                propositionBaseUrl || '',
+              )
+              if (input !== null) {
+                setPropositionBaseUrl(input.trim())
+              }
+            }}
+          >
+            Configurar Url de proposiciones
           </button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
