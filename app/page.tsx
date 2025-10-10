@@ -148,6 +148,7 @@ type QuickLink = {
 type PropositionEntry = {
   id: number
   title: string
+  slug: string
   read?: boolean
 }
 
@@ -163,6 +164,8 @@ const sortPropositions = (entries: PropositionEntry[]) => {
   })
   return [...unread, ...read]
 }
+
+const createPropositionSlug = (title: string) => encodeURIComponent(title)
 
 const QUICK_LINK_SLOT_COUNT = 6
 
@@ -1256,7 +1259,10 @@ export default function Home() {
                     : false
               if (!Number.isInteger(id) || id < 0) return null
               if (!titleRaw) return null
-              return { id, title: titleRaw, read }
+              const storedSlug =
+                typeof record['slug'] === 'string' ? record['slug'].trim() : ''
+              const slug = storedSlug || createPropositionSlug(titleRaw)
+              return { id, title: titleRaw, slug, read }
             })
             .filter((entry): entry is PropositionEntry => entry !== null)
           if (entries.length) {
@@ -2095,13 +2101,14 @@ export default function Home() {
       return
     }
     const nextId = lastPropositionId + 1
-    const creationUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(trimmedTitle)}`
+    const slug = createPropositionSlug(trimmedTitle)
+    const creationUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${slug}`
     window.open(creationUrl, '_blank', 'noopener,noreferrer')
     setPropositionsByPath((prev) => {
       const prevEntries = prev[activePropositionPath] ?? []
       const nextEntries = sortPropositions([
         ...prevEntries,
-        { id: nextId, title: trimmedTitle, read: false },
+        { id: nextId, title: trimmedTitle, slug, read: false },
       ])
       return {
         ...prev,
