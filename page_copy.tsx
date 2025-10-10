@@ -37,6 +37,7 @@ type MoodleFolderConfig = {
 
 const DB_NAME = "folder-handle-db"
 const STORE_NAME = "handles"
+const DEFAULT_DARK_MODE_START = 23
 
 const openHandleDB = () =>
   new Promise<IDBDatabase>((resolve, reject) => {
@@ -245,7 +246,7 @@ export default function Home() {
   const [pdfFullscreen, setPdfFullscreen] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showDarkModal, setShowDarkModal] = useState(false)
-  const [darkModeStart, setDarkModeStart] = useState(19)
+  const [darkModeStart, setDarkModeStart] = useState(DEFAULT_DARK_MODE_START)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
   // const [timerRunning, setTimerRunning] = useState(false)
@@ -856,9 +857,15 @@ export default function Home() {
   // theme and setup flag
   useEffect(() => {
     setMounted(true)
-    const storedStart = parseInt(localStorage.getItem('darkModeStart') || '19')
-    setDarkModeStart(storedStart)
-    applyTheme(storedStart)
+    const storedStartRaw = localStorage.getItem('darkModeStart')
+    const parsedStart = parseInt(
+      storedStartRaw ?? DEFAULT_DARK_MODE_START.toString(),
+    )
+    const normalizedStart = Number.isNaN(parsedStart)
+      ? DEFAULT_DARK_MODE_START
+      : parsedStart
+    setDarkModeStart(normalizedStart)
+    applyTheme(normalizedStart)
     const stored = localStorage.getItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)

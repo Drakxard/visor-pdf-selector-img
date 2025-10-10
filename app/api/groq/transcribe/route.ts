@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 
+import { DEFAULT_GROQ_PROMPT } from "@/lib/groq"
+
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 export const dynamic = "force-dynamic"
@@ -47,7 +49,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Las imágenes proporcionadas no son válidas." }, { status: 400 })
   }
 
-  const promptText = prompt.trim() || "Extrae el texto."
+  const promptText = prompt.trim() || DEFAULT_GROQ_PROMPT
 
   const results: string[] = []
 
