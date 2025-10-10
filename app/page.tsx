@@ -409,6 +409,7 @@ export default function Home() {
   const [propositionsByPath, setPropositionsByPath] = useState<Record<string, PropositionEntry[]>>({})
   const [lastPropositionId, setLastPropositionId] = useState(0)
   const [propositionBaseUrl, setPropositionBaseUrl] = useState('')
+  const [propositionsHydrated, setPropositionsHydrated] = useState(false)
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
   const propositionInputRef = useRef<HTMLInputElement>(null)
@@ -1255,6 +1256,7 @@ export default function Home() {
     if (storedBaseUrl !== null) {
       setPropositionBaseUrl(storedBaseUrl)
     }
+    setPropositionsHydrated(true)
   }, [])
 
   useEffect(() => {
@@ -1372,25 +1374,28 @@ export default function Home() {
   }, [practice])
 
   useEffect(() => {
+    if (!propositionsHydrated) return
     setStoredItem(
       PROPOSITION_STORAGE_KEY,
       JSON.stringify(propositionsByPath),
     )
-  }, [propositionsByPath])
+  }, [propositionsByPath, propositionsHydrated])
 
   useEffect(() => {
+    if (!propositionsHydrated) return
     setStoredItem(
       PROPOSITION_LAST_ID_STORAGE_KEY,
       lastPropositionId.toString(),
     )
-  }, [lastPropositionId])
+  }, [lastPropositionId, propositionsHydrated])
 
   useEffect(() => {
+    if (!propositionsHydrated) return
     setStoredItem(
       PROPOSITION_BASE_URL_STORAGE_KEY,
       propositionBaseUrl ? propositionBaseUrl : null,
     )
-  }, [propositionBaseUrl])
+  }, [propositionBaseUrl, propositionsHydrated])
 
   useEffect(() => {
     if (!showPropositionInput) return
