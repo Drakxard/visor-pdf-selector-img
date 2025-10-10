@@ -151,6 +151,11 @@ type PropositionEntry = {
   read?: boolean
 }
 
+const normalizePropositionTitle = (value: string) =>
+  value
+    .replace(/\s+/g, " ")
+    .trim()
+
 const sortPropositions = (entries: PropositionEntry[]) => {
   const unread: PropositionEntry[] = []
   const read: PropositionEntry[] = []
@@ -1246,7 +1251,10 @@ export default function Home() {
               if (!item || typeof item !== 'object') return null
               const record = item as Record<string, unknown>
               const id = Number(record['id'])
-              const titleRaw = typeof record['title'] === 'string' ? record['title'].trim() : ''
+              const titleRaw =
+                typeof record['title'] === 'string'
+                  ? normalizePropositionTitle(record['title'])
+                  : ''
               const readValue = record['read']
               const read =
                 typeof readValue === 'boolean'
@@ -2084,8 +2092,8 @@ export default function Home() {
   }
 
   const handleCreateProposition = () => {
-    const trimmedTitle = newPropositionTitle.trim()
-    if (!trimmedTitle) {
+    const normalizedTitle = normalizePropositionTitle(newPropositionTitle)
+    if (!normalizedTitle) {
       showToastMessage('error', 'Ingresa un nombre para el subtema.')
       return
     }
@@ -2095,13 +2103,13 @@ export default function Home() {
       return
     }
     const nextId = lastPropositionId + 1
-    const creationUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(trimmedTitle)}`
+    const creationUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(normalizedTitle)}`
     window.open(creationUrl, '_blank', 'noopener,noreferrer')
     setPropositionsByPath((prev) => {
       const prevEntries = prev[activePropositionPath] ?? []
       const nextEntries = sortPropositions([
         ...prevEntries,
-        { id: nextId, title: trimmedTitle, read: false },
+        { id: nextId, title: normalizedTitle, read: false },
       ])
       return {
         ...prev,
