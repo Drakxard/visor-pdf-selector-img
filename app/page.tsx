@@ -196,6 +196,7 @@ const DEFAULT_DARK_MODE_START = 23
 const PROPOSITION_STORAGE_KEY = 'propositionsByPath'
 const PROPOSITION_LAST_ID_STORAGE_KEY = 'propositionLastId'
 const PROPOSITION_BASE_URL_STORAGE_KEY = 'propositionBaseUrl'
+const PROPOSITION_READ_STATE_STORAGE_KEY = 'propositionReadState'
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -406,10 +407,14 @@ export default function Home() {
   const initialWeekAppliedRef = useRef(false)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const toastTimerRef = useRef<number | null>(null)
-  const [propositionsByPath, setPropositionsByPath] = useState<Record<string, PropositionEntry[]>>({})
+  const [propositionsByPath, setPropositionsByPath] =
+    useState<Record<string, PropositionEntry[]>>({})
   const [lastPropositionId, setLastPropositionId] = useState(0)
   const [propositionBaseUrl, setPropositionBaseUrl] = useState('')
   const [propositionsHydrated, setPropositionsHydrated] = useState(false)
+  const [propositionReadState, setPropositionReadState] = useState<
+    Record<string, Record<number, boolean>>
+  >({})
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
   const propositionInputRef = useRef<HTMLInputElement>(null)
@@ -1221,10 +1226,10 @@ export default function Home() {
 
   useEffect(() => {
     const storedPropositionsRaw = getStoredItem(PROPOSITION_STORAGE_KEY)
+    const normalizedPropositions: Record<string, PropositionEntry[]> = {}
     if (storedPropositionsRaw) {
       try {
         const parsed = JSON.parse(storedPropositionsRaw) as Record<string, unknown>
-        const normalized: Record<string, PropositionEntry[]> = {}
         Object.entries(parsed).forEach(([key, value]) => {
           if (!Array.isArray(value)) return
           const entries = value
@@ -1239,12 +1244,49 @@ export default function Home() {
             })
             .filter((entry): entry is PropositionEntry => entry !== null)
           if (entries.length) {
-            normalized[key] = entries
+            normalizedPropositions[key] = entries
           }
         })
-        setPropositionsByPath(normalized)
       } catch {}
     }
+    setPropositionsByPath(normalizedPropositions)
+
+    const storedReadRaw = getStoredItem(PROPOSITION_READ_STATE_STORAGE_KEY)
+    if (storedReadRaw) {
+      try {
+        const parsed = JSON.parse(storedReadRaw) as Record<string, unknown>
+        const normalizedRead: Record<string, Record<number, boolean>> = {}
+        Object.entries(parsed).forEach(([path, value]) => {
+          if (!value || typeof value !== 'object') return
+          const entries = normalizedPropositions[path] ?? []
+          if (entries.length === 0) return
+          const validIds = new Set(entries.map((entry) => entry.id))
+          const pathState: Record<number, boolean> = {}
+          Object.entries(value as Record<string, unknown>).forEach(
+            ([idKey, stateValue]) => {
+              const id = Number(idKey)
+              if (!Number.isInteger(id) || !validIds.has(id)) return
+              if (typeof stateValue === 'boolean') {
+                if (stateValue) pathState[id] = true
+                return
+              }
+              if (typeof stateValue === 'number') {
+                if (stateValue !== 0) pathState[id] = true
+                return
+              }
+              if (typeof stateValue === 'string') {
+                if (stateValue.toLowerCase() === 'true') pathState[id] = true
+              }
+            },
+          )
+          if (Object.keys(pathState).length > 0) {
+            normalizedRead[path] = pathState
+          }
+        })
+        setPropositionReadState(normalizedRead)
+      } catch {}
+    }
+
     const storedLastIdRaw = getStoredItem(PROPOSITION_LAST_ID_STORAGE_KEY)
     if (storedLastIdRaw !== null) {
       const parsedId = parseInt(storedLastIdRaw, 10)
@@ -1380,6 +1422,22 @@ export default function Home() {
       JSON.stringify(propositionsByPath),
     )
   }, [propositionsByPath, propositionsHydrated])
+
+  useEffect(() => {
+    if (!propositionsHydrated) return
+    const nonEmptyEntries = Object.entries(propositionReadState).filter(
+      ([, value]) => value && Object.keys(value).length > 0,
+    )
+    if (nonEmptyEntries.length === 0) {
+      setStoredItem(PROPOSITION_READ_STATE_STORAGE_KEY, null)
+      return
+    }
+    const normalized = Object.fromEntries(nonEmptyEntries)
+    setStoredItem(
+      PROPOSITION_READ_STATE_STORAGE_KEY,
+      JSON.stringify(normalized),
+    )
+  }, [propositionReadState, propositionsHydrated])
 
   useEffect(() => {
     if (!propositionsHydrated) return
@@ -1934,6 +1992,66 @@ export default function Home() {
   const activePropositionPath = viewWeek ?? ''
   const activePropositions = propositionsByPath[activePropositionPath] ?? []
   const hasActivePropositions = activePropositions.length > 0
+  const activePropositionReadState =
+    propositionReadState[activePropositionPath] ?? {}
+  const sortedActivePropositions = useMemo(() => {
+    if (activePropositions.length === 0) return []
+    const unread: PropositionEntry[] = []
+    const read: PropositionEntry[] = []
+    for (const entry of activePropositions) {
+      if (activePropositionReadState[entry.id]) {
+        read.push(entry)
+      } else {
+        unread.push(entry)
+      }
+    }
+    return [...unread, ...read]
+  }, [activePropositions, activePropositionReadState])
+  const readPropositionCount = activePropositions.reduce(
+    (count, entry) => count + (activePropositionReadState[entry.id] ? 1 : 0),
+    0,
+  )
+  const propositionCompletionIcon = (() => {
+    if (readPropositionCount === 0) return '⬜'
+    if (readPropositionCount === activePropositions.length) return '✔'
+    return '⬛'
+  })()
+  const propositionCompletionLabel = (() => {
+    if (activePropositions.length === 0) {
+      return 'Sin proposiciones disponibles'
+    }
+    if (readPropositionCount === activePropositions.length) {
+      return 'Todas las proposiciones leídas. Haz clic para marcarlas como no leídas.'
+    }
+    if (readPropositionCount === 0) {
+      return 'Ninguna proposición leída. Haz clic para marcarlas como leídas.'
+    }
+    return 'Algunas proposiciones leídas. Haz clic para marcarlas todas como leídas.'
+  })()
+  const handleToggleAllPropositions = useCallback(() => {
+    if (activePropositions.length === 0) return
+    setPropositionReadState((prev) => {
+      const pathState = prev[activePropositionPath] ?? {}
+      const shouldMarkAllRead = activePropositions.some(
+        (entry) => !pathState[entry.id],
+      )
+      if (shouldMarkAllRead) {
+        const nextPathState: Record<number, boolean> = {}
+        for (const entry of activePropositions) {
+          nextPathState[entry.id] = true
+        }
+        return {
+          ...prev,
+          [activePropositionPath]: nextPathState,
+        }
+      }
+      if (!(activePropositionPath in prev)) {
+        return prev
+      }
+      const { [activePropositionPath]: _removedPath, ...rest } = prev
+      return rest
+    })
+  }, [activePropositions, activePropositionPath])
 
   const collectFiles = (path: string): PdfFile[] => {
     const entry = directoryTree[path]
@@ -2019,6 +2137,19 @@ export default function Home() {
       return
     }
     const targetUrl = `${normalizedBase}/proposicion/${entry.id}`
+    setPropositionReadState((prev) => {
+      const pathState = prev[activePropositionPath] ?? {}
+      if (pathState[entry.id]) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activePropositionPath]: {
+          ...pathState,
+          [entry.id]: true,
+        },
+      }
+    })
     window.open(targetUrl, '_blank', 'noopener,noreferrer')
   }
 
@@ -2034,6 +2165,18 @@ export default function Home() {
         return rest
       }
       return { ...prev, [activePropositionPath]: nextEntries }
+    })
+    setPropositionReadState((prev) => {
+      const pathState = prev[activePropositionPath]
+      if (!pathState || !(entry.id in pathState)) {
+        return prev
+      }
+      const { [entry.id]: _removedEntry, ...rest } = pathState
+      if (Object.keys(rest).length === 0) {
+        const { [activePropositionPath]: _removedPath, ...restPaths } = prev
+        return restPaths
+      }
+      return { ...prev, [activePropositionPath]: rest }
     })
   }
 
@@ -2173,7 +2316,20 @@ export default function Home() {
               </div>
               <div>
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-gray-500 uppercase">Proposiciones</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase">
+                      Proposiciones
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={handleToggleAllPropositions}
+                      className="text-base leading-none"
+                      title={propositionCompletionLabel}
+                      aria-label={propositionCompletionLabel}
+                    >
+                      {propositionCompletionIcon}
+                    </button>
+                  </div>
                   <button
                     type="button"
                     className="rounded border border-gray-300 px-2 text-xs leading-6 dark:border-gray-600"
@@ -2212,22 +2368,26 @@ export default function Home() {
                     </p>
                   </div>
                 )}
-                {activePropositions.length > 0 ? (
+                {sortedActivePropositions.length > 0 ? (
                   <ul className="mt-2 space-y-1">
-                    {activePropositions.map((entry) => (
-                      <li
-                        key={entry.id}
-                        className="flex items-center justify-between gap-2"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleOpenProposition(entry)}
-                          className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
+                    {sortedActivePropositions.map((entry) => {
+                      const isRead = !!activePropositionReadState[entry.id]
+                      return (
+                        <li
+                          key={entry.id}
+                          className="flex items-center justify-between gap-2"
                         >
-                          {entry.title}
-                        </button>
-                        <button
-                          type="button"
+                          <button
+                            type="button"
+                            onClick={() => handleOpenProposition(entry)}
+                            className={`flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid ${
+                              isRead ? 'text-gray-400 line-through' : ''
+                            }`}
+                          >
+                            {entry.title}
+                          </button>
+                          <button
+                            type="button"
                           onClick={() => handleRemoveProposition(entry)}
                           className="text-sm text-gray-400 transition-colors hover:text-red-500"
                           aria-label={`Eliminar proposición ${entry.title}`}
@@ -2235,7 +2395,8 @@ export default function Home() {
                           ✕
                         </button>
                       </li>
-                    ))}
+                      )
+                    })}
                   </ul>
                 ) : !showPropositionInput ? (
                   <p className="mt-2 text-xs text-gray-500">Sin proposiciones</p>
