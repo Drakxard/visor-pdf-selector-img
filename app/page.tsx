@@ -4,6 +4,8 @@ import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } f
 import { useTheme } from "next-themes"
 import { usePathname, useRouter } from "next/navigation"
 
+import { DEFAULT_GROQ_MODEL, DEFAULT_GROQ_PROMPT } from "@/lib/groq"
+
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
 const normalizeSegment = (value: string) =>
@@ -185,7 +187,7 @@ type WeekOption = {
 
 const GROQ_CONFIG_STORAGE_KEY = 'groq-vision-config'
 const GROQ_MODEL_LIST_STORAGE_KEY = 'groq-vision-models'
-const DEFAULT_GROQ_PROMPT = 'Extrae el texto.'
+const DEFAULT_DARK_MODE_START = 23
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -375,14 +377,14 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [showDarkModal, setShowDarkModal] = useState(false)
   const [showGroqModal, setShowGroqModal] = useState(false)
-  const [groqModel, setGroqModel] = useState('')
+  const [groqModel, setGroqModel] = useState(DEFAULT_GROQ_MODEL)
   const [groqModels, setGroqModels] = useState<string[]>([])
   const [groqPrompt, setGroqPrompt] = useState(DEFAULT_GROQ_PROMPT)
   const [groqModelsError, setGroqModelsError] = useState<string | null>(null)
   const [groqModelError, setGroqModelError] = useState<string | null>(null)
   const [groqLoadingModels, setGroqLoadingModels] = useState(false)
   const [groqSaving, setGroqSaving] = useState(false)
-  const [darkModeStart, setDarkModeStart] = useState(19)
+  const [darkModeStart, setDarkModeStart] = useState(DEFAULT_DARK_MODE_START)
   const [configFound, setConfigFound] = useState<boolean | null>(null)
   const [canonicalSubjects, setCanonicalSubjects] = useState<string[]>([])
   // const [timerRunning, setTimerRunning] = useState(false)
@@ -444,7 +446,10 @@ export default function Home() {
           JSON.stringify({ models: nextModels, fetchedAt: Date.now() }),
         )
         if (!nextModels.includes(groqModel)) {
-          setGroqModel(nextModels[0] ?? '')
+          const fallbackModel = nextModels.includes(DEFAULT_GROQ_MODEL)
+            ? DEFAULT_GROQ_MODEL
+            : nextModels[0] ?? DEFAULT_GROQ_MODEL
+          setGroqModel(fallbackModel)
         }
         if (forceRefresh) {
           showToastMessage('success', 'Modelos sincronizados correctamente')
@@ -621,7 +626,9 @@ export default function Home() {
             typeof parsed.prompt === 'string' && parsed.prompt.trim()
               ? parsed.prompt
               : DEFAULT_GROQ_PROMPT
-          if (storedModel) setGroqModel(storedModel)
+          if (storedModel) {
+            setGroqModel(storedModel)
+          }
           setGroqPrompt(storedPrompt)
         }
       } catch (error) {
@@ -639,7 +646,10 @@ export default function Home() {
           if (cachedModels.length) {
             setGroqModels(cachedModels)
             if (!storedModel) {
-              setGroqModel(cachedModels[0])
+              const fallbackModel = cachedModels.includes(DEFAULT_GROQ_MODEL)
+                ? DEFAULT_GROQ_MODEL
+                : cachedModels[0] ?? DEFAULT_GROQ_MODEL
+              setGroqModel(fallbackModel)
             }
           }
         }
@@ -1163,9 +1173,15 @@ export default function Home() {
   // theme and setup flag
   useEffect(() => {
     setMounted(true)
-    const storedStart = parseInt(getStoredItem('darkModeStart') ?? '19')
-    setDarkModeStart(storedStart)
-    applyTheme(storedStart)
+    const storedStartRaw = getStoredItem('darkModeStart')
+    const parsedStart = parseInt(
+      storedStartRaw ?? DEFAULT_DARK_MODE_START.toString(),
+    )
+    const normalizedStart = Number.isNaN(parsedStart)
+      ? DEFAULT_DARK_MODE_START
+      : parsedStart
+    setDarkModeStart(normalizedStart)
+    applyTheme(normalizedStart)
     const stored = getStoredItem("setupComplete")
     if (!stored) {
       setSetupComplete(false)
