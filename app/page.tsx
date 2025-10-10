@@ -2012,6 +2012,24 @@ export default function Home() {
     setNewPropositionTitle('')
   }
 
+  const handleDeleteProposition = (entryId: number) => {
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      if (!prevEntries.some((entry) => entry.id === entryId)) return prev
+
+      const updatedEntries = prevEntries.filter((entry) => entry.id !== entryId)
+      const next = { ...prev }
+
+      if (updatedEntries.length > 0) {
+        next[activePropositionPath] = updatedEntries
+      } else {
+        delete next[activePropositionPath]
+      }
+
+      return next
+    })
+  }
+
   const handleOpenProposition = (entry: PropositionEntry) => {
     const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
     if (!normalizedBase) {
@@ -2200,13 +2218,24 @@ export default function Home() {
                 {activePropositions.length > 0 ? (
                   <ul className="mt-2 space-y-1">
                     {activePropositions.map((entry) => (
-                      <li key={entry.id}>
+                      <li
+                        key={entry.id}
+                        className="flex items-center justify-between gap-2"
+                      >
                         <button
                           type="button"
                           onClick={() => handleOpenProposition(entry)}
-                          className="text-left text-sm underline decoration-dotted hover:decoration-solid"
+                          className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
                         >
                           {entry.title}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteProposition(entry.id)}
+                          className="text-sm text-gray-400 transition hover:text-red-600"
+                          aria-label={`Eliminar proposición ${entry.title}`}
+                        >
+                          ×
                         </button>
                       </li>
                     ))}
