@@ -2022,6 +2022,21 @@ export default function Home() {
     window.open(targetUrl, '_blank', 'noopener,noreferrer')
   }
 
+  const handleRemoveProposition = (entry: PropositionEntry) => {
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      const nextEntries = prevEntries.filter((item) => item.id !== entry.id)
+      if (nextEntries.length === prevEntries.length) {
+        return prev
+      }
+      if (nextEntries.length === 0) {
+        const { [activePropositionPath]: _removed, ...rest } = prev
+        return rest
+      }
+      return { ...prev, [activePropositionPath]: nextEntries }
+    })
+  }
+
   const handleCreateProposition = () => {
     const trimmedTitle = newPropositionTitle.trim()
     if (!trimmedTitle) {
@@ -2200,13 +2215,24 @@ export default function Home() {
                 {activePropositions.length > 0 ? (
                   <ul className="mt-2 space-y-1">
                     {activePropositions.map((entry) => (
-                      <li key={entry.id}>
+                      <li
+                        key={entry.id}
+                        className="flex items-center justify-between gap-2"
+                      >
                         <button
                           type="button"
                           onClick={() => handleOpenProposition(entry)}
-                          className="text-left text-sm underline decoration-dotted hover:decoration-solid"
+                          className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
                         >
                           {entry.title}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveProposition(entry)}
+                          className="text-sm text-gray-400 transition-colors hover:text-red-500"
+                          aria-label={`Eliminar proposición ${entry.title}`}
+                        >
+                          ✕
                         </button>
                       </li>
                     ))}
