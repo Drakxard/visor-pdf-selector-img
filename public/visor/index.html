@@ -238,12 +238,6 @@
       background: rgba(32, 33, 36, 0.04);
       border-color: rgba(32, 33, 36, 0.12);
     }
-    .transcription-list {
-      margin: 0;
-      padding-left: 18px;
-      display: grid;
-      gap: 8px;
-    }
     .transcription-actions {
       display: flex;
       flex-wrap: wrap;
@@ -1777,7 +1771,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
-      function showTranscriptionModal(formattedText, items) {
+      function showTranscriptionModal(formattedText) {
         const modal = ensureTranscriptionModal();
         if (transcriptionOutput) {
           transcriptionOutput.innerHTML = `<strong>${escapeHtml(formattedText)}</strong>`;
@@ -2492,7 +2486,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
               } else {
                 showToast('No se pudo copiar automáticamente', 'warning');
               }
-              showTranscriptionModal(formatted, cleaned);
+              showTranscriptionModal(formatted);
             } catch (error) {
               console.error('Error transcribiendo selecciones:', error);
               const message =
