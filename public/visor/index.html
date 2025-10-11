@@ -906,7 +906,6 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       let loadingText = document.getElementById('loading-text');
       let transcriptionModal = null;
       let transcriptionOutput = null;
-      let transcriptionList = null;
       let transcriptionCopyButton = null;
 
       container.addEventListener('scroll', () => {
@@ -1742,10 +1741,6 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           transcriptionOutput.setAttribute('role', 'status');
           panel.appendChild(transcriptionOutput);
 
-          transcriptionList = document.createElement('ol');
-          transcriptionList.className = 'transcription-list';
-          panel.appendChild(transcriptionList);
-
           const actions = document.createElement('div');
           actions.className = 'transcription-actions';
           panel.appendChild(actions);
@@ -1798,14 +1793,6 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         if (transcriptionOutput) {
           transcriptionOutput.innerHTML = `<strong>${escapeHtml(formattedText)}</strong>`;
           transcriptionOutput.dataset.copyValue = formattedText;
-        }
-        if (transcriptionList) {
-          transcriptionList.innerHTML = '';
-          items.forEach((item, index) => {
-            const li = document.createElement('li');
-            li.innerHTML = `<strong>${index + 1}.</strong> ${escapeHtml(item)}`;
-            transcriptionList.appendChild(li);
-          });
         }
         modal.classList.add('show');
         transcriptionCopyButton?.focus({ preventScroll: true });
