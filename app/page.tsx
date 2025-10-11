@@ -1672,10 +1672,50 @@ export default function Home() {
           } catch {}
         }
       }
+      if (e.data?.type === 'viewerCreateProposition') {
+        const payload = e.data as {
+          id?: unknown
+          title?: unknown
+          path?: unknown
+        }
+        const rawTitle =
+          typeof payload.title === 'string' ? payload.title.trim() : ''
+        if (!rawTitle) return
+        let parsedId: number | null = null
+        if (typeof payload.id === 'number' && Number.isFinite(payload.id)) {
+          parsedId = Math.trunc(payload.id)
+        } else if (typeof payload.id === 'string') {
+          const candidate = parseInt(payload.id, 10)
+          if (!Number.isNaN(candidate)) {
+            parsedId = candidate
+          }
+        }
+        if (parsedId === null || parsedId < 0) return
+        const fallbackPath = viewWeek ?? currentPdf?.week ?? ''
+        const rawPath =
+          typeof payload.path === 'string' ? payload.path.trim() : ''
+        const normalizedPath = rawPath || fallbackPath
+        const id = parsedId
+        setPropositionsByPath((prev) => {
+          const prevEntries = prev[normalizedPath] ?? []
+          if (prevEntries.some((entry) => entry.id === id)) {
+            return prev
+          }
+          const nextEntries = sortPropositions([
+            ...prevEntries,
+            { id, title: rawTitle, read: false },
+          ])
+          return {
+            ...prev,
+            [normalizedPath]: nextEntries,
+          }
+        })
+        setLastPropositionId((prev) => (id > prev ? id : prev))
+      }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [currentPdf, pdfUrl, setScopedStoredItem])
+  }, [currentPdf, pdfUrl, setScopedStoredItem, viewWeek])
 
   // Global key: press 'a' (when not typing) to open current PDF in a new tab
   useEffect(() => {
@@ -2462,7 +2502,7 @@ export default function Home() {
                   title={viewerOpen ? 'Visor PDF' : 'Previsualización'}
                   src={`/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
                     currentPdf.file.name,
-                  )}&key=${encodeURIComponent(currentPdf.path)}`}
+                  )}&key=${encodeURIComponent(currentPdf.path)}&week=${encodeURIComponent(currentPdf.week ?? '')}`}
                   className="w-full h-full border-0"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
