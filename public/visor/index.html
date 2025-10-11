@@ -1722,19 +1722,8 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const title = document.createElement('h2');
           title.className = 'transcription-title';
           title.textContent = 'Transcripciones';
-          const subtitle = document.createElement('p');
-          subtitle.className = 'transcription-subtitle';
-          subtitle.textContent = 'Se copian automáticamente y puedes copiarlas de nuevo cuando lo necesites.';
           titleWrapper.appendChild(title);
-          titleWrapper.appendChild(subtitle);
           header.appendChild(titleWrapper);
-
-          const closeBtn = document.createElement('button');
-          closeBtn.type = 'button';
-          closeBtn.className = 'transcription-button';
-          closeBtn.textContent = 'Cerrar';
-          closeBtn.addEventListener('click', hideTranscriptionModal);
-          header.appendChild(closeBtn);
 
           transcriptionOutput = document.createElement('div');
           transcriptionOutput.className = 'transcription-output';
