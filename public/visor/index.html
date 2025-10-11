@@ -1828,7 +1828,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             }
             const normalizedBase = baseUrl.replace(/\/+$/, '');
             const nextId = getLastPropositionIdSetting() + 1;
-            const targetUrl = `${normalizedBase}/${nextId}=${encodeURIComponent(topic)}`;
+            const targetUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(topic)}`;
             window.open(targetUrl, '_blank', 'noopener,noreferrer');
             setLastPropositionIdSetting(nextId);
           });
@@ -1903,7 +1903,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           if (topicValue && baseUrl) {
             const normalizedBase = baseUrl.replace(/\/+$/, '');
             const previewId = getLastPropositionIdSetting() + 1;
-            const previewUrl = `${normalizedBase}/${previewId}=${encodeURIComponent(topicValue)}`;
+            const previewUrl = `${normalizedBase}/nuevaproposicion/${previewId}=${encodeURIComponent(topicValue)}`;
             transcriptionLinkButton.disabled = false;
             transcriptionLinkButton.title = previewUrl;
             transcriptionLinkButton.setAttribute('aria-label', `Abrir ${topicValue}`);
