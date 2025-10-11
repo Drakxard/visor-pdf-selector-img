@@ -1672,10 +1672,34 @@ export default function Home() {
           } catch {}
         }
       }
+      if (e.data?.type === 'createPropositionFromSelection') {
+        const incomingTitle =
+          typeof e.data?.title === 'string' ? e.data.title : ''
+        createPropositionFromSelection(incomingTitle)
+      }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [currentPdf, pdfUrl, setScopedStoredItem])
+  }, [
+    createPropositionFromSelection,
+    currentPdf,
+    pdfUrl,
+    setScopedStoredItem,
+  ])
+
+  useEffect(() => {
+    const frame = viewerRef.current?.contentWindow
+    if (!frame) return
+    const normalizedBase = propositionBaseUrl.trim()
+    frame.postMessage(
+      {
+        type: 'propositionConfig',
+        baseUrl: normalizedBase,
+        nextId: lastPropositionId + 1,
+      },
+      '*',
+    )
+  }, [lastPropositionId, propositionBaseUrl, viewerOpen])
 
   // Global key: press 'a' (when not typing) to open current PDF in a new tab
   useEffect(() => {
@@ -1966,6 +1990,52 @@ export default function Home() {
   const propositionToggleLabel = allPropositionsRead
     ? 'Marcar todas las proposiciones como no leídas'
     : 'Marcar todas las proposiciones como leídas'
+
+  const createPropositionFromSelection = useCallback(
+    (rawTitle: string) => {
+      const trimmedTitle = rawTitle.trim()
+      if (!trimmedTitle) {
+        showToastMessage('error', 'El título del subtema no puede estar vacío.')
+        return
+      }
+      const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
+      if (!normalizedBase) {
+        showToastMessage(
+          'error',
+          'Configura la URL base de proposiciones en ajustes.',
+        )
+        return
+      }
+      const nextId = lastPropositionId + 1
+      const creationUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(
+        trimmedTitle,
+      )}`
+      try {
+        window.open(creationUrl, '_blank', 'noopener,noreferrer')
+      } catch {}
+      setPropositionsByPath((prev) => {
+        const prevEntries = prev[activePropositionPath] ?? []
+        const nextEntries = sortPropositions([
+          ...prevEntries,
+          { id: nextId, title: trimmedTitle, read: false },
+        ])
+        return {
+          ...prev,
+          [activePropositionPath]: nextEntries,
+        }
+      })
+      setLastPropositionId(nextId)
+      showToastMessage('success', 'Subtema enviado al navegador.')
+    },
+    [
+      activePropositionPath,
+      lastPropositionId,
+      propositionBaseUrl,
+      setLastPropositionId,
+      setPropositionsByPath,
+      showToastMessage,
+    ],
+  )
 
   const collectFiles = (path: string): PdfFile[] => {
     const entry = directoryTree[path]
@@ -2453,12 +2523,19 @@ export default function Home() {
               ) : currentPdf.isPdf && pdfUrl ? (
                 <iframe
                   ref={viewerRef}
-                  onLoad={() =>
-                    viewerRef.current?.contentWindow?.postMessage(
-                      { type: 'setTheme', theme },
+                  onLoad={() => {
+                    const frame = viewerRef.current?.contentWindow
+                    if (!frame) return
+                    frame.postMessage({ type: 'setTheme', theme }, '*')
+                    frame.postMessage(
+                      {
+                        type: 'propositionConfig',
+                        baseUrl: propositionBaseUrl.trim(),
+                        nextId: lastPropositionId + 1,
+                      },
                       '*',
                     )
-                  }
+                  }}
                   title={viewerOpen ? 'Visor PDF' : 'Previsualización'}
                   src={`/visor/index.html?url=${encodeURIComponent(pdfUrl!)}&name=${encodeURIComponent(
                     currentPdf.file.name,
@@ -2470,12 +2547,19 @@ export default function Home() {
               ) : embedUrl ? (
                 <iframe
                   ref={viewerRef}
-                  onLoad={() =>
-                    viewerRef.current?.contentWindow?.postMessage(
-                      { type: 'setTheme', theme },
+                  onLoad={() => {
+                    const frame = viewerRef.current?.contentWindow
+                    if (!frame) return
+                    frame.postMessage({ type: 'setTheme', theme }, '*')
+                    frame.postMessage(
+                      {
+                        type: 'propositionConfig',
+                        baseUrl: propositionBaseUrl.trim(),
+                        nextId: lastPropositionId + 1,
+                      },
                       '*',
                     )
-                  }
+                  }}
                   title={viewerOpen ? 'Visor' : 'Previsualización'}
                   src={embedUrl}
                   className="w-full h-full border-0"

@@ -58,6 +58,8 @@
     body.light-mode .header-center { color: #202124; }
     .header-right { display: flex; align-items: center; gap: 8px; }
 
+    .hidden { display: none !important; }
+
     .control-btn {
       background: transparent; border: none; color: #e8eaed;
       padding: 8px; border-radius: 4px; cursor: pointer; font-size: 14px;
@@ -67,6 +69,23 @@
     .control-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     body.light-mode .control-btn { color: #202124; }
     body.light-mode .control-btn:hover { background: rgba(0,0,0,0.1); }
+
+    .control-btn.icon-only {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+    }
+
+    .control-btn.icon-only img {
+      width: 22px;
+      height: 22px;
+      object-fit: contain;
+      pointer-events: none;
+    }
 
 
     body.embedded #app-header { display: none; }
@@ -237,6 +256,18 @@
     body.light-mode .transcription-output {
       background: rgba(32, 33, 36, 0.04);
       border-color: rgba(32, 33, 36, 0.12);
+    }
+
+    .transcription-output .transcription-subject {
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .transcription-output pre {
+      margin: 0;
+      font-family: inherit;
+      white-space: pre-wrap;
     }
     .transcription-list {
       margin: 0;
@@ -536,6 +567,11 @@
       cursor: pointer;
     }
 
+    .selection-rect.instant-selection.title-selection {
+      border-color: #22c55e;
+      background: rgba(34, 197, 94, 0.18);
+    }
+
     /* Modal de categoría (Teoría/Práctica) reusa estilos de info-modal */
     .category-actions {
       display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 12px;
@@ -620,6 +656,10 @@
         <button class="control-btn" id="folder-btn" title="Configurar carpeta">⚙️</button>
       </div>
 
+      <button class="control-btn icon-only hidden" id="create-proposition-btn" title="Crear subtema">
+        <img src="images/subtema-link.svg" alt="Crear subtema">
+      </button>
+
       <button class="control-btn" id="theme-toggle" title="Cambiar tema">🌙</button>
       <button class="control-btn" id="info-btn" title="Ayuda">ℹ️</button>
     </div>
@@ -690,9 +730,11 @@
         <strong>🖼️ Capturas:</strong><br>
         • <kbd>Ctrl</kbd> + <kbd>I</kbd> para elegir {Teoría, Práctica} y marcar áreas<br>
         • 1er clic: esquina inicial, 2do clic: esquina opuesta (rectángulo)<br>
+        • La primera selección (verde) captura el título; las siguientes (celestes) se transcriben juntas<br>
         • Clic dentro de la selección para eliminarla<br>
         • <kbd>Ctrl</kbd> + <kbd>I</kbd> nuevamente para guardar todas las selecciones<br>
         • Se admite marcar en varias páginas<br>
+        • Usa el nuevo icono verde (arriba a la derecha) para crear el subtema con el título capturado<br>
         <small>Las imágenes se guardan en la carpeta elegida</small>
       </div>
     </div>
@@ -756,6 +798,7 @@
       // VARIABLES GLOBALES
       // ========================================
       const container = document.getElementById('pdf-container');
+      const propositionButton = document.getElementById('create-proposition-btn');
       let zoomLevel = 1;
 
       function applyZoom() {
@@ -840,6 +883,16 @@
           }
         } else if (e.data.type === 'toggleFullscreen') {
           toggleFullscreen();
+        } else if (e.data.type === 'propositionConfig') {
+          const base = typeof e.data.baseUrl === 'string' ? e.data.baseUrl.trim() : '';
+          const nextIdRaw = e.data.nextId;
+          const nextId = typeof nextIdRaw === 'number' && Number.isInteger(nextIdRaw) ? nextIdRaw : null;
+          propositionConfig = {
+            baseUrl: base,
+            nextId,
+            available: Boolean(base && nextId !== null),
+          };
+          updatePropositionButtonState();
         }
       });
 
@@ -1009,7 +1062,9 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       let focusStart = null;
       let focusPreview = null;
       let focusCancelTipShown = false;
-      let instantSelections = []; // { id, pageNum, xp1, yp1, xp2, yp2, layer, elem }
+      let instantSelections = []; // { id, pageNum, xp1, yp1, xp2, yp2, layer, elem, titleText, extracted, warned }
+      let instantTitleText = '';
+      let propositionConfig = { baseUrl: '', nextId: null, available: false };
 
       function updateFocusPreview(e) {
         if (!focusMode || !focusStart || !focusPreview) return;
@@ -1047,6 +1102,143 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         focusPreview = null;
         document.removeEventListener('mousemove', updateFocusPreview);
         if (toastText) showToast(toastText, 'info');
+      }
+
+      function updatePropositionButtonState() {
+        if (!propositionButton) return;
+        const title = (instantTitleText || '').trim();
+        const hasTitle = title.length > 0;
+        propositionButton.classList.toggle('hidden', !hasTitle);
+        if (!hasTitle) {
+          propositionButton.disabled = true;
+          propositionButton.title = 'Selecciona el título (área verde).';
+          return;
+        }
+        const preview = title.length > 60 ? `${title.slice(0, 57)}…` : title;
+        const hasConfig = propositionConfig?.available;
+        propositionButton.disabled = !hasConfig;
+        if (hasConfig && Number.isInteger(propositionConfig.nextId)) {
+          propositionButton.title = `Crear subtema (#${propositionConfig.nextId}): ${preview}`;
+        } else if (hasConfig) {
+          propositionButton.title = `Crear subtema: ${preview}`;
+        } else {
+          propositionButton.title = 'Configura la URL base de proposiciones en la app principal.';
+        }
+      }
+
+      function updateInstantSelectionClasses() {
+        instantSelections.forEach((selection, index) => {
+          const isTitle = index === 0;
+          selection.isTitle = isTitle;
+          if (selection.elem) {
+            selection.elem.classList.toggle('title-selection', isTitle);
+          }
+        });
+      }
+
+      async function extractTextFromSelectionArea(pageNum, xp1, yp1, xp2, yp2) {
+        if (!pdfDoc) return '';
+        try {
+          const page = await pdfDoc.getPage(pageNum);
+          const viewport = page.getViewport({ scale: 1 });
+          const textContent = await page.getTextContent({ normalizeWhitespace: true, includeMarkedContent: true });
+          const minX = Math.min(xp1, xp2) * viewport.width;
+          const maxX = Math.max(xp1, xp2) * viewport.width;
+          const minY = Math.min(yp1, yp2) * viewport.height;
+          const maxY = Math.max(yp1, yp2) * viewport.height;
+          const collected = [];
+          for (const item of textContent.items) {
+            if (!item || typeof item.str !== 'string') continue;
+            const str = item.str.trim();
+            if (!str) continue;
+            const transform = pdfjsLib.Util.transform(viewport.transform, item.transform);
+            const x = transform[4];
+            const y = transform[5];
+            const width = (item.width || 0) * viewport.scale;
+            const height = Math.max(1, Math.sqrt(transform[2] * transform[2] + transform[3] * transform[3]));
+            const itemMinX = x;
+            const itemMaxX = x + width;
+            const itemMaxY = y;
+            const itemMinY = y - height;
+            const overlaps =
+              itemMaxX >= minX &&
+              itemMinX <= maxX &&
+              itemMaxY >= minY &&
+              itemMinY <= maxY;
+            if (!overlaps) continue;
+            collected.push({ text: str, top: itemMinY, height });
+          }
+          if (!collected.length) return '';
+          collected.sort((a, b) => a.top - b.top);
+          let result = '';
+          let lastTop = null;
+          let lastHeight = null;
+          for (const item of collected) {
+            if (lastTop === null) {
+              result += item.text;
+            } else if (Math.abs(item.top - lastTop) > Math.max(item.height, lastHeight || 0, 6)) {
+              result += '\n' + item.text;
+            } else {
+              result += ' ' + item.text;
+            }
+            lastTop = item.top;
+            lastHeight = item.height;
+          }
+          return result.replace(/\s+\n/g, '\n').replace(/\n\s+/g, '\n').trim();
+        } catch (error) {
+          console.warn('No se pudo extraer texto del área verde:', error);
+          return '';
+        }
+      }
+
+      async function refreshInstantSelectionTitle(force = false) {
+        if (!instantSelections.length) {
+          instantTitleText = '';
+          updatePropositionButtonState();
+          return;
+        }
+        const first = instantSelections[0];
+        if (force) {
+          first.extracted = false;
+          first.titleText = '';
+          first.warned = false;
+        }
+        if (!first.extracted) {
+          const text = await extractTextFromSelectionArea(first.pageNum, first.xp1, first.yp1, first.xp2, first.yp2);
+          first.titleText = text || '';
+          first.extracted = true;
+        }
+        instantTitleText = (first.titleText || '').trim();
+        updatePropositionButtonState();
+        if (!instantTitleText) {
+          if (!first.warned) {
+            showToast('No se encontró texto en el área verde. Ajusta la selección.', 'info');
+            first.warned = true;
+          }
+          return;
+        }
+        first.warned = false;
+        const preview = instantTitleText.length > 80 ? `${instantTitleText.slice(0, 77)}…` : instantTitleText;
+        showNavIndicator(`Título: ${preview}`);
+      }
+
+      if (propositionButton) {
+        propositionButton.addEventListener('click', () => {
+          const title = (instantTitleText || '').trim();
+          if (!title) {
+            showToast('Selecciona primero el título (área verde).', 'info');
+            return;
+          }
+          if (!propositionConfig?.available) {
+            showToast('Configura la URL base de proposiciones en la app principal.', 'info');
+            return;
+          }
+          try {
+            window.parent.postMessage({ type: 'createPropositionFromSelection', title }, '*');
+          } catch (error) {
+            console.warn('No se pudo solicitar la creación de subtema:', error);
+          }
+        });
       }
 
       let theoryHandle = null;
@@ -1777,10 +1969,16 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
-      function showTranscriptionModal(formattedText, items) {
+      function showTranscriptionModal(formattedText, items, titleText = '') {
         const modal = ensureTranscriptionModal();
         if (transcriptionOutput) {
-          transcriptionOutput.innerHTML = `<strong>${escapeHtml(formattedText)}</strong>`;
+          const fragments = [];
+          const trimmedTitle = typeof titleText === 'string' ? titleText.trim() : '';
+          if (trimmedTitle) {
+            fragments.push(`<p class="transcription-subject">Subtema: ${escapeHtml(trimmedTitle)}</p>`);
+          }
+          fragments.push(`<pre>${escapeHtml(formattedText)}</pre>`);
+          transcriptionOutput.innerHTML = fragments.join('');
           transcriptionOutput.dataset.copyValue = formattedText;
         }
         modal.classList.add('show');
@@ -2470,6 +2668,10 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
               deactivateFocusMode('Selección cancelada');
               return;
             }
+            if (instantSelections.length === 1) {
+              showToast('Agrega al menos un área celeste además del título.', 'info');
+              return;
+            }
             let keepSelections = false;
             showOverlay('Transcribiendo selecciones…');
             try {
@@ -2485,14 +2687,15 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
                 showToast('No se recibieron transcripciones.', 'info');
                 return;
               }
-              const formatted = `{${cleaned.join(', ')}}`;
-              const copied = await copyTextToClipboard(formatted);
+              const joined = cleaned.join('\n');
+              const payload = JSON.stringify({ texto: joined }, null, 2);
+              const copied = await copyTextToClipboard(payload);
               if (copied) {
-                showToast('Transcripciones copiadas al portapapeles', 'success');
+                showToast('Transcripción copiada al portapapeles', 'success');
               } else {
                 showToast('No se pudo copiar automáticamente', 'warning');
               }
-              showTranscriptionModal(formatted, cleaned);
+              showTranscriptionModal(payload, cleaned, instantTitleText);
             } catch (error) {
               console.error('Error transcribiendo selecciones:', error);
               const message =
@@ -2510,8 +2713,8 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             return;
           }
           clearInstantSelections();
-          activateFocusMode('multi', 'Haz dos clics para seleccionar área');
-          showToast('Selecciona áreas con dos clics. Pulsa I nuevamente para transcribir con Groq.', 'info');
+          activateFocusMode('multi', 'Marca primero el título y después las áreas celestes');
+          showToast('Marca primero el título (verde) y luego las áreas celestes. Pulsa I nuevamente para transcribir.', 'info');
           return;
         }
 
@@ -3273,16 +3476,22 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       }
 
       function clearInstantSelections() {
-        if (!instantSelections.length) return;
+        if (!instantSelections.length) {
+          instantTitleText = '';
+          updatePropositionButtonState();
+          return;
+        }
         const affectedLayers = new Set();
         instantSelections.forEach(sel => {
           if (sel.elem?.parentNode) sel.elem.remove();
           if (sel.layer) affectedLayers.add(sel.layer);
         });
         instantSelections = [];
+        instantTitleText = '';
         affectedLayers.forEach((layer) => {
           if (layer && !layer.querySelector('.selection-rect')) layer.style.pointerEvents = 'none';
         });
+        updatePropositionButtonState();
       }
 
       function addInstantSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
@@ -3295,27 +3504,43 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         rect.dataset.yp2 = String(yp2);
         layer.appendChild(rect);
         layer.style.pointerEvents = 'auto';
+        const isFirstSelection = instantSelections.length === 0;
         rect.addEventListener('click', (e) => {
           e.stopPropagation();
           const idx = instantSelections.findIndex((s) => s.elem === rect);
           if (idx !== -1) instantSelections.splice(idx, 1);
           rect.remove();
           if (!layer.querySelector('.selection-rect')) layer.style.pointerEvents = 'none';
-          showToast('Área eliminada', 'info');
+          updateInstantSelectionClasses();
+          if (!instantSelections.length) {
+            instantTitleText = '';
+            updatePropositionButtonState();
+          }
+          refreshInstantSelectionTitle(idx === 0);
+          showToast(idx === 0 ? 'Título eliminado' : 'Área eliminada', 'info');
         });
 
         repositionSelectionsForLayer(layer);
 
         instantSelections.push({
           id: Date.now() + '_' + Math.random().toString(36).slice(2),
-          pageNum, xp1, yp1, xp2, yp2, layer, elem: rect
+          pageNum, xp1, yp1, xp2, yp2, layer, elem: rect,
+          titleText: '',
+          extracted: false,
+          warned: false,
         });
 
-        showNavIndicator('Área añadida (' + instantSelections.length + ')');
+        updateInstantSelectionClasses();
+        if (isFirstSelection) {
+          refreshInstantSelectionTitle(true);
+        } else {
+          showNavIndicator('Área añadida (' + (instantSelections.length - 1) + ')');
+          refreshInstantSelectionTitle();
+        }
       }
 
       async function transcribeInstantSelectionsWithGroq() {
-        if (!instantSelections.length) return [];
+        if (instantSelections.length <= 1) return [];
         if (!pdfDoc) return [];
         const config = getGroqVisionConfig();
         if (!config || !config.model) {
@@ -3328,7 +3553,8 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         const MAX_RENDER_SCALE = 10;
         const images = [];
 
-        for (const selection of instantSelections) {
+        const selectionsToProcess = instantSelections.slice(1);
+        for (const selection of selectionsToProcess) {
           const { pageNum, xp1, yp1, xp2, yp2 } = selection;
           const widthFrac = Math.abs(xp2 - xp1);
           const heightFrac = Math.abs(yp2 - yp1);
@@ -3380,7 +3606,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
 
         if (!images.length) {
-          showToast('No hay selecciones válidas para enviar.', 'info');
+          showToast('No hay selecciones celestes válidas para enviar.', 'info');
           return [];
         }
 
