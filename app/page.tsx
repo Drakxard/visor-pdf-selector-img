@@ -399,6 +399,7 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [showDarkModal, setShowDarkModal] = useState(false)
   const [showGroqModal, setShowGroqModal] = useState(false)
+  const [showPropositionModal, setShowPropositionModal] = useState(false)
   const [groqModel, setGroqModel] = useState(DEFAULT_GROQ_MODEL)
   const [groqModels, setGroqModels] = useState<string[]>([])
   const [groqPrompt, setGroqPrompt] = useState(DEFAULT_GROQ_PROMPT)
@@ -423,6 +424,7 @@ export default function Home() {
   const [propositionsByPath, setPropositionsByPath] = useState<Record<string, PropositionEntry[]>>({})
   const [lastPropositionId, setLastPropositionId] = useState(0)
   const [propositionBaseUrl, setPropositionBaseUrl] = useState('')
+  const [propositionBaseUrlDraft, setPropositionBaseUrlDraft] = useState('')
   const [propositionsHydrated, setPropositionsHydrated] = useState(false)
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
@@ -441,11 +443,66 @@ export default function Home() {
   const [newFolderName, setNewFolderName] = useState('')
   const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
   const [moodleTargetOptions, setMoodleTargetOptions] = useState<MoodleTargetOption[]>([])
+  const hasPropositions = useMemo(
+    () => Object.values(propositionsByPath).some((entries) => entries.length > 0),
+    [propositionsByPath],
+  )
   const showToastMessage = useCallback((type: 'success' | 'error', text: string) => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
     setToast({ type, text })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [])
+  const handleSavePropositionSettings = useCallback(() => {
+    const trimmed = propositionBaseUrlDraft.trim()
+    setPropositionBaseUrl(trimmed)
+    showToastMessage('success', 'Configuración de proposiciones guardada')
+    setShowPropositionModal(false)
+  }, [propositionBaseUrlDraft, showToastMessage])
+  const handleResetPropositionIds = useCallback(() => {
+    if (!hasPropositions) return
+    if (!window.confirm('Esto reiniciará los IDs de las proposiciones. ¿Deseas continuar?')) {
+      return
+    }
+    let newLastId = 0
+    setPropositionsByPath((prev) => {
+      const uniqueEntries = new Map<number, PropositionEntry>()
+      const ordered: PropositionEntry[] = []
+      Object.values(prev).forEach((entries) => {
+        entries.forEach((entry) => {
+          if (!uniqueEntries.has(entry.id)) {
+            uniqueEntries.set(entry.id, entry)
+            ordered.push(entry)
+          }
+        })
+      })
+      if (!ordered.length) {
+        newLastId = 0
+        return prev
+      }
+      const sortedUnique = [...ordered].sort((a, b) => a.id - b.id)
+      const idMapping = new Map<number, number>()
+      sortedUnique.forEach((entry, index) => {
+        idMapping.set(entry.id, index + 1)
+      })
+      newLastId = sortedUnique.length
+      let changed = false
+      const next: Record<string, PropositionEntry[]> = {}
+      Object.entries(prev).forEach(([path, entries]) => {
+        const nextEntries = entries.map((entry) => {
+          const mappedId = idMapping.get(entry.id)
+          if (!mappedId || mappedId === entry.id) {
+            return entry
+          }
+          changed = true
+          return { ...entry, id: mappedId }
+        })
+        next[path] = sortPropositions(nextEntries)
+      })
+      return changed ? next : prev
+    })
+    setLastPropositionId(newLastId)
+    showToastMessage('success', 'IDs de proposiciones reiniciados')
+  }, [hasPropositions, setPropositionsByPath, setLastPropositionId, showToastMessage])
   const fetchGroqModels = useCallback(
     async (forceRefresh = false) => {
       setGroqLoadingModels(true)
@@ -1279,6 +1336,11 @@ export default function Home() {
     }
     setPropositionsHydrated(true)
   }, [])
+
+  useEffect(() => {
+    if (!showPropositionModal) return
+    setPropositionBaseUrlDraft(propositionBaseUrl)
+  }, [propositionBaseUrl, showPropositionModal])
 
   useEffect(() => {
     if (!showMoodleModal) {
@@ -2580,16 +2642,10 @@ export default function Home() {
             className="block w-full text-left"
             onClick={() => {
               setShowSettings(false)
-              const input = window.prompt(
-                'Ingresa la URL base de proposiciones',
-                propositionBaseUrl || '',
-              )
-              if (input !== null) {
-                setPropositionBaseUrl(input.trim())
-              }
+              setShowPropositionModal(true)
             }}
           >
-            Configurar Url de proposiciones
+            Proposiciones
           </button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
@@ -2688,6 +2744,76 @@ export default function Home() {
             >
               {groqSaving ? 'Guardando…' : 'Guardar'}
             </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showPropositionModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        onClick={() => setShowPropositionModal(false)}
+      >
+        <div
+          className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Configurar proposiciones</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Define la URL base para crear y abrir proposiciones.
+              </p>
+            </div>
+            <button className="text-sm underline" onClick={() => setShowPropositionModal(false)}>
+              Cerrar
+            </button>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="proposition-base-url">
+              URL base
+            </label>
+            <input
+              id="proposition-base-url"
+              type="url"
+              value={propositionBaseUrlDraft}
+              onChange={(event) => setPropositionBaseUrlDraft(event.target.value)}
+              placeholder="https://example.com"
+              className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Se utilizará para abrir y crear nuevas proposiciones.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+            <button
+              type="button"
+              onClick={handleResetPropositionIds}
+              disabled={!hasPropositions}
+              className={`px-3 py-1 text-sm font-medium rounded border transition ${
+                hasPropositions
+                  ? 'border-red-200 text-red-600 hover:border-red-400 dark:border-red-400/40 dark:text-red-300'
+                  : 'cursor-not-allowed border-gray-200 text-gray-400 dark:border-gray-700 dark:text-gray-500'
+              }`}
+            >
+              Reset ids
+            </button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-1 border rounded text-sm dark:border-gray-600"
+                onClick={() => setShowPropositionModal(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1 rounded bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-500"
+                onClick={handleSavePropositionSettings}
+              >
+                Guardar
+              </button>
+            </div>
           </div>
         </div>
       </div>
