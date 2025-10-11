@@ -1,6 +1,15 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import {
+  DragEvent,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { useTheme } from "next-themes"
 import { usePathname, useRouter } from "next/navigation"
 
@@ -131,6 +140,19 @@ type PdfFile = {
   containerPath?: string
 }
 
+const determineDefaultTableType = (containerPath: string): 'theory' | 'practice' => {
+  const dirSegments = containerPath.split('/').filter(Boolean)
+  for (let i = dirSegments.length - 1; i >= 0; i--) {
+    if (isPracticeSegment(dirSegments[i])) {
+      return 'practice'
+    }
+    if (isTheorySegment(dirSegments[i])) {
+      return 'theory'
+    }
+  }
+  return 'theory'
+}
+
 type DirectoryEntry = {
   path: string
   name: string
@@ -149,6 +171,12 @@ type PropositionEntry = {
   id: number
   title: string
   read?: boolean
+}
+
+type NotebookEntry = {
+  id: string
+  name: string
+  url: string
 }
 
 const sortPropositions = (entries: PropositionEntry[]) => {
@@ -204,12 +232,20 @@ type WeekOption = {
   label: string
 }
 
+const generateNotebookId = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `notebook-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
 const GROQ_CONFIG_STORAGE_KEY = 'groq-vision-config'
 const GROQ_MODEL_LIST_STORAGE_KEY = 'groq-vision-models'
 const DEFAULT_DARK_MODE_START = 23
 const PROPOSITION_STORAGE_KEY = 'propositionsByPath'
 const PROPOSITION_LAST_ID_STORAGE_KEY = 'propositionLastId'
 const PROPOSITION_BASE_URL_STORAGE_KEY = 'propositionBaseUrl'
+const TABLE_TYPE_OVERRIDE_STORAGE_KEY = 'tableTypeOverrides'
+const FILE_ORDER_STORAGE_KEY = 'fileOrderOverrides'
+const NOTEBOOK_STORAGE_KEY = 'notebooksByPath'
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -380,6 +416,12 @@ export default function Home() {
   const [names, setNames] = useState<string[]>([])
   const [theory, setTheory] = useState<Record<string, string>>({})
   const [practice, setPractice] = useState<Record<string, string>>({})
+  const [tableTypeOverrides, setTableTypeOverrides] = useState<
+    Record<string, 'theory' | 'practice'>
+  >({})
+  const [fileOrderOverrides, setFileOrderOverrides] = useState<
+    Record<string, string[]>
+  >({})
   const [dirFiles, setDirFiles] = useState<File[]>([])
   const [dirPaths, setDirPaths] = useState<string[]>([])
   const [rootHandle, setRootHandle] = useState<FileSystemDirectoryHandle | null>(null)
@@ -429,6 +471,15 @@ export default function Home() {
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
   const propositionInputRef = useRef<HTMLInputElement>(null)
+  const [notebooksByPath, setNotebooksByPath] = useState<Record<string, NotebookEntry[]>>({})
+  const [notebooksHydrated, setNotebooksHydrated] = useState(false)
+  const [showNotebookInput, setShowNotebookInput] = useState(false)
+  const [newNotebookName, setNewNotebookName] = useState('')
+  const notebookInputRef = useRef<HTMLInputElement>(null)
+  const [creatingNotebook, setCreatingNotebook] = useState(false)
+  const [draggedFile, setDraggedFile] = useState<PdfFile | null>(null)
+  const [draggedSourceType, setDraggedSourceType] = useState<'theory' | 'practice' | null>(null)
+  const [draggedSourcePath, setDraggedSourcePath] = useState('')
   const [quickLinks, setQuickLinks] = useState<QuickLink[]>([])
   const [showQuickLinks, setShowQuickLinks] = useState(false)
   const [showMoodleModal, setShowMoodleModal] = useState(false)
@@ -1430,6 +1481,98 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    const storedOverrides = getStoredItem(TABLE_TYPE_OVERRIDE_STORAGE_KEY)
+    if (storedOverrides) {
+      try {
+        const parsed = JSON.parse(storedOverrides)
+        if (parsed && typeof parsed === 'object') {
+          const next: Record<string, 'theory' | 'practice'> = {}
+          Object.entries(parsed as Record<string, unknown>).forEach(([path, value]) => {
+            if (value === 'theory' || value === 'practice') {
+              next[path] = value
+            }
+          })
+          if (Object.keys(next).length) {
+            setTableTypeOverrides(next)
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to parse stored table type overrides', error)
+      }
+    }
+    const storedOrders = getStoredItem(FILE_ORDER_STORAGE_KEY)
+    if (storedOrders) {
+      try {
+        const parsed = JSON.parse(storedOrders)
+        if (parsed && typeof parsed === 'object') {
+          const next: Record<string, string[]> = {}
+          Object.entries(parsed as Record<string, unknown>).forEach(([key, value]) => {
+            if (!Array.isArray(value)) return
+            const filtered = value.filter((item): item is string => typeof item === 'string')
+            if (filtered.length) {
+              next[key] = filtered
+            }
+          })
+          if (Object.keys(next).length) {
+            setFileOrderOverrides(next)
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to parse stored file order overrides', error)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const storedNotebooks = getStoredItem(NOTEBOOK_STORAGE_KEY)
+    if (storedNotebooks) {
+      try {
+        const parsed = JSON.parse(storedNotebooks)
+        if (parsed && typeof parsed === 'object') {
+          const next: Record<string, NotebookEntry[]> = {}
+          Object.entries(parsed as Record<string, unknown>).forEach(([path, value]) => {
+            if (!Array.isArray(value)) return
+            const entries: NotebookEntry[] = []
+            value.forEach((item) => {
+              if (!item || typeof item !== 'object') return
+              const raw = item as Record<string, unknown>
+              const nameValue =
+                typeof raw.name === 'string' && raw.name.trim()
+                  ? raw.name.trim()
+                  : typeof raw.title === 'string' && raw.title.trim()
+                    ? raw.title.trim()
+                    : typeof raw.label === 'string' && raw.label.trim()
+                      ? raw.label.trim()
+                      : ''
+              const urlValue =
+                typeof raw.url === 'string' && raw.url.trim()
+                  ? raw.url.trim()
+                  : typeof raw.href === 'string' && raw.href.trim()
+                    ? raw.href.trim()
+                    : ''
+              if (!nameValue || !urlValue) return
+              const idValue =
+                typeof raw.id === 'string' && raw.id.trim()
+                  ? raw.id.trim()
+                  : generateNotebookId()
+              entries.push({ id: idValue, name: nameValue, url: urlValue })
+            })
+            if (entries.length) {
+              next[path] = entries
+            }
+          })
+          if (Object.keys(next).length) {
+            setNotebooksByPath(next)
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to parse stored notebooks', error)
+      }
+    }
+    setNotebooksHydrated(true)
+  }, [])
+
+  useEffect(() => {
     const storedQuickLinks = getStoredItem('quickLinks')
     if (!storedQuickLinks) return
     try {
@@ -1457,12 +1600,41 @@ export default function Home() {
   }, [practice])
 
   useEffect(() => {
+    setStoredItem(
+      TABLE_TYPE_OVERRIDE_STORAGE_KEY,
+      Object.keys(tableTypeOverrides).length
+        ? JSON.stringify(tableTypeOverrides)
+        : null,
+    )
+  }, [tableTypeOverrides])
+
+  useEffect(() => {
+    setStoredItem(
+      FILE_ORDER_STORAGE_KEY,
+      Object.keys(fileOrderOverrides).length
+        ? JSON.stringify(fileOrderOverrides)
+        : null,
+    )
+  }, [fileOrderOverrides])
+
+  useEffect(() => {
     if (!propositionsHydrated) return
     setStoredItem(
       PROPOSITION_STORAGE_KEY,
       JSON.stringify(propositionsByPath),
     )
   }, [propositionsByPath, propositionsHydrated])
+
+  useEffect(() => {
+    if (!notebooksHydrated) return
+    const cleaned = Object.fromEntries(
+      Object.entries(notebooksByPath).filter(([, entries]) => entries.length > 0),
+    )
+    setStoredItem(
+      NOTEBOOK_STORAGE_KEY,
+      Object.keys(cleaned).length ? JSON.stringify(cleaned) : null,
+    )
+  }, [notebooksByPath, notebooksHydrated])
 
   useEffect(() => {
     if (!propositionsHydrated) return
@@ -1491,6 +1663,20 @@ export default function Home() {
   useEffect(() => {
     setShowPropositionInput(false)
     setNewPropositionTitle('')
+  }, [viewWeek])
+
+  useEffect(() => {
+    if (!showNotebookInput) return
+    const timer = window.setTimeout(() => {
+      notebookInputRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [showNotebookInput])
+
+  useEffect(() => {
+    setShowNotebookInput(false)
+    setNewNotebookName('')
+    setCreatingNotebook(false)
   }, [viewWeek])
 
   useEffect(() => {
@@ -1564,12 +1750,14 @@ export default function Home() {
           break
         }
       }
+      const relativePath = parts.join("/")
+      const overrideType = tableTypeOverrides[relativePath]
       const item: PdfFile = {
         file,
-        path: parts.join("/"),
+        path: relativePath,
         week: subjectPath || dirPath,
         subject: subjectName,
-        tableType,
+        tableType: overrideType ?? tableType,
         isPdf,
         mediaType,
         containerPath,
@@ -1590,7 +1778,65 @@ export default function Home() {
     })
 
     setDirectoryTree(Object.fromEntries(map))
-  }, [dirFiles, dirPaths])
+  }, [dirFiles, dirPaths, tableTypeOverrides])
+
+  useEffect(() => {
+    const validPaths = new Set<string>()
+    Object.values(directoryTree).forEach((entry) => {
+      entry.files.forEach((file) => validPaths.add(file.path))
+    })
+    setTableTypeOverrides((prev) => {
+      const nextEntries = Object.entries(prev).filter(([path]) => validPaths.has(path))
+      if (nextEntries.length === Object.keys(prev).length) {
+        return prev
+      }
+      return Object.fromEntries(nextEntries)
+    })
+    setFileOrderOverrides((prev) => {
+      let changed = false
+      const next: Record<string, string[]> = {}
+      Object.entries(prev).forEach(([key, order]) => {
+        if (!Array.isArray(order) || order.length === 0) {
+          if (order && order.length) changed = true
+          return
+        }
+        const filtered: string[] = []
+        order.forEach((path) => {
+          if (validPaths.has(path) && !filtered.includes(path)) {
+            filtered.push(path)
+          } else if (!validPaths.has(path)) {
+            changed = true
+          }
+        })
+        if (filtered.length) {
+          if (filtered.length !== order.length) changed = true
+          next[key] = filtered
+        } else if (order.length) {
+          changed = true
+        }
+      })
+      if (!changed && Object.keys(next).length === Object.keys(prev).length) {
+        let same = true
+        for (const key of Object.keys(next)) {
+          const prevOrder = prev[key] ?? []
+          const nextOrder = next[key] ?? []
+          if (prevOrder.length !== nextOrder.length) {
+            same = false
+            break
+          }
+          for (let i = 0; i < nextOrder.length; i++) {
+            if (prevOrder[i] !== nextOrder[i]) {
+              same = false
+              break
+            }
+          }
+          if (!same) break
+        }
+        if (same) return prev
+      }
+      return next
+    })
+  }, [directoryTree])
 
   // compute queue from all pdfs
   useEffect(() => {
@@ -1931,30 +2177,6 @@ export default function Home() {
     [router],
   )
 
-  if (!mounted) return null
-
-  // configuration wizard
-  if (!setupComplete) {
-    switch (step) {
-      case 0: {
-        return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
-            <p>Paso 1: Selecciona la carpeta "gestor" (Enter para abrir)</p>
-            <button onClick={selectDirectory}>Cargar carpeta</button>
-          </main>
-        )
-      }
-      case 1: {
-        return (
-          <main className="min-h-screen flex items-center justify-center p-4">
-            <p>Buscando configuración previa...</p>
-          </main>
-        )
-      }
-    }
-  }
-
   const daysUntil = (pdf: PdfFile) => {
     const dayMap: Record<string, number> = {
       Lunes: 1,
@@ -2073,6 +2295,9 @@ export default function Home() {
   const unreadPropositions = activePropositions.filter((entry) => !entry.read).length
   const allPropositionsRead = hasActivePropositions && unreadPropositions === 0
   const anyPropositionRead = activePropositions.some((entry) => entry.read)
+  const activeNotebookPath = activePropositionPath
+  const activeNotebooks = notebooksByPath[activeNotebookPath] ?? []
+  const hasActiveNotebooks = activeNotebooks.length > 0
   const propositionStatusIcon = allPropositionsRead
     ? '✔'
     : anyPropositionRead
@@ -2107,18 +2332,37 @@ export default function Home() {
     (file) => file.tableType === 'practice',
   )
 
-  const collectAndSort = (paths: string[], direct: PdfFile[]) => {
+  const collectAndSort = (paths: string[], direct: PdfFile[], orderKey: string) => {
     const combined = [...direct, ...paths.flatMap((path) => collectFiles(path))]
-    return combined.sort((a, b) =>
-      a.file.name.localeCompare(b.file.name, undefined, {
+    const orderList = fileOrderOverrides[orderKey] ?? []
+    const orderMap = new Map<string, number>()
+    orderList.forEach((path, index) => {
+      if (!orderMap.has(path)) {
+        orderMap.set(path, index)
+      }
+    })
+    return combined.sort((a, b) => {
+      const aIndex = orderMap.has(a.path)
+        ? (orderMap.get(a.path) as number)
+        : Number.POSITIVE_INFINITY
+      const bIndex = orderMap.has(b.path)
+        ? (orderMap.get(b.path) as number)
+        : Number.POSITIVE_INFINITY
+      if (aIndex !== bIndex) {
+        return aIndex - bIndex
+      }
+      return a.file.name.localeCompare(b.file.name, undefined, {
         numeric: true,
         sensitivity: 'base',
-      }),
-    )
+      })
+    })
   }
 
-  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles)
-  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles)
+  const buildOrderKey = (path: string, type: 'theory' | 'practice') => `${path || ''}::${type}`
+  const theoryOrderKey = buildOrderKey(currentDirEntry.path || '', 'theory')
+  const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
+  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles, theoryOrderKey)
+  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles, practiceOrderKey)
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
@@ -2127,8 +2371,162 @@ export default function Home() {
       practiceFiles.length > 0 ||
       aggregatedChildSet.size > 0 ||
       hasActivePropositions ||
-      showPropositionInput
+      showPropositionInput ||
+      hasActiveNotebooks ||
+      showNotebookInput
     )
+
+  const handleDragStart = (file: PdfFile, type: 'theory' | 'practice') =>
+    (event: DragEvent<HTMLLIElement>) => {
+      setDraggedFile(file)
+      setDraggedSourceType(type)
+      setDraggedSourcePath(currentDirEntry.path || '')
+      try {
+        event.dataTransfer.setData('text/plain', file.path)
+      } catch {}
+      event.dataTransfer.effectAllowed = 'move'
+    }
+
+  const handleDragEnd = () => {
+    setDraggedFile(null)
+    setDraggedSourceType(null)
+    setDraggedSourcePath('')
+  }
+
+  const handleItemDragOver = (event: DragEvent<HTMLLIElement>) => {
+    if (!draggedFile) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  const applyDropResult = (type: 'theory' | 'practice', orderedPaths: string[]) => {
+    if (!draggedFile || !draggedSourceType) return
+    if (draggedSourcePath !== (currentDirEntry.path || '')) {
+      handleDragEnd()
+      return
+    }
+    const uniqueOrderedPaths = orderedPaths.filter((path, index, arr) => {
+      const firstIndex = arr.indexOf(path)
+      return firstIndex === index
+    })
+    if (!uniqueOrderedPaths.includes(draggedFile.path)) {
+      uniqueOrderedPaths.push(draggedFile.path)
+    }
+    const targetKey = buildOrderKey(currentDirEntry.path || '', type)
+    const sourceKey = buildOrderKey(draggedSourcePath, draggedSourceType)
+    setFileOrderOverrides((prev) => {
+      const next: Record<string, string[]> = { ...prev }
+      if (uniqueOrderedPaths.length) {
+        next[targetKey] = uniqueOrderedPaths
+      } else {
+        delete next[targetKey]
+      }
+      if (sourceKey !== targetKey && prev[sourceKey]) {
+        const filtered = prev[sourceKey].filter((path) => path !== draggedFile.path)
+        if (filtered.length) {
+          next[sourceKey] = filtered
+        } else {
+          delete next[sourceKey]
+        }
+      }
+      return next
+    })
+    setTableTypeOverrides((prev) => {
+      const defaultType = determineDefaultTableType(draggedFile.containerPath ?? '')
+      if (type === defaultType) {
+        if (!(draggedFile.path in prev)) return prev
+        const { [draggedFile.path]: _removed, ...rest } = prev
+        return rest
+      }
+      if (prev[draggedFile.path] === type) return prev
+      return { ...prev, [draggedFile.path]: type }
+    })
+    handleDragEnd()
+  }
+
+  const handleDropOnItem = (targetFile: PdfFile, type: 'theory' | 'practice') =>
+    (event: DragEvent<HTMLLIElement>) => {
+      if (!draggedFile || !draggedSourceType) return
+      if (draggedSourcePath !== (currentDirEntry.path || '')) {
+        handleDragEnd()
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      const list = (type === 'theory' ? theoryFiles : practiceFiles)
+        .map((file) => file.path)
+        .filter((path) => path !== draggedFile.path)
+      let targetIndex = list.indexOf(targetFile.path)
+      if (targetIndex < 0) {
+        list.push(targetFile.path)
+        targetIndex = list.length - 1
+      }
+      const rect = (event.currentTarget as HTMLLIElement).getBoundingClientRect()
+      const offset = event.clientY - rect.top
+      if (offset > rect.height / 2) {
+        targetIndex += 1
+      }
+      list.splice(targetIndex, 0, draggedFile.path)
+      applyDropResult(type, list)
+    }
+
+  const handleListDragOver = (event: DragEvent<HTMLUListElement>) => {
+    if (!draggedFile) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleListDrop = (type: 'theory' | 'practice') =>
+    (event: DragEvent<HTMLUListElement>) => {
+      if (!draggedFile || !draggedSourceType) return
+      if (draggedSourcePath !== (currentDirEntry.path || '')) {
+        handleDragEnd()
+        return
+      }
+      event.preventDefault()
+      const currentPaths = (type === 'theory' ? theoryFiles : practiceFiles).map(
+        (file) => file.path,
+      )
+      if (!currentPaths.includes(draggedFile.path)) {
+        currentPaths.push(draggedFile.path)
+      }
+      applyDropResult(type, currentPaths)
+    }
+
+  const renderCategorizedFileList = (files: PdfFile[], type: 'theory' | 'practice') => (
+    <ul
+      className="space-y-1"
+      onDragOver={handleListDragOver}
+      onDrop={handleListDrop(type)}
+    >
+      {files.map((p) => (
+        <li
+          key={p.path}
+          className={`flex items-center gap-2 ${
+            completed[p.path] ? 'line-through text-gray-400' : ''
+          } ${draggedFile?.path === p.path ? 'opacity-60' : ''}`}
+          draggable
+          onDragStart={handleDragStart(p, type)}
+          onDragEnd={handleDragEnd}
+          onDragOver={handleItemDragOver}
+          onDrop={handleDropOnItem(p, type)}
+        >
+          <span
+            className="flex-1 truncate cursor-pointer"
+            title={p.file.name}
+            onClick={() => handleSelectFile(p)}
+          >
+            {p.file.name}
+            {p.mediaType === 'video' && (
+              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+            )}
+          </span>
+          <span className="text-xs text-gray-400">⋮⋮</span>
+        </li>
+      ))}
+    </ul>
+  )
 
   const renderFileList = (files: PdfFile[]) => (
     <ul className="space-y-1">
@@ -2245,6 +2643,122 @@ export default function Home() {
     })
   }
 
+  const handleCancelAddNotebook = () => {
+    setShowNotebookInput(false)
+    setNewNotebookName('')
+  }
+
+  const handleCreateNotebook = useCallback(async () => {
+    if (creatingNotebook) return
+    const trimmedName = newNotebookName.trim()
+    if (!trimmedName) {
+      showToastMessage('error', 'Ingresa un nombre para el cuaderno.')
+      return
+    }
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard ||
+      typeof navigator.clipboard.readText !== 'function'
+    ) {
+      showToastMessage('error', 'No se puede acceder al portapapeles.')
+      return
+    }
+    setCreatingNotebook(true)
+    try {
+      const clipboardText = await navigator.clipboard.readText()
+      const url = clipboardText.trim()
+      if (!url) {
+        showToastMessage('error', 'El portapapeles no contiene un enlace.')
+        return
+      }
+      if (!/^https?:\/\//i.test(url)) {
+        showToastMessage('error', 'El enlace debe comenzar con http:// o https://.')
+        return
+      }
+      const entry: NotebookEntry = {
+        id: generateNotebookId(),
+        name: trimmedName,
+        url,
+      }
+      setNotebooksByPath((prev) => {
+        const prevEntries = prev[activeNotebookPath] ?? []
+        const nextEntries = [...prevEntries, entry]
+        return {
+          ...prev,
+          [activeNotebookPath]: nextEntries,
+        }
+      })
+      setShowNotebookInput(false)
+      setNewNotebookName('')
+      showToastMessage('success', 'Cuaderno agregado')
+    } catch (error) {
+      console.error('Failed to read clipboard', error)
+      showToastMessage('error', 'No se pudo leer el portapapeles.')
+    } finally {
+      setCreatingNotebook(false)
+    }
+  }, [
+    activeNotebookPath,
+    creatingNotebook,
+    newNotebookName,
+    setNotebooksByPath,
+    showToastMessage,
+  ])
+
+  const handleRemoveNotebook = useCallback(
+    (entry: NotebookEntry) => {
+      setNotebooksByPath((prev) => {
+        const prevEntries = prev[activeNotebookPath] ?? []
+        const nextEntries = prevEntries.filter((item) => item.id !== entry.id)
+        if (nextEntries.length === prevEntries.length) {
+          return prev
+        }
+        if (nextEntries.length === 0) {
+          const { [activeNotebookPath]: _removed, ...rest } = prev
+          return rest
+        }
+        return {
+          ...prev,
+          [activeNotebookPath]: nextEntries,
+        }
+      })
+    },
+    [activeNotebookPath],
+  )
+
+  const handleOpenNotebook = useCallback((entry: NotebookEntry) => {
+    try {
+      window.open(entry.url, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      console.error('Failed to open notebook link', error)
+      showToastMessage('error', 'No se pudo abrir el cuaderno en una nueva pestaña.')
+    }
+  }, [showToastMessage])
+
+  if (!mounted) return null
+
+  // configuration wizard
+  if (!setupComplete) {
+    switch (step) {
+      case 0: {
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
+            <p>Paso 1: Selecciona la carpeta "gestor" (Enter para abrir)</p>
+            <button onClick={selectDirectory}>Cargar carpeta</button>
+          </main>
+        )
+      }
+      case 1: {
+        return (
+          <main className="min-h-screen flex items-center justify-center p-4">
+            <p>Buscando configuración previa...</p>
+          </main>
+        )
+      }
+    }
+  }
+
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
     const name = segments.length ? segments[segments.length - 1] : path || "Inicio"
@@ -2340,7 +2854,7 @@ export default function Home() {
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Teoría</h3>
                 {theoryFiles.length ? (
-                  renderFileList(theoryFiles)
+                  renderCategorizedFileList(theoryFiles, 'theory')
                 ) : (
                   <p className="text-xs text-gray-500">Sin archivos</p>
                 )}
@@ -2348,7 +2862,7 @@ export default function Home() {
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
                 {practiceFiles.length ? (
-                  renderFileList(practiceFiles)
+                  renderCategorizedFileList(practiceFiles, 'practice')
                 ) : (
                   <p className="text-xs text-gray-500">Sin archivos</p>
                 )}
@@ -2447,6 +2961,78 @@ export default function Home() {
                     Configura la URL base en ajustes para habilitar los enlaces.
                   </p>
                 )}
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase">
+                    Cuadernos
+                  </h3>
+                  <button
+                    type="button"
+                    className="rounded border border-gray-300 px-2 text-xs leading-6 dark:border-gray-600"
+                    onClick={() => {
+                      setNewNotebookName('')
+                      setShowNotebookInput(true)
+                    }}
+                    aria-label="Agregar cuaderno"
+                  >
+                    +
+                  </button>
+                </div>
+                {showNotebookInput && (
+                  <div className="mt-2 space-y-1">
+                    <input
+                      ref={notebookInputRef}
+                      value={newNotebookName}
+                      onChange={(event) => setNewNotebookName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void handleCreateNotebook()
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault()
+                          handleCancelAddNotebook()
+                        }
+                      }}
+                      className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900"
+                      placeholder="Nombre del cuaderno"
+                      disabled={creatingNotebook}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {creatingNotebook
+                        ? 'Leyendo portapapeles...'
+                        : 'Copia el enlace del cuaderno y presiona Enter para guardarlo.'}
+                    </p>
+                  </div>
+                )}
+                {activeNotebooks.length > 0 ? (
+                  <ul className="mt-2 space-y-1">
+                    {activeNotebooks.map((entry) => (
+                      <li
+                        key={entry.id}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => handleOpenNotebook(entry)}
+                          className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
+                        >
+                          {entry.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveNotebook(entry)}
+                          className="text-sm text-gray-400 transition-colors hover:text-red-500"
+                          aria-label={`Eliminar cuaderno ${entry.name}`}
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : !showNotebookInput ? (
+                  <p className="mt-2 text-xs text-gray-500">Sin cuadernos</p>
+                ) : null}
               </div>
             </div>
           ) : selectedFiles.length > 0 ? (
