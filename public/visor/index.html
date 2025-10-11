@@ -3630,15 +3630,37 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           : [];
         const detailTexts = transcriptions
           .map((entry) => {
-            const trimmed = entry.trim();
-            if (!trimmed) return '';
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
-                return parsed.texto.trim();
-              }
-            } catch {}
-            return trimmed;
+            let current = entry.trim();
+            if (!current) return '';
+
+            for (let depth = 0; depth < 3; depth++) {
+              try {
+                const parsed = JSON.parse(current);
+                if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
+                  return parsed.texto.trim();
+                }
+                if (typeof parsed === 'string') {
+                  const next = parsed.trim();
+                  if (next === current) break;
+                  current = next;
+                  continue;
+                }
+              } catch {}
+              break;
+            }
+
+            const match = current.match(/^\{\s*"texto"\s*:\s*"([\s\S]*)"\s*\}$/);
+            if (match) {
+              const rawValue = match[1]
+                .replace(/\\n/g, '\n')
+                .replace(/\\r/g, '\r')
+                .replace(/\\t/g, '\t')
+                .replace(/\\"/g, '"')
+                .replace(/\\\\/g, '\\');
+              return rawValue.trim();
+            }
+
+            return current;
           })
           .filter((value) => value.length);
         return { topicText, detailTexts };
