@@ -906,7 +906,6 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       let loadingText = document.getElementById('loading-text');
       let transcriptionModal = null;
       let transcriptionOutput = null;
-      let transcriptionList = null;
       let transcriptionCopyButton = null;
 
       container.addEventListener('scroll', () => {
@@ -1723,28 +1722,13 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const title = document.createElement('h2');
           title.className = 'transcription-title';
           title.textContent = 'Transcripciones';
-          const subtitle = document.createElement('p');
-          subtitle.className = 'transcription-subtitle';
-          subtitle.textContent = 'Se copian automáticamente y puedes copiarlas de nuevo cuando lo necesites.';
           titleWrapper.appendChild(title);
-          titleWrapper.appendChild(subtitle);
           header.appendChild(titleWrapper);
-
-          const closeBtn = document.createElement('button');
-          closeBtn.type = 'button';
-          closeBtn.className = 'transcription-button';
-          closeBtn.textContent = 'Cerrar';
-          closeBtn.addEventListener('click', hideTranscriptionModal);
-          header.appendChild(closeBtn);
 
           transcriptionOutput = document.createElement('div');
           transcriptionOutput.className = 'transcription-output';
           transcriptionOutput.setAttribute('role', 'status');
           panel.appendChild(transcriptionOutput);
-
-          transcriptionList = document.createElement('ol');
-          transcriptionList.className = 'transcription-list';
-          panel.appendChild(transcriptionList);
 
           const actions = document.createElement('div');
           actions.className = 'transcription-actions';
@@ -1798,14 +1782,6 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         if (transcriptionOutput) {
           transcriptionOutput.innerHTML = `<strong>${escapeHtml(formattedText)}</strong>`;
           transcriptionOutput.dataset.copyValue = formattedText;
-        }
-        if (transcriptionList) {
-          transcriptionList.innerHTML = '';
-          items.forEach((item, index) => {
-            const li = document.createElement('li');
-            li.innerHTML = `<strong>${index + 1}.</strong> ${escapeHtml(item)}`;
-            transcriptionList.appendChild(li);
-          });
         }
         modal.classList.add('show');
         transcriptionCopyButton?.focus({ preventScroll: true });
