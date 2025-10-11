@@ -2177,30 +2177,6 @@ export default function Home() {
     [router],
   )
 
-  if (!mounted) return null
-
-  // configuration wizard
-  if (!setupComplete) {
-    switch (step) {
-      case 0: {
-        return (
-          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
-            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
-            <p>Paso 1: Selecciona la carpeta "gestor" (Enter para abrir)</p>
-            <button onClick={selectDirectory}>Cargar carpeta</button>
-          </main>
-        )
-      }
-      case 1: {
-        return (
-          <main className="min-h-screen flex items-center justify-center p-4">
-            <p>Buscando configuración previa...</p>
-          </main>
-        )
-      }
-    }
-  }
-
   const daysUntil = (pdf: PdfFile) => {
     const dayMap: Record<string, number> = {
       Lunes: 1,
@@ -2758,6 +2734,30 @@ export default function Home() {
       showToastMessage('error', 'No se pudo abrir el cuaderno en una nueva pestaña.')
     }
   }, [showToastMessage])
+
+  if (!mounted) return null
+
+  // configuration wizard
+  if (!setupComplete) {
+    switch (step) {
+      case 0: {
+        return (
+          <main className="min-h-screen flex flex-col items-center justify-center gap-4 p-4">
+            <h1 className="text-xl">Comencemos a configurar el entorno</h1>
+            <p>Paso 1: Selecciona la carpeta "gestor" (Enter para abrir)</p>
+            <button onClick={selectDirectory}>Cargar carpeta</button>
+          </main>
+        )
+      }
+      case 1: {
+        return (
+          <main className="min-h-screen flex items-center justify-center p-4">
+            <p>Buscando configuración previa...</p>
+          </main>
+        )
+      }
+    }
+  }
 
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
