@@ -1,6 +1,15 @@
 "use client"
 
-import { FormEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import {
+  DragEvent,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { useTheme } from "next-themes"
 import { usePathname, useRouter } from "next/navigation"
 
@@ -151,6 +160,12 @@ type PropositionEntry = {
   read?: boolean
 }
 
+type NotebookEntry = {
+  id: string
+  title: string
+  url: string
+}
+
 const sortPropositions = (entries: PropositionEntry[]) => {
   const unread: PropositionEntry[] = []
   const read: PropositionEntry[] = []
@@ -198,6 +213,10 @@ const DEFAULT_SUBJECT_QUICK_LINKS: QuickLink[] = [
     url: "/practica/poo",
   },
 ]
+
+const FILE_CATEGORY_STORAGE_KEY = "fileCategoryOverrides"
+const FILE_ORDER_STORAGE_KEY = "fileOrderOverrides"
+const NOTEBOOK_STORAGE_KEY = "notebooks"
 
 type WeekOption = {
   path: string
@@ -429,6 +448,19 @@ export default function Home() {
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
   const propositionInputRef = useRef<HTMLInputElement>(null)
+  const [fileCategoryOverrides, setFileCategoryOverrides] = useState<
+    Record<string, 'theory' | 'practice'>
+  >({})
+  const [fileOrderOverrides, setFileOrderOverrides] = useState<Record<string, string[]>>({})
+  const [draggedFile, setDraggedFile] = useState<
+    { path: string; sourceType: 'theory' | 'practice' } | null
+  >(null)
+  const [dragOverItem, setDragOverItem] = useState<string | null>(null)
+  const [dragOverList, setDragOverList] = useState<'theory' | 'practice' | null>(null)
+  const [notebooksByPath, setNotebooksByPath] = useState<Record<string, NotebookEntry[]>>({})
+  const [showNotebookInput, setShowNotebookInput] = useState(false)
+  const [newNotebookTitle, setNewNotebookTitle] = useState('')
+  const notebookInputRef = useRef<HTMLInputElement>(null)
   const [quickLinks, setQuickLinks] = useState<QuickLink[]>([])
   const [showQuickLinks, setShowQuickLinks] = useState(false)
   const [showMoodleModal, setShowMoodleModal] = useState(false)
@@ -1489,9 +1521,87 @@ export default function Home() {
   }, [showPropositionInput])
 
   useEffect(() => {
+    if (!showNotebookInput) return
+    const timer = window.setTimeout(() => {
+      notebookInputRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [showNotebookInput])
+
+  useEffect(() => {
     setShowPropositionInput(false)
     setNewPropositionTitle('')
+    setShowNotebookInput(false)
+    setNewNotebookTitle('')
+    setDraggedFile(null)
+    setDragOverItem(null)
+    setDragOverList(null)
   }, [viewWeek])
+
+  useEffect(() => {
+    const storedCategories = getStoredItem(FILE_CATEGORY_STORAGE_KEY)
+    if (storedCategories) {
+      try {
+        const parsed = JSON.parse(storedCategories) as Record<string, unknown>
+        const normalized: Record<string, 'theory' | 'practice'> = {}
+        Object.entries(parsed).forEach(([key, value]) => {
+          if (value === 'theory' || value === 'practice') {
+            normalized[key] = value
+          }
+        })
+        setFileCategoryOverrides(normalized)
+      } catch (error) {
+        console.warn('No se pudieron restaurar las categorías personalizadas', error)
+      }
+    }
+
+    const storedOrders = getStoredItem(FILE_ORDER_STORAGE_KEY)
+    if (storedOrders) {
+      try {
+        const parsed = JSON.parse(storedOrders) as Record<string, unknown>
+        const normalized: Record<string, string[]> = {}
+        Object.entries(parsed).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            const filtered = value.filter((item) => typeof item === 'string')
+            if (filtered.length) {
+              normalized[key] = filtered
+            }
+          }
+        })
+        setFileOrderOverrides(normalized)
+      } catch (error) {
+        console.warn('No se pudieron restaurar los órdenes personalizados', error)
+      }
+    }
+
+    const storedNotebooks = getStoredItem(NOTEBOOK_STORAGE_KEY)
+    if (storedNotebooks) {
+      try {
+        const parsed = JSON.parse(storedNotebooks) as Record<string, unknown>
+        const normalized: Record<string, NotebookEntry[]> = {}
+        Object.entries(parsed).forEach(([key, value]) => {
+          if (!Array.isArray(value)) return
+          const entries = value
+            .map((item) => {
+              if (!item || typeof item !== 'object') return null
+              const record = item as Record<string, unknown>
+              const id = typeof record['id'] === 'string' ? record['id'] : ''
+              const title = typeof record['title'] === 'string' ? record['title'].trim() : ''
+              const url = typeof record['url'] === 'string' ? record['url'].trim() : ''
+              if (!id || !title || !url) return null
+              return { id, title, url }
+            })
+            .filter((entry): entry is NotebookEntry => entry !== null)
+          if (entries.length) {
+            normalized[key] = entries
+          }
+        })
+        setNotebooksByPath(normalized)
+      } catch (error) {
+        console.warn('No se pudieron restaurar los cuadernos', error)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!mounted) return
@@ -1502,6 +1612,33 @@ export default function Home() {
     if (!mounted) return
     setStoredItem('moodleFolders', JSON.stringify(moodleFolders))
   }, [moodleFolders, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+    if (Object.keys(fileCategoryOverrides).length === 0) {
+      setStoredItem(FILE_CATEGORY_STORAGE_KEY, null)
+    } else {
+      setStoredItem(FILE_CATEGORY_STORAGE_KEY, JSON.stringify(fileCategoryOverrides))
+    }
+  }, [fileCategoryOverrides, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+    if (Object.keys(fileOrderOverrides).length === 0) {
+      setStoredItem(FILE_ORDER_STORAGE_KEY, null)
+    } else {
+      setStoredItem(FILE_ORDER_STORAGE_KEY, JSON.stringify(fileOrderOverrides))
+    }
+  }, [fileOrderOverrides, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+    if (Object.keys(notebooksByPath).length === 0) {
+      setStoredItem(NOTEBOOK_STORAGE_KEY, null)
+    } else {
+      setStoredItem(NOTEBOOK_STORAGE_KEY, JSON.stringify(notebooksByPath))
+    }
+  }, [notebooksByPath, mounted])
 
 
   // build directory structure from selected directory
@@ -1564,12 +1701,15 @@ export default function Home() {
           break
         }
       }
+      const overrideKey = parts.join("/")
+      const overrideType = fileCategoryOverrides[overrideKey]
+      const resolvedTableType = overrideType ?? tableType
       const item: PdfFile = {
         file,
-        path: parts.join("/"),
+        path: overrideKey,
         week: subjectPath || dirPath,
         subject: subjectName,
-        tableType,
+        tableType: resolvedTableType,
         isPdf,
         mediaType,
         containerPath,
@@ -1590,7 +1730,7 @@ export default function Home() {
     })
 
     setDirectoryTree(Object.fromEntries(map))
-  }, [dirFiles, dirPaths])
+  }, [dirFiles, dirPaths, fileCategoryOverrides])
 
   // compute queue from all pdfs
   useEffect(() => {
@@ -2069,6 +2209,9 @@ export default function Home() {
   const activeMoodlePath = (moodleTargetPath ?? viewWeek) ?? ''
   const activePropositionPath = viewWeek ?? ''
   const activePropositions = propositionsByPath[activePropositionPath] ?? []
+  const activeNotebookPath = viewWeek ?? ''
+  const activeNotebooks = notebooksByPath[activeNotebookPath] ?? []
+  const hasActiveNotebooks = activeNotebooks.length > 0
   const hasActivePropositions = activePropositions.length > 0
   const unreadPropositions = activePropositions.filter((entry) => !entry.read).length
   const allPropositionsRead = hasActivePropositions && unreadPropositions === 0
@@ -2107,18 +2250,51 @@ export default function Home() {
     (file) => file.tableType === 'practice',
   )
 
-  const collectAndSort = (paths: string[], direct: PdfFile[]) => {
-    const combined = [...direct, ...paths.flatMap((path) => collectFiles(path))]
-    return combined.sort((a, b) =>
+  const listOrderBase = viewWeek ?? ''
+  const buildOrderKey = (type: 'theory' | 'practice') =>
+    `${listOrderBase || 'root'}::${type}`
+
+  const applyOrderOverride = (files: PdfFile[], type: 'theory' | 'practice') => {
+    const override = fileOrderOverrides[buildOrderKey(type)]
+    if (!override || override.length === 0) return files
+    const used = new Set<string>()
+    const ordered: PdfFile[] = []
+    override.forEach((path) => {
+      const match = files.find((file) => file.path === path)
+      if (match) {
+        ordered.push(match)
+        used.add(path)
+      }
+    })
+    if (ordered.length === files.length) {
+      return ordered
+    }
+    const remainder = files.filter((file) => !used.has(file.path))
+    return [...ordered, ...remainder]
+  }
+
+  const collectAndSort = (
+    paths: string[],
+    direct: PdfFile[],
+    type: 'theory' | 'practice',
+  ) => {
+    const combined = [
+      ...direct,
+      ...paths.flatMap((path) =>
+        collectFiles(path).filter((file) => file.tableType === type),
+      ),
+    ]
+    const sorted = combined.sort((a, b) =>
       a.file.name.localeCompare(b.file.name, undefined, {
         numeric: true,
         sensitivity: 'base',
       }),
     )
+    return applyOrderOverride(sorted, type)
   }
 
-  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles)
-  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles)
+  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles, 'theory')
+  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles, 'practice')
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
@@ -2126,33 +2302,336 @@ export default function Home() {
       theoryFiles.length > 0 ||
       practiceFiles.length > 0 ||
       aggregatedChildSet.size > 0 ||
+      hasActiveNotebooks ||
+      showNotebookInput ||
       hasActivePropositions ||
       showPropositionInput
     )
 
-  const renderFileList = (files: PdfFile[]) => (
+  const handleDragStart = useCallback(
+    (event: DragEvent<HTMLLIElement>, file: PdfFile, sourceType: 'theory' | 'practice') => {
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', file.path)
+      }
+      setDraggedFile({ path: file.path, sourceType })
+      setDragOverItem(null)
+      setDragOverList(null)
+    },
+    [],
+  )
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedFile(null)
+    setDragOverItem(null)
+    setDragOverList(null)
+  }, [])
+
+  const handleFileDrop = useCallback(
+    (targetType: 'theory' | 'practice', targetIndex?: number) => {
+      if (!draggedFile) return
+      const base = viewWeek ?? ''
+      const sourceKey = `${base || 'root'}::${draggedFile.sourceType}`
+      const targetKey = `${base || 'root'}::${targetType}`
+      const theoryPaths = theoryFiles.map((file) => file.path)
+      const practicePaths = practiceFiles.map((file) => file.path)
+
+      setFileOrderOverrides((prev) => {
+        const next = { ...prev }
+        const sanitize = (key: string, snapshot: string[]) => {
+          const existing = prev[key]
+          if (!existing || existing.length === 0) {
+            return [...snapshot]
+          }
+          const deduped: string[] = []
+          existing.forEach((path) => {
+            if (snapshot.includes(path) && !deduped.includes(path)) {
+              deduped.push(path)
+            }
+          })
+          snapshot.forEach((path) => {
+            if (!deduped.includes(path)) {
+              deduped.push(path)
+            }
+          })
+          return deduped
+        }
+
+        const sourceSnapshot =
+          draggedFile.sourceType === 'theory' ? theoryPaths : practicePaths
+        const targetSnapshot = targetType === 'theory' ? theoryPaths : practicePaths
+
+        const sourceList = sanitize(sourceKey, sourceSnapshot).filter(
+          (path) => path !== draggedFile.path,
+        )
+
+        let targetList: string[]
+        if (sourceKey === targetKey) {
+          targetList = [...sourceList]
+        } else {
+          targetList = sanitize(targetKey, targetSnapshot).filter(
+            (path) => path !== draggedFile.path,
+          )
+        }
+
+        const insertIndex =
+          targetIndex === undefined ||
+          targetIndex < 0 ||
+          targetIndex > targetList.length
+            ? targetList.length
+            : targetIndex
+
+        targetList = [
+          ...targetList.slice(0, insertIndex),
+          draggedFile.path,
+          ...targetList.slice(insertIndex),
+        ]
+
+        if (sourceList.length) {
+          next[sourceKey] = sourceList
+        } else {
+          delete next[sourceKey]
+        }
+
+        if (targetList.length) {
+          next[targetKey] = targetList
+        } else {
+          delete next[targetKey]
+        }
+
+        return next
+      })
+
+      if (draggedFile.sourceType !== targetType) {
+        setFileCategoryOverrides((prev) => ({
+          ...prev,
+          [draggedFile.path]: targetType,
+        }))
+      }
+
+      setDraggedFile(null)
+      setDragOverItem(null)
+      setDragOverList(null)
+    },
+    [draggedFile, practiceFiles, theoryFiles, viewWeek],
+  )
+
+  const handleListDragEnter = useCallback(
+    (event: DragEvent<HTMLDivElement>, type: 'theory' | 'practice') => {
+      if (!draggedFile) return
+      event.preventDefault()
+      setDragOverList(type)
+    },
+    [draggedFile],
+  )
+
+  const handleListDragOver = useCallback(
+    (event: DragEvent<HTMLDivElement>, type: 'theory' | 'practice') => {
+      if (!draggedFile) return
+      event.preventDefault()
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'move'
+      }
+      if (dragOverList !== type) {
+        setDragOverList(type)
+      }
+    },
+    [dragOverList, draggedFile],
+  )
+
+  const handleListDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>, type: 'theory' | 'practice') => {
+      if (!draggedFile) return
+      event.preventDefault()
+      event.stopPropagation()
+      handleFileDrop(type)
+    },
+    [draggedFile, handleFileDrop],
+  )
+
+  const handleListDragLeave = useCallback(
+    (event: DragEvent<HTMLDivElement>, type: 'theory' | 'practice') => {
+      if (!draggedFile) return
+      const related = event.relatedTarget as Node | null
+      if (related && event.currentTarget.contains(related)) {
+        return
+      }
+      setDragOverItem(null)
+      setDragOverList((prev) => (prev === type ? null : prev))
+    },
+    [draggedFile],
+  )
+
+  const handleItemDragEnter = useCallback(
+    (event: DragEvent<HTMLLIElement>, type: 'theory' | 'practice', path: string) => {
+      if (!draggedFile) return
+      event.preventDefault()
+      setDragOverList(type)
+      setDragOverItem(path)
+    },
+    [draggedFile],
+  )
+
+  const handleItemDrop = useCallback(
+    (
+      event: DragEvent<HTMLLIElement>,
+      type: 'theory' | 'practice',
+      index: number,
+    ) => {
+      if (!draggedFile) return
+      event.preventDefault()
+      event.stopPropagation()
+      handleFileDrop(type, index)
+    },
+    [draggedFile, handleFileDrop],
+  )
+
+  const handleItemDragLeave = useCallback(
+    (event: DragEvent<HTMLLIElement>, path: string) => {
+      if (!draggedFile) return
+      const related = event.relatedTarget as Node | null
+      if (related && event.currentTarget.contains(related)) {
+        return
+      }
+      setDragOverItem((prev) => (prev === path ? null : prev))
+    },
+    [draggedFile],
+  )
+
+  const renderFileList = (files: PdfFile[], type?: 'theory' | 'practice') => (
     <ul className="space-y-1">
-      {files.map((p) => (
-        <li
-          key={p.path}
-          className={`flex items-center gap-2 ${
-            completed[p.path] ? 'line-through text-gray-400' : ''
-          }`}
-        >
-          <span
-            className="flex-1 truncate cursor-pointer"
-            title={p.file.name}
-            onClick={() => handleSelectFile(p)}
+      {files.map((p, index) => {
+        const isCompleted = completed[p.path]
+        const isDragging = type && draggedFile?.path === p.path
+        const isOver =
+          type !== undefined && dragOverItem === p.path && dragOverList === type
+        return (
+          <li
+            key={p.path}
+            draggable={Boolean(type)}
+            onDragStart={
+              type ? (event) => handleDragStart(event, p, type) : undefined
+            }
+            onDragEnter={
+              type ? (event) => handleItemDragEnter(event, type, p.path) : undefined
+            }
+            onDragOver={
+              type ? (event) => handleItemDragEnter(event, type, p.path) : undefined
+            }
+            onDrop={
+              type ? (event) => handleItemDrop(event, type, index) : undefined
+            }
+            onDragLeave={
+              type ? (event) => handleItemDragLeave(event, p.path) : undefined
+            }
+            onDragEnd={type ? handleDragEnd : undefined}
+            className={`flex items-center gap-2 rounded px-2 py-1 transition-colors ${
+              isCompleted ? 'line-through text-gray-400' : ''
+            } ${
+              isOver
+                ? 'border border-indigo-400 bg-indigo-50 dark:border-indigo-500 dark:bg-indigo-950/30'
+                : 'border border-transparent'
+            } ${
+              type
+                ? isDragging
+                  ? 'opacity-60'
+                  : 'cursor-move'
+                : ''
+            }`}
           >
-            {p.file.name}
-            {p.mediaType === 'video' && (
-              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
-            )}
-          </span>
-        </li>
-      ))}
+            <span
+              className="flex-1 truncate cursor-pointer"
+              title={p.file.name}
+              onClick={() => handleSelectFile(p)}
+            >
+              {p.file.name}
+              {p.mediaType === 'video' && (
+                <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+              )}
+            </span>
+          </li>
+        )
+      })}
     </ul>
   )
+
+  const handleCancelAddNotebook = () => {
+    setShowNotebookInput(false)
+    setNewNotebookTitle('')
+  }
+
+  const handleCreateNotebook = useCallback(async () => {
+    const trimmedTitle = newNotebookTitle.trim()
+    if (!trimmedTitle) {
+      showToastMessage('error', 'Ingresa un nombre para el cuaderno.')
+      return
+    }
+    if (!navigator.clipboard || !navigator.clipboard.readText) {
+      showToastMessage(
+        'error',
+        'No se puede acceder al portapapeles en este navegador.',
+      )
+      return
+    }
+    try {
+      const clipboardText = (await navigator.clipboard.readText()).trim()
+      if (!clipboardText) {
+        showToastMessage('error', 'El portapapeles está vacío.')
+        return
+      }
+      try {
+        new URL(clipboardText)
+      } catch {
+        showToastMessage('error', 'El portapapeles no contiene un enlace válido.')
+        return
+      }
+      const id =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+      setNotebooksByPath((prev) => {
+        const prevEntries = prev[activeNotebookPath] ?? []
+        const nextEntries = [...prevEntries, { id, title: trimmedTitle, url: clipboardText }]
+        return {
+          ...prev,
+          [activeNotebookPath]: nextEntries,
+        }
+      })
+      setShowNotebookInput(false)
+      setNewNotebookTitle('')
+      showToastMessage('success', 'Cuaderno guardado')
+    } catch (error) {
+      console.error('No se pudo leer el portapapeles', error)
+      showToastMessage('error', 'No se pudo leer el portapapeles.')
+    }
+  }, [activeNotebookPath, newNotebookTitle, showToastMessage])
+
+  const handleRemoveNotebook = useCallback(
+    (entry: NotebookEntry) => {
+      setNotebooksByPath((prev) => {
+        const prevEntries = prev[activeNotebookPath] ?? []
+        if (!prevEntries.length) return prev
+        const nextEntries = prevEntries.filter((item) => item.id !== entry.id)
+        if (nextEntries.length === prevEntries.length) {
+          return prev
+        }
+        if (nextEntries.length === 0) {
+          const { [activeNotebookPath]: _removed, ...rest } = prev
+          return rest
+        }
+        return {
+          ...prev,
+          [activeNotebookPath]: nextEntries,
+        }
+      })
+    },
+    [activeNotebookPath],
+  )
+
+  const handleOpenNotebook = useCallback((entry: NotebookEntry) => {
+    if (!entry.url) return
+    window.open(entry.url, '_blank', 'noopener,noreferrer')
+  }, [])
 
   const handleCancelAddProposition = () => {
     setShowPropositionInput(false)
@@ -2337,20 +2816,124 @@ export default function Home() {
           )}
           {showTheoryPractice ? (
             <div className="space-y-4">
-              <div>
+              <div
+                className={`rounded-md border border-transparent p-2 transition-colors ${
+                  dragOverList === 'theory'
+                    ? 'border-indigo-400 bg-indigo-50 dark:border-indigo-500 dark:bg-indigo-950/30'
+                    : ''
+                }`}
+                onDragEnter={(event) => handleListDragEnter(event, 'theory')}
+                onDragOver={(event) => handleListDragOver(event, 'theory')}
+                onDragLeave={(event) => handleListDragLeave(event, 'theory')}
+                onDrop={(event) => handleListDrop(event, 'theory')}
+              >
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Teoría</h3>
                 {theoryFiles.length ? (
-                  renderFileList(theoryFiles)
+                  renderFileList(theoryFiles, 'theory')
                 ) : (
                   <p className="text-xs text-gray-500">Sin archivos</p>
                 )}
               </div>
-              <div>
+              <div
+                className={`rounded-md border border-transparent p-2 transition-colors ${
+                  dragOverList === 'practice'
+                    ? 'border-indigo-400 bg-indigo-50 dark:border-indigo-500 dark:bg-indigo-950/30'
+                    : ''
+                }`}
+                onDragEnter={(event) => handleListDragEnter(event, 'practice')}
+                onDragOver={(event) => handleListDragOver(event, 'practice')}
+                onDragLeave={(event) => handleListDragLeave(event, 'practice')}
+                onDrop={(event) => handleListDrop(event, 'practice')}
+              >
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
                 {practiceFiles.length ? (
-                  renderFileList(practiceFiles)
+                  renderFileList(practiceFiles, 'practice')
                 ) : (
                   <p className="text-xs text-gray-500">Sin archivos</p>
+                )}
+              </div>
+              <div className="rounded-md border border-transparent p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase">
+                    Cuadernos
+                  </h3>
+                  <button
+                    type="button"
+                    className="rounded border border-gray-300 px-2 text-xs leading-6 dark:border-gray-600"
+                    onClick={() => {
+                      setNewNotebookTitle('')
+                      setShowNotebookInput(true)
+                    }}
+                    aria-label="Agregar cuaderno"
+                  >
+                    +
+                  </button>
+                </div>
+                {showNotebookInput && (
+                  <div className="mt-2 space-y-1">
+                    <input
+                      ref={notebookInputRef}
+                      value={newNotebookTitle}
+                      onChange={(event) => setNewNotebookTitle(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void handleCreateNotebook()
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault()
+                          handleCancelAddNotebook()
+                        }
+                      }}
+                      placeholder="Nombre del cuaderno"
+                      className="w-full rounded border border-gray-300 px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                    <p className="text-xs text-gray-500">
+                      El enlace se tomará del portapapeles actual.
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="rounded bg-indigo-600 px-2 py-1 text-xs text-white transition-colors hover:bg-indigo-700"
+                        onClick={() => void handleCreateNotebook()}
+                      >
+                        Guardar
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border border-gray-300 px-2 py-1 text-xs transition-colors hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-800"
+                        onClick={handleCancelAddNotebook}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {hasActiveNotebooks ? (
+                  <ul className="mt-2 space-y-1">
+                    {activeNotebooks.map((entry) => (
+                      <li key={entry.id} className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="flex-1 truncate text-left text-sm underline"
+                          onClick={() => handleOpenNotebook(entry)}
+                          title={entry.url}
+                        >
+                          {entry.title}
+                        </button>
+                        <button
+                          type="button"
+                          className="text-sm text-red-500 transition-colors hover:text-red-700"
+                          onClick={() => handleRemoveNotebook(entry)}
+                          aria-label={`Eliminar cuaderno ${entry.title}`}
+                          title="Eliminar cuaderno"
+                        >
+                          ×
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-xs text-gray-500">Sin cuadernos</p>
                 )}
               </div>
               <div>
