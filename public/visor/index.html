@@ -1002,6 +1002,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       let directoryHandle = null;
       let currentPdfName = null;
       let currentPdfKey = null;
+      let currentPdfWeek = '';
       let saveTimeout = null;
       let db = null;
 
@@ -1831,6 +1832,17 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             const targetUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(topic)}`;
             window.open(targetUrl, '_blank', 'noopener,noreferrer');
             setLastPropositionIdSetting(nextId);
+            try {
+              window.parent.postMessage(
+                {
+                  type: 'viewerCreateProposition',
+                  id: nextId,
+                  title: topic,
+                  path: currentPdfWeek || '',
+                },
+                '*',
+              );
+            } catch {}
           });
           header.appendChild(transcriptionLinkButton);
 
@@ -2054,7 +2066,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       // ========================================
       // CARGA DE PDF
       // ========================================
-      async function loadPdf(url, filename, uniqueKey = '') {
+      async function loadPdf(url, filename, uniqueKey = '', weekPath = '') {
         try {
           showOverlay('Cargando PDF…');
           clearContainer();
@@ -2068,6 +2080,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           fileInfo.textContent = filename;
           currentPdfName = filename;
           currentPdfKey = uniqueKey ? `${filename}-${uniqueKey}` : filename;
+          currentPdfWeek = typeof weekPath === 'string' ? weekPath : '';
           drawMode = false;
           currentCanvas = null;
           updateDrawMode();
@@ -2101,6 +2114,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           console.error('Error cargando PDF:', error);
           showToast('Error cargando PDF: ' + (error?.message || ''), 'error');
 
+          currentPdfWeek = '';
           dropZone.classList.remove('hidden');
           backBtn.disabled = true;
           fileInfo.textContent = 'Visor PDF';
@@ -2344,6 +2358,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         totalPages = 0;
         currentPdfName = null;
         currentPdfKey = null;
+        currentPdfWeek = '';
         hideOverlay();
         if (directoryHandle) updateFileStatus('saved', 'Carpeta configurada');
         else updateFileStatus('no-access', 'Sin acceso');
@@ -4262,8 +4277,9 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       const urlParam = params.get('url');
       const nameParam = params.get('name');
       const keyParam = params.get('key');
+      const weekParam = params.get('week');
       if (urlParam && nameParam) {
-        loadPdf(urlParam, nameParam, keyParam || '');
+        loadPdf(urlParam, nameParam, keyParam || '', weekParam || '');
       }
 
       // ========================================
