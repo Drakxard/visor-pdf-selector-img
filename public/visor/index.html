@@ -211,6 +211,32 @@
       justify-content: space-between;
       gap: 12px;
     }
+    .transcription-link-button {
+      background: transparent;
+      border: none;
+      padding: 4px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s ease;
+    }
+    .transcription-link-button img {
+      width: 24px;
+      height: 24px;
+      display: block;
+    }
+    .transcription-link-button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .transcription-link-button:not(:disabled):hover {
+      background: rgba(138, 180, 248, 0.2);
+    }
+    body.light-mode .transcription-link-button:not(:disabled):hover {
+      background: rgba(14, 165, 163, 0.12);
+    }
     .transcription-title {
       margin: 0;
       font-size: 18px;
@@ -534,6 +560,10 @@
       pointer-events: auto;
       z-index: 950;
       cursor: pointer;
+    }
+    .selection-rect.primary-selection {
+      border-color: #34a853;
+      background: rgba(52, 168, 83, 0.18);
     }
 
     /* Modal de categoría (Teoría/Práctica) reusa estilos de info-modal */
@@ -888,6 +918,9 @@
 No agregues texto adicional, ni explicaciones, ni bloques de código, ni comillas triples.
 No devuelvas varios objetos.
 Tu respuesta completa debe ser un único objeto JSON válido.`;
+      const PROPOSITION_BASE_URL_KEY = 'propositionBaseUrl';
+      const PROPOSITION_LAST_ID_KEY = 'propositionLastId';
+      const TOPIC_LINK_ICON_SRC = '/visor/images/subtema-link.svg';
       const dropZone = document.getElementById('drop-zone');
       const uploadArea = document.getElementById('upload-area');
       const fileInput = document.getElementById('file-input');
@@ -907,6 +940,8 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       let transcriptionModal = null;
       let transcriptionOutput = null;
       let transcriptionCopyButton = null;
+      let transcriptionSubtitle = null;
+      let transcriptionLinkButton = null;
 
       container.addEventListener('scroll', () => {
         if (currentPdfKey) {
@@ -1683,6 +1718,48 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
+      function getStoredValue(key) {
+        try {
+          const value = localStorage.getItem(key);
+          if (value !== null) return value;
+        } catch {}
+        try {
+          return sessionStorage.getItem(key);
+        } catch {}
+        return null;
+      }
+
+      function setStoredValue(key, value) {
+        if (value === null || value === undefined) {
+          try { localStorage.removeItem(key); } catch {}
+          try { sessionStorage.removeItem(key); } catch {}
+          return;
+        }
+        try {
+          localStorage.setItem(key, value);
+          try { sessionStorage.removeItem(key); } catch {}
+        } catch {
+          try { sessionStorage.setItem(key, value); } catch {}
+        }
+      }
+
+      function getPropositionBaseUrlSetting() {
+        const value = getStoredValue(PROPOSITION_BASE_URL_KEY);
+        return typeof value === 'string' ? value.trim() : '';
+      }
+
+      function getLastPropositionIdSetting() {
+        const value = getStoredValue(PROPOSITION_LAST_ID_KEY);
+        if (typeof value !== 'string') return 0;
+        const parsed = parseInt(value, 10);
+        return Number.isFinite(parsed) ? parsed : 0;
+      }
+
+      function setLastPropositionIdSetting(value) {
+        if (!Number.isFinite(value)) return;
+        setStoredValue(PROPOSITION_LAST_ID_KEY, String(value));
+      }
+
       async function copyTextToClipboard(text) {
         if (!text) return false;
         try {
@@ -1723,7 +1800,39 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           title.className = 'transcription-title';
           title.textContent = 'Transcripciones';
           titleWrapper.appendChild(title);
+          transcriptionSubtitle = document.createElement('p');
+          transcriptionSubtitle.className = 'transcription-subtitle';
+          transcriptionSubtitle.textContent = '';
+          titleWrapper.appendChild(transcriptionSubtitle);
           header.appendChild(titleWrapper);
+
+          transcriptionLinkButton = document.createElement('button');
+          transcriptionLinkButton.type = 'button';
+          transcriptionLinkButton.className = 'transcription-link-button';
+          transcriptionLinkButton.disabled = true;
+          transcriptionLinkButton.setAttribute('aria-label', 'Abrir subtema en una nueva pestaña');
+          const linkIcon = document.createElement('img');
+          linkIcon.src = TOPIC_LINK_ICON_SRC;
+          linkIcon.alt = 'Abrir subtema';
+          transcriptionLinkButton.appendChild(linkIcon);
+          transcriptionLinkButton.addEventListener('click', () => {
+            const topic = (transcriptionLinkButton?.dataset.topic || '').trim();
+            if (!topic) {
+              showToast('No hay un subtema disponible.', 'info');
+              return;
+            }
+            const baseUrl = getPropositionBaseUrlSetting();
+            if (!baseUrl) {
+              showToast('Configura la URL base de proposiciones en ajustes.', 'info');
+              return;
+            }
+            const normalizedBase = baseUrl.replace(/\/+$/, '');
+            const nextId = getLastPropositionIdSetting() + 1;
+            const targetUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(topic)}`;
+            window.open(targetUrl, '_blank', 'noopener,noreferrer');
+            setLastPropositionIdSetting(nextId);
+          });
+          header.appendChild(transcriptionLinkButton);
 
           transcriptionOutput = document.createElement('div');
           transcriptionOutput.className = 'transcription-output';
@@ -1777,11 +1886,34 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
-      function showTranscriptionModal(formattedText, items) {
+      function showTranscriptionModal(formattedText, detailTexts, topicText) {
         const modal = ensureTranscriptionModal();
         if (transcriptionOutput) {
-          transcriptionOutput.innerHTML = `<strong>${escapeHtml(formattedText)}</strong>`;
+          transcriptionOutput.textContent = formattedText;
           transcriptionOutput.dataset.copyValue = formattedText;
+        }
+        const normalizedTopic = typeof topicText === 'string' ? topicText.replace(/\s+/g, ' ').trim() : '';
+        if (transcriptionSubtitle) {
+          transcriptionSubtitle.textContent = normalizedTopic ? `Subtema: ${normalizedTopic}` : '';
+        }
+        if (transcriptionLinkButton) {
+          const topicValue = normalizedTopic;
+          transcriptionLinkButton.dataset.topic = topicValue;
+          const baseUrl = getPropositionBaseUrlSetting();
+          if (topicValue && baseUrl) {
+            const normalizedBase = baseUrl.replace(/\/+$/, '');
+            const previewId = getLastPropositionIdSetting() + 1;
+            const previewUrl = `${normalizedBase}/nuevaproposicion/${previewId}=${encodeURIComponent(topicValue)}`;
+            transcriptionLinkButton.disabled = false;
+            transcriptionLinkButton.title = previewUrl;
+            transcriptionLinkButton.setAttribute('aria-label', `Abrir ${topicValue}`);
+          } else {
+            transcriptionLinkButton.disabled = true;
+            transcriptionLinkButton.title = baseUrl
+              ? 'Selecciona un subtema válido.'
+              : 'Configura la URL base de proposiciones en ajustes.';
+            transcriptionLinkButton.setAttribute('aria-label', 'Abrir subtema en una nueva pestaña');
+          }
         }
         modal.classList.add('show');
         transcriptionCopyButton?.focus({ preventScroll: true });
@@ -2470,30 +2602,40 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
               deactivateFocusMode('Selección cancelada');
               return;
             }
+            if (instantSelections.length < 2) {
+              showToast('Selecciona al menos dos áreas (una verde y otra celeste).', 'info');
+              return;
+            }
             let keepSelections = false;
             showOverlay('Transcribiendo selecciones…');
             try {
-              const transcriptions = await transcribeInstantSelectionsWithGroq();
-              if (transcriptions === null) {
+              const result = await transcribeInstantSelectionsWithGroq();
+              if (result === null) {
                 keepSelections = true;
                 return;
               }
-              const cleaned = transcriptions
-                .map((item) => (typeof item === 'string' ? item.trim() : ''))
-                .filter((item) => item.length);
-              if (!cleaned.length) {
+              const { topicText, detailTexts } = result;
+              if (!detailTexts.length) {
                 showToast('No se recibieron transcripciones.', 'info');
+                keepSelections = true;
                 return;
               }
-              const formatted = `{${cleaned.join(', ')}}`;
+              const combined = detailTexts.join('\n').trim();
+              if (!combined) {
+                showToast('No se recibieron transcripciones.', 'info');
+                keepSelections = true;
+                return;
+              }
+              const formatted = JSON.stringify({ texto: combined });
               const copied = await copyTextToClipboard(formatted);
               if (copied) {
                 showToast('Transcripciones copiadas al portapapeles', 'success');
               } else {
                 showToast('No se pudo copiar automáticamente', 'warning');
               }
-              showTranscriptionModal(formatted, cleaned);
+              showTranscriptionModal(formatted, detailTexts, topicText);
             } catch (error) {
+              keepSelections = true;
               console.error('Error transcribiendo selecciones:', error);
               const message =
                 error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
@@ -3272,6 +3414,17 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
+      function updateInstantSelectionStyles() {
+        instantSelections.forEach((selection, index) => {
+          if (!selection?.elem) return;
+          if (index === 0) {
+            selection.elem.classList.add('primary-selection');
+          } else {
+            selection.elem.classList.remove('primary-selection');
+          }
+        });
+      }
+
       function clearInstantSelections() {
         if (!instantSelections.length) return;
         const affectedLayers = new Set();
@@ -3283,6 +3436,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         affectedLayers.forEach((layer) => {
           if (layer && !layer.querySelector('.selection-rect')) layer.style.pointerEvents = 'none';
         });
+        updateInstantSelectionStyles();
       }
 
       function addInstantSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
@@ -3302,6 +3456,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           rect.remove();
           if (!layer.querySelector('.selection-rect')) layer.style.pointerEvents = 'none';
           showToast('Área eliminada', 'info');
+          updateInstantSelectionStyles();
         });
 
         repositionSelectionsForLayer(layer);
@@ -3312,11 +3467,81 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         });
 
         showNavIndicator('Área añadida (' + instantSelections.length + ')');
+        updateInstantSelectionStyles();
+      }
+
+      async function extractTextFromSelection(selection) {
+        if (!pdfDoc || !selection) return '';
+        try {
+          const page = await pdfDoc.getPage(selection.pageNum);
+          const scale = BASE_SCALE * zoomLevel;
+          const viewport = page.getViewport({ scale });
+          const textContent = await page.getTextContent();
+          const minXp = Math.min(selection.xp1, selection.xp2);
+          const maxXp = Math.max(selection.xp1, selection.xp2);
+          const minYp = Math.min(selection.yp1, selection.yp2);
+          const maxYp = Math.max(selection.yp1, selection.yp2);
+          const bounds = {
+            left: minXp * viewport.width,
+            right: maxXp * viewport.width,
+            top: minYp * viewport.height,
+            bottom: maxYp * viewport.height,
+          };
+          const util = pdfjsLib.Util;
+          const lineMap = new Map();
+          const tolerance = Math.max(4, viewport.scale * 2);
+          (textContent.items || []).forEach((item) => {
+            if (!item || typeof item.str !== 'string') return;
+            const normalized = item.str.replace(/\s+/g, ' ').trim();
+            if (!normalized) return;
+            const transform = util.transform(viewport.transform, item.transform);
+            const x = transform[4];
+            const y = transform[5];
+            const fontHeight = Math.abs(transform[3]);
+            const width = item.width * viewport.scale;
+            const height = fontHeight;
+            const itemLeft = x;
+            const itemRight = x + width;
+            const itemBottom = y;
+            const itemTop = y - height;
+            if (
+              itemRight <= bounds.left ||
+              itemLeft >= bounds.right ||
+              itemBottom <= bounds.top ||
+              itemTop >= bounds.bottom
+            ) {
+              return;
+            }
+            const lineKey = Math.round(itemBottom / tolerance);
+            if (!lineMap.has(lineKey)) lineMap.set(lineKey, []);
+            lineMap.get(lineKey).push({ text: normalized, x: itemLeft });
+          });
+          const sortedKeys = Array.from(lineMap.keys()).sort((a, b) => a - b);
+          const lines = sortedKeys
+            .map((key) => {
+              const parts = lineMap
+                .get(key)
+                .sort((a, b) => a.x - b.x)
+                .map((part) => part.text);
+              return parts.join(' ').replace(/\s+/g, ' ').trim();
+            })
+            .filter((line) => line.length);
+          return lines.join('\n').trim();
+        } catch (error) {
+          console.error('Error extracting text from selection', error);
+          return '';
+        }
       }
 
       async function transcribeInstantSelectionsWithGroq() {
-        if (!instantSelections.length) return [];
-        if (!pdfDoc) return [];
+        if (!instantSelections.length) return { topicText: '', detailTexts: [] };
+        if (!pdfDoc) return { topicText: '', detailTexts: [] };
+        const [topicSelection, ...detailSelections] = instantSelections;
+        const topicText = (await extractTextFromSelection(topicSelection)) || '';
+        if (!detailSelections.length) {
+          showToast('Agrega al menos una selección adicional para transcribir.', 'info');
+          return { topicText, detailTexts: [] };
+        }
         const config = getGroqVisionConfig();
         if (!config || !config.model) {
           showToast('Configura el modelo y el prompt en los ajustes (⚙️).', 'info');
@@ -3328,7 +3553,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         const MAX_RENDER_SCALE = 10;
         const images = [];
 
-        for (const selection of instantSelections) {
+        for (const selection of detailSelections) {
           const { pageNum, xp1, yp1, xp2, yp2 } = selection;
           const widthFrac = Math.abs(xp2 - xp1);
           const heightFrac = Math.abs(yp2 - yp1);
@@ -3381,7 +3606,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
 
         if (!images.length) {
           showToast('No hay selecciones válidas para enviar.', 'info');
-          return [];
+          return { topicText, detailTexts: [] };
         }
 
         const response = await fetch('/api/groq/transcribe', {
@@ -3403,7 +3628,42 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         const transcriptions = Array.isArray(data?.transcriptions)
           ? data.transcriptions.map((item) => (typeof item === 'string' ? item : ''))
           : [];
-        return transcriptions;
+        const detailTexts = transcriptions
+          .map((entry) => {
+            let current = entry.trim();
+            if (!current) return '';
+
+            for (let depth = 0; depth < 3; depth++) {
+              try {
+                const parsed = JSON.parse(current);
+                if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
+                  return parsed.texto.trim();
+                }
+                if (typeof parsed === 'string') {
+                  const next = parsed.trim();
+                  if (next === current) break;
+                  current = next;
+                  continue;
+                }
+              } catch {}
+              break;
+            }
+
+            const match = current.match(/^\{\s*"texto"\s*:\s*"([\s\S]*)"\s*\}$/);
+            if (match) {
+              const rawValue = match[1]
+                .replace(/\\n/g, '\n')
+                .replace(/\\r/g, '\r')
+                .replace(/\\t/g, '\t')
+                .replace(/\\"/g, '"')
+                .replace(/\\\\/g, '\\');
+              return rawValue.trim();
+            }
+
+            return current;
+          })
+          .filter((value) => value.length);
+        return { topicText, detailTexts };
       }
 
       function addSelectionRect(layer, pageNum, xp1, yp1, xp2, yp2) {
