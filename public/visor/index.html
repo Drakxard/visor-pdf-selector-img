@@ -1002,6 +1002,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       let directoryHandle = null;
       let currentPdfName = null;
       let currentPdfKey = null;
+      let currentPdfPath = '';
       let saveTimeout = null;
       let db = null;
 
@@ -1828,6 +1829,17 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             }
             const normalizedBase = baseUrl.replace(/\/+$/, '');
             const nextId = getLastPropositionIdSetting() + 1;
+            try {
+              window.parent.postMessage(
+                {
+                  type: 'viewerCreateProposition',
+                  id: nextId,
+                  title: topic,
+                  pdfPath: currentPdfPath,
+                },
+                '*',
+              );
+            } catch {}
             const targetUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(topic)}`;
             window.open(targetUrl, '_blank', 'noopener,noreferrer');
             setLastPropositionIdSetting(nextId);
@@ -2068,6 +2080,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           fileInfo.textContent = filename;
           currentPdfName = filename;
           currentPdfKey = uniqueKey ? `${filename}-${uniqueKey}` : filename;
+          currentPdfPath = uniqueKey ? String(uniqueKey) : '';
           drawMode = false;
           currentCanvas = null;
           updateDrawMode();
@@ -2106,6 +2119,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           fileInfo.textContent = 'Visor PDF';
           currentPdfName = null;
           currentPdfKey = null;
+          currentPdfPath = '';
           hideOverlay();
         }
       }

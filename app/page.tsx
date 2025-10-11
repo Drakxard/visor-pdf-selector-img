@@ -1672,10 +1672,63 @@ export default function Home() {
           } catch {}
         }
       }
+      if (e.data?.type === 'viewerCreateProposition') {
+        const rawId = e.data.id
+        const parsedId =
+          typeof rawId === 'number'
+            ? rawId
+            : typeof rawId === 'string'
+              ? Number(rawId)
+              : NaN
+        const title =
+          typeof e.data.title === 'string' ? e.data.title.trim() : ''
+        if (!title || !Number.isFinite(parsedId) || parsedId <= 0) {
+          return
+        }
+        const pdfPath =
+          typeof e.data.pdfPath === 'string' ? e.data.pdfPath : ''
+        const containerPath = pdfPath
+          ? pdfPath.split('/').slice(0, -1).join('/').trim()
+          : ''
+        const activePath = viewWeek ?? ''
+        const targetPaths = new Set<string>()
+        if (pdfPath) {
+          targetPaths.add(containerPath)
+        }
+        if (activePath && activePath !== containerPath) {
+          targetPaths.add(activePath)
+        }
+        if (targetPaths.size === 0) {
+          targetPaths.add(activePath || '')
+        }
+        const entry: PropositionEntry = { id: parsedId, title, read: false }
+        setPropositionsByPath((prev) => {
+          let changed = false
+          const next: Record<string, PropositionEntry[]> = { ...prev }
+          targetPaths.forEach((pathKey) => {
+            const key = pathKey
+            const prevEntries = next[key] ?? []
+            if (prevEntries.some((item) => item.id === entry.id)) {
+              return
+            }
+            next[key] = sortPropositions([...prevEntries, entry])
+            changed = true
+          })
+          return changed ? next : prev
+        })
+        setLastPropositionId((prev) => (prev >= parsedId ? prev : parsedId))
+      }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [currentPdf, pdfUrl, setScopedStoredItem])
+  }, [
+    currentPdf,
+    pdfUrl,
+    setScopedStoredItem,
+    setPropositionsByPath,
+    setLastPropositionId,
+    viewWeek,
+  ])
 
   // Global key: press 'a' (when not typing) to open current PDF in a new tab
   useEffect(() => {
