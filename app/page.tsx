@@ -494,6 +494,8 @@ export default function Home() {
   const [newFolderName, setNewFolderName] = useState('')
   const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
   const [moodleTargetOptions, setMoodleTargetOptions] = useState<MoodleTargetOption[]>([])
+  const [windowsBasePath, setWindowsBasePath] = useState('')
+  const [windowsBasePathDraft, setWindowsBasePathDraft] = useState('')
   const hasPropositions = useMemo(
     () => Object.values(propositionsByPath).some((entries) => entries.length > 0),
     [propositionsByPath],
@@ -503,6 +505,76 @@ export default function Home() {
     setToast({ type, text })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [])
+  const rootFolderName = useMemo(() => {
+    if (rootHandle?.name) return rootHandle.name
+    for (const file of dirFiles) {
+      const rel = ((file as any).webkitRelativePath as string | undefined) || ''
+      if (!rel) continue
+      const first = rel.split('/')[0]
+      if (first) return first
+    }
+    return ''
+  }, [dirFiles, rootHandle])
+  const activeDirectoryPath = useMemo(
+    () => viewWeek ?? currentPdf?.containerPath ?? '',
+    [currentPdf, viewWeek],
+  )
+  const computedWindowsPath = useMemo(() => {
+    const segments = activeDirectoryPath.split('/').filter(Boolean)
+    const sanitizedBase = windowsBasePath.trim().replace(/\//g, '\\')
+    const trimmedBase = sanitizedBase.replace(/\\+$/, '')
+    const appendSegment = (base: string, segment: string) =>
+      base ? `${base}\\${segment}` : segment
+    const rootName = rootFolderName.trim()
+    let result = trimmedBase
+    if (rootName) {
+      const baseLower = trimmedBase.toLowerCase()
+      const rootLower = rootName.toLowerCase()
+      const hasRoot =
+        baseLower === rootLower || baseLower.endsWith(`\\${rootLower}`)
+      if (!trimmedBase) {
+        result = rootName
+      } else if (!hasRoot) {
+        result = appendSegment(trimmedBase, rootName)
+      }
+    }
+    if (!trimmedBase && !rootName) {
+      result = ''
+    }
+    for (const segment of segments) {
+      const normalized = segment.replace(/[\\/]+/g, '\\')
+      result = appendSegment(result, normalized)
+    }
+    return result
+  }, [activeDirectoryPath, rootFolderName, windowsBasePath])
+  const handleCopyCurrentPath = useCallback(async () => {
+    const targetPath = computedWindowsPath
+    if (!targetPath) {
+      showToastMessage('error', 'Configura la ruta base en ajustes para copiarla.')
+      return
+    }
+    if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+      showToastMessage('error', 'El portapapeles no está disponible en este navegador.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(targetPath)
+      showToastMessage('success', 'Ruta copiada al portapapeles')
+    } catch (error) {
+      console.error('Failed to copy path', error)
+      showToastMessage('error', 'No se pudo copiar la ruta al portapapeles.')
+    }
+  }, [computedWindowsPath, showToastMessage])
+  const handleSaveWindowsBasePath = useCallback(() => {
+    const sanitized = windowsBasePathDraft.trim().replace(/\//g, '\\')
+    setWindowsBasePath(sanitized)
+    setWindowsBasePathDraft(sanitized)
+    setStoredItem('windowsBasePath', sanitized || null)
+    showToastMessage(
+      'success',
+      sanitized ? 'Ruta base guardada' : 'Ruta base eliminada',
+    )
+  }, [showToastMessage, windowsBasePathDraft])
   const handleSavePropositionSettings = useCallback(() => {
     const trimmed = propositionBaseUrlDraft.trim()
     setPropositionBaseUrl(trimmed)
@@ -1006,6 +1078,14 @@ export default function Home() {
       '*',
     )
   }, [theme, viewerOpen])
+  useEffect(() => {
+    const storedBase = getStoredItem('windowsBasePath')
+    if (storedBase) {
+      const sanitized = storedBase.replace(/\//g, '\\')
+      setWindowsBasePath(sanitized)
+      setWindowsBasePathDraft(sanitized)
+    }
+  }, [])
 
   const applyTheme = (start: number) => {
     const hour = new Date().getHours()
@@ -2797,7 +2877,23 @@ export default function Home() {
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+              <button
+                type="button"
+                onClick={handleCopyCurrentPath}
+                className="text-sm px-2 py-1 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                title={
+                  computedWindowsPath
+                    ? `Copiar ruta: ${computedWindowsPath}`
+                    : 'Configura la ruta base en ajustes para copiarla'
+                }
+                aria-label="Copiar ruta de la carpeta"
+                disabled={!computedWindowsPath}
+              >
+                📋
+              </button>
+            </div>
             {routeScope.scope === 'subject' && subjectWeekOptions.length > 0 && (
               <div className="flex flex-col gap-1">
                 <label
@@ -3225,6 +3321,35 @@ export default function Home() {
             Proposiciones
           </button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
+          <form
+            className="space-y-2 border-t border-dashed border-gray-200 pt-2 dark:border-gray-700"
+            onSubmit={(event: FormEvent<HTMLFormElement>) => {
+              event.preventDefault()
+              handleSaveWindowsBasePath()
+            }}
+          >
+            <label className="block text-xs font-semibold uppercase text-gray-500 dark:text-gray-400" htmlFor="windows-base-path">
+              Ruta base (Windows)
+            </label>
+            <input
+              id="windows-base-path"
+              value={windowsBasePathDraft}
+              onChange={(event) => setWindowsBasePathDraft(event.target.value)}
+              className="w-full rounded border border-gray-300 px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-900"
+              placeholder="C:\\Users\\Rafael\\Desktop\\gestor"
+            />
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                className="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600"
+              >
+                Guardar ruta
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Se utilizará para copiar la ruta completa de la carpeta actual.
+            </p>
+          </form>
         </div>
       )}
     </div>
