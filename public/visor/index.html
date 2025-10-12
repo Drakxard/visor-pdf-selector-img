@@ -900,12 +900,30 @@
         }
       });
       document.addEventListener('keydown', (e) => {
-        if (e.key.toLowerCase() === 'c') {
-          try {
-            window.parent.postMessage({ type: 'toggleTimer' }, '*');
-            e.preventDefault();
-          } catch {}
+        if ((e.key || '').toLowerCase() !== 'c') {
+          return;
         }
+
+        const target = e.target;
+        if (target instanceof HTMLElement) {
+          const tagName = target.tagName;
+          const role = target.getAttribute('role');
+          const isEditableRole = role === 'textbox' || role === 'combobox';
+          if (
+            target.isContentEditable ||
+            tagName === 'INPUT' ||
+            tagName === 'TEXTAREA' ||
+            tagName === 'SELECT' ||
+            isEditableRole
+          ) {
+            return;
+          }
+        }
+
+        try {
+          window.parent.postMessage({ type: 'toggleTimer' }, '*');
+          e.preventDefault();
+        } catch {}
       });
       const GROQ_CONFIG_KEY = 'groq-vision-config';
       const DEFAULT_GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
