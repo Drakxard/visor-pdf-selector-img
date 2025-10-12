@@ -246,6 +246,7 @@ const PROPOSITION_BASE_URL_STORAGE_KEY = 'propositionBaseUrl'
 const TABLE_TYPE_OVERRIDE_STORAGE_KEY = 'tableTypeOverrides'
 const FILE_ORDER_STORAGE_KEY = 'fileOrderOverrides'
 const NOTEBOOK_STORAGE_KEY = 'notebooksByPath'
+const BASE_PATH_STORAGE_KEY = 'absoluteBasePath'
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -441,6 +442,7 @@ export default function Home() {
   const [showSettings, setShowSettings] = useState(false)
   const [showDarkModal, setShowDarkModal] = useState(false)
   const [showGroqModal, setShowGroqModal] = useState(false)
+  const [showBasePathModal, setShowBasePathModal] = useState(false)
   const [showPropositionModal, setShowPropositionModal] = useState(false)
   const [groqModel, setGroqModel] = useState(DEFAULT_GROQ_MODEL)
   const [groqModels, setGroqModels] = useState<string[]>([])
@@ -482,6 +484,8 @@ export default function Home() {
   const [draggedSourcePath, setDraggedSourcePath] = useState('')
   const [quickLinks, setQuickLinks] = useState<QuickLink[]>([])
   const [showQuickLinks, setShowQuickLinks] = useState(false)
+  const [basePath, setBasePath] = useState('')
+  const [basePathDraft, setBasePathDraft] = useState('')
   const [showMoodleModal, setShowMoodleModal] = useState(false)
   const [showMoodleTargetPicker, setShowMoodleTargetPicker] = useState(false)
   const [moodleToken, setMoodleToken] = useState<string>(process.env.NEXT_PUBLIC_MOODLE_TOKEN || '')
@@ -503,6 +507,16 @@ export default function Home() {
     setToast({ type, text })
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3000)
   }, [])
+  const openBasePathModal = useCallback(() => {
+    setBasePathDraft(basePath)
+    setShowBasePathModal(true)
+  }, [basePath])
+  const handleSaveBasePath = useCallback(() => {
+    const trimmed = basePathDraft.trim()
+    setBasePath(trimmed)
+    showToastMessage('success', trimmed ? 'Ruta base guardada' : 'Ruta base eliminada')
+    setShowBasePathModal(false)
+  }, [basePathDraft, showToastMessage])
   const handleSavePropositionSettings = useCallback(() => {
     const trimmed = propositionBaseUrlDraft.trim()
     setPropositionBaseUrl(trimmed)
@@ -1296,6 +1310,13 @@ export default function Home() {
     }
   }, [step, configFound])
 
+  useEffect(() => {
+    const storedBasePath = getStoredItem(BASE_PATH_STORAGE_KEY)
+    if (storedBasePath) {
+      setBasePath(storedBasePath)
+    }
+  }, [])
+
   // allow opening folder selector with Enter on initial screen
   useEffect(() => {
     if (!setupComplete && step === 0) {
@@ -1330,6 +1351,12 @@ export default function Home() {
     setStoredItem('darkModeStart', darkModeStart.toString())
     applyTheme(darkModeStart)
   }, [darkModeStart, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+    const value = basePath.trim()
+    setStoredItem(BASE_PATH_STORAGE_KEY, value ? value : null)
+  }, [basePath, mounted])
 
   useEffect(() => {
     const storedFolders = getStoredItem('moodleFolders')
@@ -2776,6 +2803,33 @@ export default function Home() {
     return segments.length ? segments.join(" / ") : "Carpetas"
   }
 
+  const handleCopyPath = useCallback(async () => {
+    const clipboard = navigator.clipboard
+    if (!clipboard || typeof clipboard.writeText !== 'function') {
+      showToastMessage('error', 'No se pudo acceder al portapapeles.')
+      return
+    }
+    const normalizedBase = basePath.trim()
+    if (!normalizedBase) {
+      showToastMessage('error', 'Configura una ruta base en ajustes antes de copiar.')
+      openBasePathModal()
+      return
+    }
+    const cleanedBase = normalizedBase.replace(/[\\/]+$/, '')
+    const segments = (viewWeek ?? '').split('/').filter(Boolean)
+    const useBackslash = /\\/.test(cleanedBase) || /^[a-zA-Z]:/.test(cleanedBase)
+    const separator = useBackslash ? '\\' : '/'
+    const relativePart = segments.join(separator)
+    const fullPath = relativePart ? `${cleanedBase}${separator}${relativePart}` : cleanedBase
+    try {
+      await clipboard.writeText(fullPath)
+      showToastMessage('success', 'Ruta copiada al portapapeles')
+    } catch (error) {
+      console.error('Failed to copy path', error)
+      showToastMessage('error', 'No se pudo copiar la ruta.')
+    }
+  }, [basePath, openBasePathModal, showToastMessage, viewWeek])
+
   // main interface
   return (
     <>
@@ -2797,7 +2851,18 @@ export default function Home() {
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl flex-1 truncate">{formatBreadcrumb(viewWeek)}</h2>
+              <button
+                type="button"
+                onClick={handleCopyPath}
+                className="rounded border border-gray-300 px-2 py-1 text-xs leading-none dark:border-gray-600"
+                aria-label="Copiar ruta completa"
+                title="Copiar ruta completa"
+              >
+                <span aria-hidden>📋</span>
+              </button>
+            </div>
             {routeScope.scope === 'subject' && subjectWeekOptions.length > 0 && (
               <div className="flex flex-col gap-1">
                 <label
@@ -3208,6 +3273,15 @@ export default function Home() {
             className="block w-full text-left"
             onClick={() => {
               setShowSettings(false)
+              openBasePathModal()
+            }}
+          >
+            Configurar ruta base
+          </button>
+          <button
+            className="block w-full text-left"
+            onClick={() => {
+              setShowSettings(false)
               setGroqModelsError(null)
               setGroqModelError(null)
               setShowGroqModal(true)
@@ -3228,6 +3302,56 @@ export default function Home() {
         </div>
       )}
     </div>
+
+    {showBasePathModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        onClick={() => setShowBasePathModal(false)}
+      >
+        <div
+          className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Configurar ruta base</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Define la ruta absoluta de la carpeta principal (por ejemplo: C:\Usuarios\Nombre\Desktop\gestor).
+              </p>
+            </div>
+            <button className="text-sm underline" onClick={() => setShowBasePathModal(false)}>
+              Cerrar
+            </button>
+          </div>
+          <label className="flex flex-col gap-1 text-sm" htmlFor="base-path-input">
+            Ruta base
+            <input
+              id="base-path-input"
+              value={basePathDraft}
+              onChange={(event) => setBasePathDraft(event.target.value)}
+              className="rounded border border-gray-300 px-2 py-1 dark:border-gray-600 dark:bg-gray-950"
+              placeholder="C:\\Usuarios\\Nombre\\Desktop\\gestor"
+            />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded border border-gray-300 px-3 py-1 text-sm dark:border-gray-600"
+              onClick={() => setShowBasePathModal(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60"
+              onClick={handleSaveBasePath}
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {showGroqModal && (
       <div
