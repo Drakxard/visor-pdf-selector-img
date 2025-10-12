@@ -2356,8 +2356,22 @@ export default function Home() {
     (file) => file.tableType === 'practice',
   )
 
-  const collectAndSort = (paths: string[], direct: PdfFile[], orderKey: string) => {
-    const combined = [...direct, ...paths.flatMap((path) => collectFiles(path))]
+  const collectAndSort = (
+    direct: PdfFile[],
+    orderKey: string,
+    type: 'theory' | 'practice',
+  ) => {
+    const nestedMatches = childDirectories.flatMap((path) =>
+      collectFiles(path).filter((file) => file.tableType === type),
+    )
+    const combined = [...direct, ...nestedMatches]
+    const seen = new Set<string>()
+    const filtered = combined.filter((file) => {
+      if (file.tableType !== type) return false
+      if (seen.has(file.path)) return false
+      seen.add(file.path)
+      return true
+    })
     const orderList = fileOrderOverrides[orderKey] ?? []
     const orderMap = new Map<string, number>()
     orderList.forEach((path, index) => {
@@ -2365,7 +2379,7 @@ export default function Home() {
         orderMap.set(path, index)
       }
     })
-    return combined.sort((a, b) => {
+    return filtered.sort((a, b) => {
       const aIndex = orderMap.has(a.path)
         ? (orderMap.get(a.path) as number)
         : Number.POSITIVE_INFINITY
@@ -2385,8 +2399,8 @@ export default function Home() {
   const buildOrderKey = (path: string, type: 'theory' | 'practice') => `${path || ''}::${type}`
   const theoryOrderKey = buildOrderKey(currentDirEntry.path || '', 'theory')
   const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
-  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles, theoryOrderKey)
-  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles, practiceOrderKey)
+  const theoryFiles = collectAndSort(directTheoryFiles, theoryOrderKey, 'theory')
+  const practiceFiles = collectAndSort(directPracticeFiles, practiceOrderKey, 'practice')
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
@@ -2524,31 +2538,40 @@ export default function Home() {
       onDragOver={handleListDragOver}
       onDrop={handleListDrop(type)}
     >
-      {files.map((p) => (
+      {files.length === 0 ? (
         <li
-          key={p.path}
-          className={`flex items-center gap-2 ${
-            completed[p.path] ? 'line-through text-gray-400' : ''
-          } ${draggedFile?.path === p.path ? 'opacity-60' : ''}`}
-          draggable
-          onDragStart={handleDragStart(p, type)}
-          onDragEnd={handleDragEnd}
-          onDragOver={handleItemDragOver}
-          onDrop={handleDropOnItem(p, type)}
+          className="text-xs italic text-gray-500 dark:text-gray-400"
+          onDragOver={handleListDragOver}
         >
-          <span
-            className="flex-1 truncate cursor-pointer"
-            title={p.file.name}
-            onClick={() => handleSelectFile(p)}
-          >
-            {p.file.name}
-            {p.mediaType === 'video' && (
-              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
-            )}
-          </span>
-          <span className="text-xs text-gray-400">⋮⋮</span>
+          Sin archivos — suelta elementos aquí
         </li>
-      ))}
+      ) : (
+        files.map((p) => (
+          <li
+            key={p.path}
+            className={`flex items-center gap-2 ${
+              completed[p.path] ? 'line-through text-gray-400' : ''
+            } ${draggedFile?.path === p.path ? 'opacity-60' : ''}`}
+            draggable
+            onDragStart={handleDragStart(p, type)}
+            onDragEnd={handleDragEnd}
+            onDragOver={handleItemDragOver}
+            onDrop={handleDropOnItem(p, type)}
+          >
+            <span
+              className="flex-1 truncate cursor-pointer"
+              title={p.file.name}
+              onClick={() => handleSelectFile(p)}
+            >
+              {p.file.name}
+              {p.mediaType === 'video' && (
+                <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+              )}
+            </span>
+            <span className="text-xs text-gray-400">⋮⋮</span>
+          </li>
+        ))
+      )}
     </ul>
   )
 
@@ -2844,19 +2867,11 @@ export default function Home() {
             <div className="space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Teoría</h3>
-                {theoryFiles.length ? (
-                  renderCategorizedFileList(theoryFiles, 'theory')
-                ) : (
-                  <p className="text-xs text-gray-500">Sin archivos</p>
-                )}
+                {renderCategorizedFileList(theoryFiles, 'theory')}
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
-                {practiceFiles.length ? (
-                  renderCategorizedFileList(practiceFiles, 'practice')
-                ) : (
-                  <p className="text-xs text-gray-500">Sin archivos</p>
-                )}
+                {renderCategorizedFileList(practiceFiles, 'practice')}
               </div>
               <div>
                 <div className="flex items-center justify-between gap-2">
