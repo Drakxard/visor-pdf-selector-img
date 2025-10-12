@@ -153,6 +153,47 @@ const determineDefaultTableType = (containerPath: string): 'theory' | 'practice'
   return 'theory'
 }
 
+type SegmentStyle = 'lower' | 'upper' | 'capitalized' | 'mixed'
+
+const detectSegmentStyle = (value: string | null | undefined): SegmentStyle => {
+  if (!value) return 'capitalized'
+  if (value === value.toUpperCase()) return 'upper'
+  if (value === value.toLowerCase()) return 'lower'
+  const rest = value.slice(1)
+  if (value[0] === value[0].toUpperCase() && rest === rest.toLowerCase()) {
+    return 'capitalized'
+  }
+  return 'mixed'
+}
+
+const deriveSegmentNameForType = (
+  sourceSegment: string | null | undefined,
+  targetType: 'theory' | 'practice',
+) => {
+  const normalized = sourceSegment ? normalizeSegment(sourceSegment) : ''
+  const useEnglish = normalized === 'theory' || normalized === 'practice'
+  const hasAccent = sourceSegment ? /[áéíóúÁÉÍÓÚ]/.test(sourceSegment) : false
+  let base: string
+  if (useEnglish) {
+    base = targetType === 'practice' ? 'practice' : 'theory'
+  } else if (hasAccent) {
+    base = targetType === 'practice' ? 'práctica' : 'teoría'
+  } else {
+    base = targetType === 'practice' ? 'practica' : 'teoria'
+  }
+  const style = detectSegmentStyle(sourceSegment)
+  switch (style) {
+    case 'upper':
+      return base.toUpperCase()
+    case 'lower':
+      return base.toLowerCase()
+    case 'capitalized':
+    case 'mixed':
+    default:
+      return base.charAt(0).toUpperCase() + base.slice(1)
+  }
+}
+
 type DirectoryEntry = {
   path: string
   name: string
@@ -1038,6 +1079,129 @@ export default function Home() {
       setDirPaths(filtered.directories)
     },
     [rootHandle],
+  )
+
+  const persistTableTypeChange = useCallback(
+    async (file: PdfFile, targetType: 'theory' | 'practice') => {
+      if (!rootHandle) {
+        showToastMessage('error', 'Vuelve a seleccionar la carpeta para mover archivos.')
+        return
+      }
+      const containerPath = file.containerPath ?? ''
+      const dirSegments = containerPath.split('/').filter(Boolean)
+      let classificationIndex = -1
+      for (let i = dirSegments.length - 1; i >= 0; i--) {
+        if (isTheorySegment(dirSegments[i]) || isPracticeSegment(dirSegments[i])) {
+          classificationIndex = i
+          break
+        }
+      }
+      if (classificationIndex === -1) {
+        showToastMessage(
+          'error',
+          'No se pudo identificar una carpeta de teoría o práctica para mover el archivo.',
+        )
+        return
+      }
+      const parentSegments = dirSegments.slice(0, classificationIndex)
+      const suffixSegments = dirSegments.slice(classificationIndex + 1)
+      const parentPath = parentSegments.join('/')
+      const currentSegment = dirSegments[classificationIndex] ?? null
+      const parentEntry = directoryTree[parentPath]
+      const siblingPaths = parentEntry?.subdirs ?? []
+      let targetSegment: string | null = null
+      for (const sibling of siblingPaths) {
+        const segmentName = getLastSegment(sibling)
+        if (targetType === 'practice') {
+          if (isPracticeSegment(segmentName)) {
+            targetSegment = segmentName
+            break
+          }
+        } else if (isTheorySegment(segmentName)) {
+          targetSegment = segmentName
+          break
+        }
+      }
+      if (!targetSegment) {
+        targetSegment = deriveSegmentNameForType(currentSegment, targetType)
+      }
+      const targetSegments = [...parentSegments]
+      if (targetSegment) {
+        targetSegments.push(targetSegment)
+      }
+      const targetContainerSegments = [...targetSegments, ...suffixSegments]
+      const targetContainerPath = targetContainerSegments.join('/')
+      const sourceRelativePath = containerPath
+        ? `${containerPath}/${file.file.name}`
+        : file.file.name
+      const targetRelativePath = targetContainerPath
+        ? `${targetContainerPath}/${file.file.name}`
+        : file.file.name
+      if (sourceRelativePath === targetRelativePath) {
+        return
+      }
+      try {
+        const sourceDirHandle = await getDirectoryHandleForPath(rootHandle, containerPath)
+        if (!(await verifyPermission(sourceDirHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para modificar la carpeta original.')
+          return
+        }
+        let sourceFileHandle: FileSystemFileHandle
+        try {
+          sourceFileHandle = await sourceDirHandle.getFileHandle(file.file.name)
+        } catch (error) {
+          console.error('Failed to locate source file for move', error)
+          showToastMessage('error', 'No se encontró el archivo de origen en la carpeta seleccionada.')
+          return
+        }
+        if (!(await verifyPermission(sourceFileHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para leer o escribir el archivo seleccionado.')
+          return
+        }
+        const sourceFile = await sourceFileHandle.getFile()
+        const targetDirHandle = await getDirectoryHandleForPath(
+          rootHandle,
+          targetContainerPath,
+        )
+        if (!(await verifyPermission(targetDirHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para escribir en la carpeta de destino.')
+          return
+        }
+        const targetFileHandle = await targetDirHandle.getFileHandle(file.file.name, {
+          create: true,
+        })
+        if (!(await verifyPermission(targetFileHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para escribir el archivo en la carpeta destino.')
+          return
+        }
+        const writable = await targetFileHandle.createWritable()
+        await writable.write(await sourceFile.arrayBuffer())
+        await writable.close()
+        if (containerPath !== targetContainerPath) {
+          try {
+            await sourceDirHandle.removeEntry(file.file.name)
+          } catch (error) {
+            console.error('Failed to remove source file after move', error)
+            showToastMessage(
+              'error',
+              'El archivo se copió pero no se pudo eliminar del directorio original.',
+            )
+            await refreshDirectory(rootHandle)
+            return
+          }
+        }
+        await refreshDirectory(rootHandle)
+      } catch (error) {
+        console.error('Failed to persist table type change', error)
+        showToastMessage('error', 'No se pudo mover el archivo al directorio destino.')
+      }
+    },
+    [
+      rootHandle,
+      directoryTree,
+      refreshDirectory,
+      showToastMessage,
+    ],
   )
 
   const loadConfig = async (files: File[]) => {
@@ -2434,6 +2598,8 @@ export default function Home() {
       handleDragEnd()
       return
     }
+    const fileToMove = draggedFile
+    const sourceType = draggedSourceType
     const uniqueOrderedPaths = orderedPaths.filter((path, index, arr) => {
       const firstIndex = arr.indexOf(path)
       return firstIndex === index
@@ -2471,6 +2637,9 @@ export default function Home() {
       return { ...prev, [draggedFile.path]: type }
     })
     handleDragEnd()
+    if (sourceType !== type) {
+      void persistTableTypeChange(fileToMove, type)
+    }
   }
 
   const handleDropOnItem = (targetFile: PdfFile, type: 'theory' | 'practice') =>
