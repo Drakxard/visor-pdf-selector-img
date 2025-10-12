@@ -171,6 +171,7 @@ type PropositionEntry = {
   id: number
   title: string
   read?: boolean
+  url?: string
 }
 
 type NotebookEntry = {
@@ -471,6 +472,10 @@ export default function Home() {
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
   const propositionInputRef = useRef<HTMLInputElement>(null)
+  const [showManualPropositionModal, setShowManualPropositionModal] = useState(false)
+  const [manualPropositionTitle, setManualPropositionTitle] = useState('')
+  const [manualPropositionUrl, setManualPropositionUrl] = useState('')
+  const manualPropositionTitleRef = useRef<HTMLInputElement>(null)
   const [notebooksByPath, setNotebooksByPath] = useState<Record<string, NotebookEntry[]>>({})
   const [notebooksHydrated, setNotebooksHydrated] = useState(false)
   const [showNotebookInput, setShowNotebookInput] = useState(false)
@@ -1442,9 +1447,14 @@ export default function Home() {
                   : typeof readValue === 'string'
                     ? readValue.toLowerCase() === 'true'
                     : false
+              const urlValue = record['url']
+              const urlRaw =
+                typeof urlValue === 'string' ? urlValue.trim() : ''
               if (!Number.isInteger(id) || id < 0) return null
               if (!titleRaw) return null
-              return { id, title: titleRaw, read }
+              return urlRaw
+                ? { id, title: titleRaw, read, url: urlRaw }
+                : { id, title: titleRaw, read }
             })
             .filter((entry): entry is PropositionEntry => entry !== null)
           if (entries.length) {
@@ -1739,6 +1749,14 @@ export default function Home() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [showPropositionInput])
+
+  useEffect(() => {
+    if (!showManualPropositionModal) return
+    const timer = window.setTimeout(() => {
+      manualPropositionTitleRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [showManualPropositionModal])
 
   useEffect(() => {
     setShowPropositionInput(false)
@@ -2662,12 +2680,18 @@ export default function Home() {
   }
 
   const handleOpenProposition = (entry: PropositionEntry) => {
-    const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
-    if (!normalizedBase) {
-      showToastMessage('error', 'Configura la URL base de proposiciones en ajustes.')
-      return
+    const manualUrl = entry.url?.trim()
+    let targetUrl: string | null = null
+    if (manualUrl) {
+      targetUrl = manualUrl
+    } else {
+      const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
+      if (!normalizedBase) {
+        showToastMessage('error', 'Configura la URL base de proposiciones en ajustes.')
+        return
+      }
+      targetUrl = `${normalizedBase}/proposicion/${entry.id}`
     }
-    const targetUrl = `${normalizedBase}/proposicion/${entry.id}`
     window.open(targetUrl, '_blank', 'noopener,noreferrer')
     setPropositionsByPath((prev) => {
       const prevEntries = prev[activePropositionPath] ?? []
@@ -2728,6 +2752,43 @@ export default function Home() {
     setLastPropositionId(nextId)
     setNewPropositionTitle('')
     setShowPropositionInput(false)
+  }
+
+  const handleCloseManualPropositionModal = () => {
+    setShowManualPropositionModal(false)
+    setManualPropositionTitle('')
+    setManualPropositionUrl('')
+  }
+
+  const handleConfirmManualProposition = () => {
+    const trimmedTitle = manualPropositionTitle.trim()
+    const trimmedUrl = manualPropositionUrl.trim()
+    if (!trimmedTitle) {
+      showToastMessage('error', 'Ingresa un nombre para la proposición.')
+      return
+    }
+    if (!trimmedUrl) {
+      showToastMessage('error', 'Ingresa un enlace para la proposición.')
+      return
+    }
+    if (!/^https?:\/\//i.test(trimmedUrl)) {
+      showToastMessage('error', 'El enlace debe comenzar con http:// o https://.')
+      return
+    }
+    const nextId = lastPropositionId + 1
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      const nextEntries = sortPropositions([
+        ...prevEntries,
+        { id: nextId, title: trimmedTitle, read: false, url: trimmedUrl },
+      ])
+      return {
+        ...prev,
+        [activePropositionPath]: nextEntries,
+      }
+    })
+    setLastPropositionId(nextId)
+    handleCloseManualPropositionModal()
   }
 
   const handleToggleAllPropositions = () => {
@@ -2957,9 +3018,18 @@ export default function Home() {
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-gray-500 uppercase">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setManualPropositionTitle('')
+                        setManualPropositionUrl('')
+                        setShowManualPropositionModal(true)
+                      }}
+                      className="text-sm font-semibold uppercase text-gray-500 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-400 dark:hover:text-gray-200"
+                      title="Agregar proposición manualmente"
+                    >
                       Proposiciones
-                    </h3>
+                    </button>
                     <button
                       type="button"
                       onClick={handleToggleAllPropositions}
@@ -3568,6 +3638,96 @@ export default function Home() {
               Puedes declarar hasta 6 enlaces en <code>quickLinks</code> dentro de tu config.json.
             </p>
           )}
+        </div>
+      </div>
+
+    )}
+
+    {showManualPropositionModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        onClick={handleCloseManualPropositionModal}
+      >
+        <div
+          className="w-full max-w-sm space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Agregar proposición</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Completa el nombre y el enlace para guardarla manualmente.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="text-sm underline"
+              onClick={handleCloseManualPropositionModal}
+            >
+              Cerrar
+            </button>
+          </div>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">
+                Nombre
+              </label>
+              <input
+                ref={manualPropositionTitleRef}
+                value={manualPropositionTitle}
+                onChange={(event) => setManualPropositionTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    handleConfirmManualProposition()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    handleCloseManualPropositionModal()
+                  }
+                }}
+                placeholder="Nombre de la proposición"
+                className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">
+                Enlace
+              </label>
+              <input
+                type="url"
+                value={manualPropositionUrl}
+                onChange={(event) => setManualPropositionUrl(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    handleConfirmManualProposition()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    handleCloseManualPropositionModal()
+                  }
+                }}
+                placeholder="https://…"
+                className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <button
+              type="button"
+              className="text-sm text-gray-500 underline dark:text-gray-400"
+              onClick={handleCloseManualPropositionModal}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-60"
+              onClick={handleConfirmManualProposition}
+              disabled={!manualPropositionTitle.trim() || !manualPropositionUrl.trim()}
+            >
+              Confirmar
+            </button>
+          </div>
         </div>
       </div>
     )}
