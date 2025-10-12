@@ -246,6 +246,7 @@ const PROPOSITION_BASE_URL_STORAGE_KEY = 'propositionBaseUrl'
 const TABLE_TYPE_OVERRIDE_STORAGE_KEY = 'tableTypeOverrides'
 const FILE_ORDER_STORAGE_KEY = 'fileOrderOverrides'
 const NOTEBOOK_STORAGE_KEY = 'notebooksByPath'
+const PATH_PREFIX_STORAGE_KEY = 'absolutePathPrefix'
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -494,6 +495,9 @@ export default function Home() {
   const [newFolderName, setNewFolderName] = useState('')
   const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
   const [moodleTargetOptions, setMoodleTargetOptions] = useState<MoodleTargetOption[]>([])
+  const [pathPrefix, setPathPrefix] = useState('')
+  const [pathPrefixDraft, setPathPrefixDraft] = useState('')
+  const [showPathPrefixModal, setShowPathPrefixModal] = useState(false)
   const hasPropositions = useMemo(
     () => Object.values(propositionsByPath).some((entries) => entries.length > 0),
     [propositionsByPath],
@@ -620,6 +624,12 @@ export default function Home() {
       setGroqSaving(false)
     }
   }, [groqModel, groqPrompt, showToastMessage])
+  const handleSavePathPrefix = useCallback(() => {
+    const trimmed = pathPrefixDraft.trim()
+    setPathPrefix(trimmed)
+    setShowPathPrefixModal(false)
+    showToastMessage('success', trimmed ? 'Ruta base guardada' : 'Ruta base eliminada')
+  }, [pathPrefixDraft, showToastMessage])
   const handleChooseMoodleTarget = useCallback((option: MoodleTargetOption) => {
     setMoodleTargetPath(option.path)
     setMoodleTargetOptions([])
@@ -1582,6 +1592,13 @@ export default function Home() {
     } catch {}
   }, [])
 
+  useEffect(() => {
+    const storedPrefix = getStoredItem(PATH_PREFIX_STORAGE_KEY)
+    if (storedPrefix !== null) {
+      setPathPrefix(storedPrefix)
+    }
+  }, [])
+
   // persist completed
   useEffect(() => {
     setStoredItem("completed", JSON.stringify(completed))
@@ -1688,6 +1705,17 @@ export default function Home() {
     if (!mounted) return
     setStoredItem('moodleFolders', JSON.stringify(moodleFolders))
   }, [moodleFolders, mounted])
+
+  useEffect(() => {
+    if (!mounted) return
+    setStoredItem(PATH_PREFIX_STORAGE_KEY, pathPrefix ? pathPrefix : null)
+  }, [mounted, pathPrefix])
+
+  useEffect(() => {
+    if (showPathPrefixModal) {
+      setPathPrefixDraft(pathPrefix)
+    }
+  }, [pathPrefix, showPathPrefixModal])
 
 
   // build directory structure from selected directory
@@ -2776,6 +2804,65 @@ export default function Home() {
     return segments.length ? segments.join(" / ") : "Carpetas"
   }
 
+  const rootFolderName = rootHandle?.name ?? ''
+  const hasRootHandle = !!rootHandle
+  const absolutePath = useMemo(() => {
+    const trimmedPrefix = pathPrefix.trim()
+    const base = trimmedPrefix || rootFolderName
+    const normalizedBase = base
+      ? base.split('/').join('\\').replace(/\+$/g, '')
+      : ''
+    const segments = (viewWeek ?? '')
+      .split('/')
+      .filter(Boolean)
+    if (!normalizedBase && segments.length === 0) {
+      return ''
+    }
+    const relativePart = segments.join('\\')
+    if (!normalizedBase) {
+      return relativePart
+    }
+    return relativePart ? `${normalizedBase}\\${relativePart}` : normalizedBase
+  }, [pathPrefix, rootFolderName, viewWeek])
+
+  const copyButtonTitle = absolutePath
+    ? `Copiar ruta (${absolutePath})`
+    : hasRootHandle
+      ? 'Configura la ruta base para copiar la ruta completa.'
+      : 'Selecciona una carpeta para habilitar la copia de ruta.'
+
+  const handleCopyAbsolutePath = useCallback(async () => {
+    if (!absolutePath) {
+      showToastMessage('error', 'Selecciona una carpeta para copiar su ruta.')
+      return
+    }
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(absolutePath)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = absolutePath
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        const successful = document.execCommand('copy')
+        document.body.removeChild(textarea)
+        if (!successful) {
+          throw new Error('execCommand failed')
+        }
+      }
+      showToastMessage('success', 'Ruta copiada al portapapeles')
+    } catch (error) {
+      console.error('Failed to copy absolute path', error)
+      showToastMessage('error', 'No se pudo copiar la ruta.')
+    }
+  }, [absolutePath, showToastMessage])
+
+  const breadcrumbLabel = formatBreadcrumb(viewWeek)
+
   // main interface
   return (
     <>
@@ -2797,7 +2884,38 @@ export default function Home() {
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+            <div className="flex items-center gap-2">
+              <h2
+                className="text-xl flex-1 truncate"
+                title={absolutePath || breadcrumbLabel}
+              >
+                {breadcrumbLabel}
+              </h2>
+              <button
+                type="button"
+                onClick={handleCopyAbsolutePath}
+                disabled={!absolutePath}
+                className="inline-flex h-8 w-8 flex-none items-center justify-center rounded border border-gray-300 p-1 text-gray-600 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                title={copyButtonTitle}
+                aria-label="Copiar ruta actual"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="h-4 w-4"
+                  aria-hidden="true"
+                >
+                  <rect x={9} y={9} width={13} height={13} rx={2} ry={2} />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <span className="sr-only">Copiar ruta actual</span>
+              </button>
+            </div>
             {routeScope.scope === 'subject' && subjectWeekOptions.length > 0 && (
               <div className="flex flex-col gap-1">
                 <label
@@ -3208,6 +3326,15 @@ export default function Home() {
             className="block w-full text-left"
             onClick={() => {
               setShowSettings(false)
+              setShowPathPrefixModal(true)
+            }}
+          >
+            Configurar ruta base
+          </button>
+          <button
+            className="block w-full text-left"
+            onClick={() => {
+              setShowSettings(false)
               setGroqModelsError(null)
               setGroqModelError(null)
               setShowGroqModal(true)
@@ -3228,6 +3355,62 @@ export default function Home() {
         </div>
       )}
     </div>
+
+    {showPathPrefixModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        onClick={() => setShowPathPrefixModal(false)}
+      >
+        <div
+          className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Configurar ruta base</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Define el prefijo que se usará al copiar rutas absolutas. Deja el campo vacío para usar solo el nombre de la carpeta raíz.
+              </p>
+            </div>
+            <button className="text-sm underline" onClick={() => setShowPathPrefixModal(false)}>
+              Cerrar
+            </button>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="path-prefix-input">
+              Ruta base
+            </label>
+            <input
+              id="path-prefix-input"
+              type="text"
+              value={pathPrefixDraft}
+              onChange={(event) => setPathPrefixDraft(event.target.value)}
+              placeholder="C:\\Users\\Rafael\\Desktop\\gestor"
+              className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Se añadirá antes de la ruta relativa seleccionada al copiarla al portapapeles.
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <button
+              type="button"
+              className="px-3 py-1 border rounded text-sm dark:border-gray-600"
+              onClick={() => setShowPathPrefixModal(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1 rounded bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-500"
+              onClick={handleSavePathPrefix}
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {showGroqModal && (
       <div
