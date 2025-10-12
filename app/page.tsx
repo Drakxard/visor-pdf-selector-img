@@ -179,6 +179,13 @@ type NotebookEntry = {
   url: string
 }
 
+const normalizeBasePath = (value: string) => {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  const replaced = trimmed.replace(/\//g, '\\')
+  return replaced.replace(/\\+$/g, '')
+}
+
 const sortPropositions = (entries: PropositionEntry[]) => {
   const unread: PropositionEntry[] = []
   const read: PropositionEntry[] = []
@@ -246,6 +253,7 @@ const PROPOSITION_BASE_URL_STORAGE_KEY = 'propositionBaseUrl'
 const TABLE_TYPE_OVERRIDE_STORAGE_KEY = 'tableTypeOverrides'
 const FILE_ORDER_STORAGE_KEY = 'fileOrderOverrides'
 const NOTEBOOK_STORAGE_KEY = 'notebooksByPath'
+const PATH_COPY_BASE_STORAGE_KEY = 'pathCopyBase'
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
@@ -494,6 +502,9 @@ export default function Home() {
   const [newFolderName, setNewFolderName] = useState('')
   const [moodleTargetPath, setMoodleTargetPath] = useState<string | null>(null)
   const [moodleTargetOptions, setMoodleTargetOptions] = useState<MoodleTargetOption[]>([])
+  const [pathCopyBase, setPathCopyBase] = useState('')
+  const [pathCopyBaseDraft, setPathCopyBaseDraft] = useState('')
+  const [showPathCopyModal, setShowPathCopyModal] = useState(false)
   const hasPropositions = useMemo(
     () => Object.values(propositionsByPath).some((entries) => entries.length > 0),
     [propositionsByPath],
@@ -1267,6 +1278,7 @@ export default function Home() {
       const handle = await (window as any).showDirectoryPicker()
       await saveHandle(handle)
       setRootHandle(handle)
+      setPathCopyBase((prev) => (prev ? prev : normalizeBasePath(handle.name || '')))
       const entries = await readAllEntries(handle)
       const filtered = filterSystemEntries(entries.files, entries.directories)
       setNames([])
@@ -1429,6 +1441,7 @@ export default function Home() {
         const handle = await loadHandle()
         if (handle && (await verifyPermission(handle))) {
           setRootHandle(handle)
+          setPathCopyBase((prev) => (prev ? prev : normalizeBasePath(handle.name || '')))
           const entries = await readAllEntries(handle)
           const filtered = filterSystemEntries(entries.files, entries.directories)
           setDirFiles(filtered.files)
@@ -1479,6 +1492,18 @@ export default function Home() {
     const storedPractice = getStoredItem("practice")
     if (storedPractice) setPractice(JSON.parse(storedPractice))
   }, [])
+
+  useEffect(() => {
+    const storedPathBase = getStoredItem(PATH_COPY_BASE_STORAGE_KEY)
+    if (storedPathBase !== null) {
+      setPathCopyBase(storedPathBase)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!showPathCopyModal) return
+    setPathCopyBaseDraft(pathCopyBase)
+  }, [pathCopyBase, showPathCopyModal])
 
   useEffect(() => {
     const storedOverrides = getStoredItem(TABLE_TYPE_OVERRIDE_STORAGE_KEY)
@@ -2469,6 +2494,79 @@ export default function Home() {
     handleDragEnd()
   }
 
+  const rootDirectoryName = useMemo(() => {
+    if (rootHandle?.name) return rootHandle.name
+    for (const file of dirFiles) {
+      const rel = ((file as any).webkitRelativePath || '') as string
+      if (!rel) continue
+      const [firstSegment] = rel.split('/')
+      if (firstSegment) return firstSegment
+    }
+    return ''
+  }, [dirFiles, rootHandle])
+
+  const pathForCopy = useMemo(() => {
+    const base = normalizeBasePath(pathCopyBase || rootDirectoryName)
+    const segments = (viewWeek ?? '')
+      .split('/')
+      .filter(Boolean)
+      .map((segment) => segment.replace(/\//g, '\\'))
+    if (!base && segments.length === 0) return ''
+    if (!base) return segments.join('\\')
+    if (!segments.length) return base
+    return `${base}\\${segments.join('\\')}`
+  }, [pathCopyBase, rootDirectoryName, viewWeek])
+
+  const canCopyPath = useMemo(() => pathForCopy.trim().length > 0, [pathForCopy])
+
+  const handleCopyPath = useCallback(async () => {
+    if (!canCopyPath) {
+      showToastMessage('error', 'No hay ruta disponible para copiar.')
+      return
+    }
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard ||
+      typeof navigator.clipboard.writeText !== 'function'
+    ) {
+      showToastMessage('error', 'No se puede acceder al portapapeles.')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(pathForCopy)
+      showToastMessage('success', 'Ruta copiada')
+    } catch (error) {
+      console.error('Failed to copy path', error)
+      showToastMessage('error', 'No se pudo copiar la ruta.')
+    }
+  }, [canCopyPath, pathForCopy, showToastMessage])
+
+  const copyPathButton = useCallback(
+    (extraClass?: string) => (
+      <button
+        type="button"
+        onClick={handleCopyPath}
+        disabled={!canCopyPath}
+        className={`rounded border border-gray-300 px-2 text-sm leading-6 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:hover:bg-gray-800 ${
+          extraClass ?? ''
+        }`}
+        aria-label="Copiar ruta actual"
+        title={canCopyPath ? `Copiar ruta: ${pathForCopy}` : 'No hay ruta para copiar'}
+      >
+        ⧉
+      </button>
+    ),
+    [canCopyPath, handleCopyPath, pathForCopy],
+  )
+
+  const handleSavePathCopyBase = useCallback(() => {
+    const normalized = normalizeBasePath(pathCopyBaseDraft)
+    setPathCopyBase(normalized)
+    setStoredItem(PATH_COPY_BASE_STORAGE_KEY, normalized ? normalized : null)
+    setShowPathCopyModal(false)
+    showToastMessage('success', 'Ruta base guardada')
+  }, [pathCopyBaseDraft, showToastMessage])
+
   const handleDropOnItem = (targetFile: PdfFile, type: 'theory' | 'practice') =>
     (event: DragEvent<HTMLLIElement>) => {
       if (!draggedFile || !draggedSourceType) return
@@ -2797,7 +2895,10 @@ export default function Home() {
             </div>
           )}
           <div className="flex flex-col gap-2">
-            <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-xl">{formatBreadcrumb(viewWeek)}</h2>
+              {copyPathButton('shrink-0')}
+            </div>
             {routeScope.scope === 'subject' && subjectWeekOptions.length > 0 && (
               <div className="flex flex-col gap-1">
                 <label
@@ -3057,6 +3158,7 @@ export default function Home() {
                   {/* <span>{formatHMS(elapsedSeconds)}</span> */}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {copyPathButton('shrink-0')}
                   <button
                     onClick={() => {
                       setViewerOpen(false)
@@ -3114,6 +3216,7 @@ export default function Home() {
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {copyPathButton('shrink-0')}
                 <button onClick={prevPdf} disabled={queueIndex <= 0}>
                   ←
                 </button>
@@ -3223,6 +3326,15 @@ export default function Home() {
             }}
           >
             Proposiciones
+          </button>
+          <button
+            className="block w-full text-left"
+            onClick={() => {
+              setShowSettings(false)
+              setShowPathCopyModal(true)
+            }}
+          >
+            Configurar ruta base
           </button>
           <button className="block w-full text-left" onClick={() => setShowDarkModal(true)}>Configurar modo oscuro</button>
         </div>
@@ -3391,6 +3503,60 @@ export default function Home() {
                 Guardar
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showPathCopyModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        onClick={() => setShowPathCopyModal(false)}
+      >
+        <div
+          className="w-full max-w-md space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Ruta base para copiar</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Se usará como prefijo al copiar la carpeta actual.
+              </p>
+            </div>
+            <button className="text-sm underline" onClick={() => setShowPathCopyModal(false)}>
+              Cerrar
+            </button>
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="path-copy-base">Ruta base</label>
+            <input
+              id="path-copy-base"
+              type="text"
+              value={pathCopyBaseDraft}
+              onChange={(event) => setPathCopyBaseDraft(event.target.value)}
+              placeholder="C:\\Users\\Nombre\\Desktop\\gestor"
+              className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Incluye la carpeta raíz seleccionada. Se utilizarán \\ como separadores.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="px-3 py-1 border rounded text-sm dark:border-gray-600"
+              onClick={() => setShowPathCopyModal(false)}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1 rounded bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-500"
+              onClick={handleSavePathCopyBase}
+            >
+              Guardar
+            </button>
           </div>
         </div>
       </div>
