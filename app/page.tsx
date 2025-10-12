@@ -175,6 +175,7 @@ type PropositionEntry = {
   id: number
   title: string
   read?: boolean
+  confirmUrl?: string | null
 }
 
 type NotebookEntry = {
@@ -446,6 +447,8 @@ export default function Home() {
   const [showDarkModal, setShowDarkModal] = useState(false)
   const [showGroqModal, setShowGroqModal] = useState(false)
   const [showPropositionModal, setShowPropositionModal] = useState(false)
+  const [showManualPropositionModal, setShowManualPropositionModal] =
+    useState(false)
   const [groqModel, setGroqModel] = useState(DEFAULT_GROQ_MODEL)
   const [groqModels, setGroqModels] = useState<string[]>([])
   const [groqPrompt, setGroqPrompt] = useState(DEFAULT_GROQ_PROMPT)
@@ -476,6 +479,10 @@ export default function Home() {
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
   const propositionInputRef = useRef<HTMLInputElement>(null)
+  const [manualPropositionTitle, setManualPropositionTitle] = useState('')
+  const [manualPropositionConfirmUrl, setManualPropositionConfirmUrl] =
+    useState('')
+  const manualPropositionInputRef = useRef<HTMLInputElement>(null)
   const [notebooksByPath, setNotebooksByPath] = useState<Record<string, NotebookEntry[]>>({})
   const [notebooksHydrated, setNotebooksHydrated] = useState(false)
   const [showNotebookInput, setShowNotebookInput] = useState(false)
@@ -1459,9 +1466,18 @@ export default function Home() {
                   : typeof readValue === 'string'
                     ? readValue.toLowerCase() === 'true'
                     : false
+              const confirmUrlRaw =
+                typeof record['confirmUrl'] === 'string'
+                  ? record['confirmUrl'].trim()
+                  : ''
               if (!Number.isInteger(id) || id < 0) return null
               if (!titleRaw) return null
-              return { id, title: titleRaw, read }
+              return {
+                id,
+                title: titleRaw,
+                read,
+                confirmUrl: confirmUrlRaw || undefined,
+              }
             })
             .filter((entry): entry is PropositionEntry => entry !== null)
           if (entries.length) {
@@ -1489,6 +1505,14 @@ export default function Home() {
     if (!showPropositionModal) return
     setPropositionBaseUrlDraft(propositionBaseUrl)
   }, [propositionBaseUrl, showPropositionModal])
+
+  useEffect(() => {
+    if (!showManualPropositionModal) return
+    const timer = window.setTimeout(() => {
+      manualPropositionInputRef.current?.focus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [showManualPropositionModal])
 
   useEffect(() => {
     if (!showMoodleModal) {
@@ -2679,13 +2703,18 @@ export default function Home() {
   }
 
   const handleOpenProposition = (entry: PropositionEntry) => {
-    const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
-    if (!normalizedBase) {
-      showToastMessage('error', 'Configura la URL base de proposiciones en ajustes.')
-      return
+    const manualUrl = entry.confirmUrl?.toString().trim()
+    if (manualUrl) {
+      window.open(manualUrl, '_blank', 'noopener,noreferrer')
+    } else {
+      const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
+      if (!normalizedBase) {
+        showToastMessage('error', 'Configura la URL base de proposiciones en ajustes.')
+        return
+      }
+      const targetUrl = `${normalizedBase}/proposicion/${entry.id}`
+      window.open(targetUrl, '_blank', 'noopener,noreferrer')
     }
-    const targetUrl = `${normalizedBase}/proposicion/${entry.id}`
-    window.open(targetUrl, '_blank', 'noopener,noreferrer')
     setPropositionsByPath((prev) => {
       const prevEntries = prev[activePropositionPath] ?? []
       if (!prevEntries.length) return prev
@@ -2745,6 +2774,51 @@ export default function Home() {
     setLastPropositionId(nextId)
     setNewPropositionTitle('')
     setShowPropositionInput(false)
+  }
+
+  const handleCloseManualPropositionModal = () => {
+    setShowManualPropositionModal(false)
+    setManualPropositionTitle('')
+    setManualPropositionConfirmUrl('')
+  }
+
+  const handleManualPropositionSubmit = () => {
+    const trimmedTitle = manualPropositionTitle.trim()
+    const trimmedConfirmUrl = manualPropositionConfirmUrl.trim()
+    if (!trimmedTitle) {
+      showToastMessage('error', 'Ingresa un nombre para la proposición.')
+      return
+    }
+    if (!trimmedConfirmUrl) {
+      showToastMessage('error', 'Ingresa el enlace de confirmación.')
+      return
+    }
+    let normalizedUrl: string
+    try {
+      const parsed = new URL(trimmedConfirmUrl)
+      normalizedUrl = parsed.toString()
+    } catch (error) {
+      console.error('Invalid confirm URL for proposition', error)
+      showToastMessage('error', 'Ingresa un enlace válido para confirmar.')
+      return
+    }
+    const nextId = lastPropositionId + 1
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      const nextEntries = sortPropositions([
+        ...prevEntries,
+        { id: nextId, title: trimmedTitle, read: false, confirmUrl: normalizedUrl },
+      ])
+      return {
+        ...prev,
+        [activePropositionPath]: nextEntries,
+      }
+    })
+    setLastPropositionId(nextId)
+    setManualPropositionTitle('')
+    setManualPropositionConfirmUrl('')
+    setShowManualPropositionModal(false)
+    showToastMessage('success', 'Proposición agregada')
   }
 
   const handleToggleAllPropositions = () => {
@@ -2975,7 +3049,18 @@ export default function Home() {
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold text-gray-500 uppercase">
-                      Proposiciones
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setManualPropositionTitle('')
+                          setManualPropositionConfirmUrl('')
+                          setShowManualPropositionModal(true)
+                        }}
+                        className="bg-transparent p-0 text-current underline decoration-dotted underline-offset-4 transition hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                        title="Agregar proposición manual"
+                      >
+                        Proposiciones
+                      </button>
                     </h3>
                     <button
                       type="button"
@@ -3046,6 +3131,16 @@ export default function Home() {
                         >
                           {entry.title}
                         </button>
+                        {entry.confirmUrl && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenProposition(entry)}
+                            className="text-xs font-medium text-indigo-600 underline decoration-dotted underline-offset-2 transition hover:decoration-solid focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                            aria-label={`Abrir enlace de confirmación para ${entry.title}`}
+                          >
+                            confirmar
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleRemoveProposition(entry)}
@@ -3545,6 +3640,74 @@ export default function Home() {
                 Guardar
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showManualPropositionModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+        onClick={handleCloseManualPropositionModal}
+      >
+        <div
+          className="w-full max-w-sm space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Agregar proposición manual</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Registra un subtema y el enlace para confirmarlo manualmente.
+              </p>
+            </div>
+            <button className="text-sm underline" onClick={handleCloseManualPropositionModal}>
+              Cerrar
+            </button>
+          </div>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-sm font-medium" htmlFor="manual-proposition-title">
+                Nombre de la proposición
+              </label>
+              <input
+                id="manual-proposition-title"
+                ref={manualPropositionInputRef}
+                value={manualPropositionTitle}
+                onChange={(event) => setManualPropositionTitle(event.target.value)}
+                className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+                placeholder="Ej. Lógica proposicional"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium" htmlFor="manual-proposition-confirm-url">
+                Enlace de confirmación
+              </label>
+              <input
+                id="manual-proposition-confirm-url"
+                type="url"
+                value={manualPropositionConfirmUrl}
+                onChange={(event) => setManualPropositionConfirmUrl(event.target.value)}
+                className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+                placeholder="https://..."
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              className="px-3 py-1 border rounded text-sm dark:border-gray-600"
+              onClick={handleCloseManualPropositionModal}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="px-3 py-1 rounded bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-500"
+              onClick={handleManualPropositionSubmit}
+            >
+              Confirmar
+            </button>
           </div>
         </div>
       </div>
