@@ -918,6 +918,7 @@
 No agregues texto adicional, ni explicaciones, ni bloques de código, ni comillas triples.
 No devuelvas varios objetos.
 Tu respuesta completa debe ser un único objeto JSON válido.`;
+      const DEFAULT_GROQ_IMAGE_PROMPT_TEXT = 'Transcribe el texto de la imagen';
       const PROPOSITION_BASE_URL_KEY = 'propositionBaseUrl';
       const PROPOSITION_LAST_ID_KEY = 'propositionLastId';
       const TOPIC_LINK_ICON_SRC = '/visor/images/subtema-link.svg';
@@ -1695,6 +1696,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             return {
               model: DEFAULT_GROQ_MODEL,
               prompt: DEFAULT_GROQ_PROMPT_TEXT,
+              imagePrompt: DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
             };
           }
           const parsed = JSON.parse(raw);
@@ -1702,19 +1704,24 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             return {
               model: DEFAULT_GROQ_MODEL,
               prompt: DEFAULT_GROQ_PROMPT_TEXT,
+              imagePrompt: DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
             };
           }
           const model = typeof parsed.model === 'string' ? parsed.model.trim() : '';
           const promptValue = typeof parsed.prompt === 'string' ? parsed.prompt : '';
+          const imagePromptValue =
+            typeof parsed.imagePrompt === 'string' ? parsed.imagePrompt : '';
           return {
             model: model || DEFAULT_GROQ_MODEL,
             prompt: promptValue.trim() || DEFAULT_GROQ_PROMPT_TEXT,
+            imagePrompt: imagePromptValue.trim() || DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
           };
         } catch (error) {
           console.warn('No se pudo leer la configuración de Groq', error);
           return {
             model: DEFAULT_GROQ_MODEL,
             prompt: DEFAULT_GROQ_PROMPT_TEXT,
+            imagePrompt: DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
           };
         }
       }
@@ -3547,86 +3554,12 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
-      async function transcribeInstantSelectionsWithGroq() {
-        if (!instantSelections.length) return { topicText: '', detailTexts: [] };
-        if (!pdfDoc) return { topicText: '', detailTexts: [] };
-        const [topicSelection, ...detailSelections] = instantSelections;
-        const topicText = (await extractTextFromSelection(topicSelection)) || '';
-        if (!detailSelections.length) {
-          showToast('Agrega al menos una selección adicional para transcribir.', 'info');
-          return { topicText, detailTexts: [] };
-        }
-        const config = getGroqVisionConfig();
-        if (!config || !config.model) {
-          showToast('Configura el modelo y el prompt en los ajustes (⚙️).', 'info');
-          return null;
-        }
-        const ratio = window.devicePixelRatio || 1;
-        const TARGET_LONG_SIDE = 1800;
-        const MIN_RENDER_SCALE = 2;
-        const MAX_RENDER_SCALE = 10;
-        const images = [];
-
-        for (const selection of detailSelections) {
-          const { pageNum, xp1, yp1, xp2, yp2 } = selection;
-          const widthFrac = Math.abs(xp2 - xp1);
-          const heightFrac = Math.abs(yp2 - yp1);
-          if (widthFrac === 0 || heightFrac === 0) continue;
-
-          const page = await pdfDoc.getPage(pageNum);
-          const baseViewport = page.getViewport({ scale: 1 });
-          const cssWidth = widthFrac * baseViewport.width;
-          const cssHeight = heightFrac * baseViewport.height;
-          const longestSide = Math.max(cssWidth, cssHeight);
-          const desiredScale = longestSide ? Math.max(1, TARGET_LONG_SIDE / longestSide) : 1;
-          const renderScale = Math.min(
-            MAX_RENDER_SCALE,
-            Math.max(MIN_RENDER_SCALE, desiredScale * ratio),
-          );
-          const viewport = page.getViewport({ scale: renderScale });
-          const minXp = Math.min(xp1, xp2);
-          const minYp = Math.min(yp1, yp2);
-          const x1 = minXp * viewport.width;
-          const y1 = minYp * viewport.height;
-          const w = widthFrac * viewport.width;
-          const h = heightFrac * viewport.height;
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.max(1, Math.round(w));
-          canvas.height = Math.max(1, Math.round(h));
-          const ctx = canvas.getContext('2d', { alpha: false });
-          if (!ctx) continue;
-          ctx.fillStyle = '#fff';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = 'high';
-          await page.render({
-            canvasContext: ctx,
-            viewport,
-            transform: [1, 0, 0, 1, -x1, -y1],
-          }).promise;
-
-          const state = pageStates.get(pageNum);
-          const drawCanvas = state?.wrapper?.querySelector('.draw-canvas');
-          if (drawCanvas) {
-            const sx2 = Math.round(minXp * drawCanvas.width);
-            const sy2 = Math.round(minYp * drawCanvas.height);
-            const sw2 = Math.max(1, Math.round(widthFrac * drawCanvas.width));
-            const sh2 = Math.max(1, Math.round(heightFrac * drawCanvas.height));
-            ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
-          }
-
-          images.push(canvas.toDataURL('image/png'));
-        }
-
-        if (!images.length) {
-          showToast('No hay selecciones válidas para enviar.', 'info');
-          return { topicText, detailTexts: [] };
-        }
-
+      async function callGroqVision(model, prompt, images, defaultPrompt = DEFAULT_GROQ_PROMPT_TEXT) {
+        const promptText = (typeof prompt === 'string' ? prompt : '').trim() || defaultPrompt;
         const response = await fetch('/api/groq/transcribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: config.model, prompt: config.prompt, images }),
+          body: JSON.stringify({ model, prompt: promptText, images }),
         });
         if (!response.ok) {
           let message = 'Error al transcribir las selecciones.';
@@ -3639,9 +3572,125 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           throw new Error(message);
         }
         const data = await response.json();
-        const transcriptions = Array.isArray(data?.transcriptions)
+        return Array.isArray(data?.transcriptions)
           ? data.transcriptions.map((item) => (typeof item === 'string' ? item : ''))
           : [];
+      }
+
+      async function transcribeInstantSelectionsWithGroq() {
+        if (!instantSelections.length) return { topicText: '', detailTexts: [] };
+        if (!pdfDoc) return { topicText: '', detailTexts: [] };
+        const [topicSelection, ...detailSelections] = instantSelections;
+        const config = getGroqVisionConfig();
+        if (!config || !config.model) {
+          showToast('Configura el modelo y los prompts en los ajustes (⚙️).', 'info');
+          return null;
+        }
+        const ratio = window.devicePixelRatio || 1;
+        const TARGET_LONG_SIDE = 1800;
+        const MIN_RENDER_SCALE = 2;
+        const MAX_RENDER_SCALE = 10;
+        const renderSelectionToImage = async (selection) => {
+          if (!selection) return null;
+          try {
+            const { pageNum, xp1, yp1, xp2, yp2 } = selection;
+            const widthFrac = Math.abs(xp2 - xp1);
+            const heightFrac = Math.abs(yp2 - yp1);
+            if (widthFrac === 0 || heightFrac === 0) return null;
+
+            const page = await pdfDoc.getPage(pageNum);
+            const baseViewport = page.getViewport({ scale: 1 });
+            const cssWidth = widthFrac * baseViewport.width;
+            const cssHeight = heightFrac * baseViewport.height;
+            const longestSide = Math.max(cssWidth, cssHeight);
+            const desiredScale = longestSide ? Math.max(1, TARGET_LONG_SIDE / longestSide) : 1;
+            const renderScale = Math.min(
+              MAX_RENDER_SCALE,
+              Math.max(MIN_RENDER_SCALE, desiredScale * ratio),
+            );
+            const viewport = page.getViewport({ scale: renderScale });
+            const minXp = Math.min(xp1, xp2);
+            const minYp = Math.min(yp1, yp2);
+            const x1 = minXp * viewport.width;
+            const y1 = minYp * viewport.height;
+            const w = widthFrac * viewport.width;
+            const h = heightFrac * viewport.height;
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(w));
+            canvas.height = Math.max(1, Math.round(h));
+            const ctx = canvas.getContext('2d', { alpha: false });
+            if (!ctx) return null;
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            await page.render({
+              canvasContext: ctx,
+              viewport,
+              transform: [1, 0, 0, 1, -x1, -y1],
+            }).promise;
+
+            const state = pageStates.get(pageNum);
+            const drawCanvas = state?.wrapper?.querySelector('.draw-canvas');
+            if (drawCanvas) {
+              const sx2 = Math.round(minXp * drawCanvas.width);
+              const sy2 = Math.round(minYp * drawCanvas.height);
+              const sw2 = Math.max(1, Math.round(widthFrac * drawCanvas.width));
+              const sh2 = Math.max(1, Math.round(heightFrac * drawCanvas.height));
+              ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
+            }
+
+            return canvas.toDataURL('image/png');
+          } catch (error) {
+            console.error('No se pudo renderizar la selección para Groq', error);
+            return null;
+          }
+        };
+
+        let topicText = ((await extractTextFromSelection(topicSelection)) || '').trim();
+        if (!topicText) {
+          const topicImage = await renderSelectionToImage(topicSelection);
+          if (topicImage) {
+            try {
+              const [imageTranscription] = await callGroqVision(
+                config.model,
+                config.imagePrompt,
+                [topicImage],
+                DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
+              );
+              if (imageTranscription) {
+                topicText = imageTranscription.trim();
+              }
+            } catch (error) {
+              console.error('Error transcribiendo la selección principal con Groq', error);
+            }
+          }
+        }
+
+        if (!detailSelections.length) {
+          showToast('Agrega al menos una selección adicional para transcribir.', 'info');
+          return { topicText, detailTexts: [] };
+        }
+
+        const images = [];
+        for (const selection of detailSelections) {
+          const rendered = await renderSelectionToImage(selection);
+          if (rendered) {
+            images.push(rendered);
+          }
+        }
+
+        if (!images.length) {
+          showToast('No hay selecciones válidas para enviar.', 'info');
+          return { topicText, detailTexts: [] };
+        }
+
+        const transcriptions = await callGroqVision(
+          config.model,
+          config.prompt,
+          images,
+          DEFAULT_GROQ_PROMPT_TEXT,
+        );
         const detailTexts = transcriptions
           .map((entry) => {
             let current = entry.trim();

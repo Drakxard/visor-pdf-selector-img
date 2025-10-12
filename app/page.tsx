@@ -13,7 +13,11 @@ import {
 import { useTheme } from "next-themes"
 import { usePathname, useRouter } from "next/navigation"
 
-import { DEFAULT_GROQ_MODEL, DEFAULT_GROQ_PROMPT } from "@/lib/groq"
+import {
+  DEFAULT_GROQ_IMAGE_PROMPT,
+  DEFAULT_GROQ_MODEL,
+  DEFAULT_GROQ_PROMPT,
+} from "@/lib/groq"
 
 const days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"]
 
@@ -445,6 +449,7 @@ export default function Home() {
   const [groqModel, setGroqModel] = useState(DEFAULT_GROQ_MODEL)
   const [groqModels, setGroqModels] = useState<string[]>([])
   const [groqPrompt, setGroqPrompt] = useState(DEFAULT_GROQ_PROMPT)
+  const [groqImagePrompt, setGroqImagePrompt] = useState(DEFAULT_GROQ_IMAGE_PROMPT)
   const [groqModelsError, setGroqModelsError] = useState<string | null>(null)
   const [groqModelError, setGroqModelError] = useState<string | null>(null)
   const [groqLoadingModels, setGroqLoadingModels] = useState(false)
@@ -678,13 +683,20 @@ export default function Home() {
       return
     }
     const trimmedPrompt = groqPrompt.trim() || DEFAULT_GROQ_PROMPT
+    const trimmedImagePrompt =
+      groqImagePrompt.trim() || DEFAULT_GROQ_IMAGE_PROMPT
     setGroqSaving(true)
     try {
       setStoredItem(
         GROQ_CONFIG_STORAGE_KEY,
-        JSON.stringify({ model: groqModel, prompt: trimmedPrompt }),
+        JSON.stringify({
+          model: groqModel,
+          prompt: trimmedPrompt,
+          imagePrompt: trimmedImagePrompt,
+        }),
       )
       setGroqPrompt(trimmedPrompt)
+      setGroqImagePrompt(trimmedImagePrompt)
       setGroqModelError(null)
       showToastMessage('success', 'Configuración guardada')
       setShowGroqModal(false)
@@ -835,10 +847,15 @@ export default function Home() {
             typeof parsed.prompt === 'string' && parsed.prompt.trim()
               ? parsed.prompt
               : DEFAULT_GROQ_PROMPT
+          const storedImagePrompt =
+            typeof parsed.imagePrompt === 'string' && parsed.imagePrompt.trim()
+              ? parsed.imagePrompt
+              : DEFAULT_GROQ_IMAGE_PROMPT
           if (storedModel) {
             setGroqModel(storedModel)
           }
           setGroqPrompt(storedPrompt)
+          setGroqImagePrompt(storedImagePrompt)
         }
       } catch (error) {
         console.warn('No se pudo leer la configuración de Groq guardada', error)
@@ -3426,6 +3443,18 @@ export default function Home() {
               value={groqPrompt}
               onChange={(event) => setGroqPrompt(event.target.value)}
               rows={4}
+              className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="groq-image-prompt">
+              Prompt para imágenes
+            </label>
+            <textarea
+              id="groq-image-prompt"
+              value={groqImagePrompt}
+              onChange={(event) => setGroqImagePrompt(event.target.value)}
+              rows={3}
               className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
             />
           </div>
