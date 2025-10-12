@@ -918,6 +918,10 @@
 No agregues texto adicional, ni explicaciones, ni bloques de código, ni comillas triples.
 No devuelvas varios objetos.
 Tu respuesta completa debe ser un único objeto JSON válido.`;
+      const DEFAULT_GROQ_IMAGE_PROMPT_TEXT = 'Transcribe el texto de la imagen.';
+      const SELECTION_RENDER_TARGET_LONG_SIDE = 1800;
+      const SELECTION_RENDER_MIN_SCALE = 2;
+      const SELECTION_RENDER_MAX_SCALE = 10;
       const PROPOSITION_BASE_URL_KEY = 'propositionBaseUrl';
       const PROPOSITION_LAST_ID_KEY = 'propositionLastId';
       const TOPIC_LINK_ICON_SRC = '/visor/images/subtema-link.svg';
@@ -1695,6 +1699,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             return {
               model: DEFAULT_GROQ_MODEL,
               prompt: DEFAULT_GROQ_PROMPT_TEXT,
+              imagePrompt: DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
             };
           }
           const parsed = JSON.parse(raw);
@@ -1702,19 +1707,23 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             return {
               model: DEFAULT_GROQ_MODEL,
               prompt: DEFAULT_GROQ_PROMPT_TEXT,
+              imagePrompt: DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
             };
           }
           const model = typeof parsed.model === 'string' ? parsed.model.trim() : '';
           const promptValue = typeof parsed.prompt === 'string' ? parsed.prompt : '';
+          const imagePromptValue = typeof parsed.imagePrompt === 'string' ? parsed.imagePrompt : '';
           return {
             model: model || DEFAULT_GROQ_MODEL,
             prompt: promptValue.trim() || DEFAULT_GROQ_PROMPT_TEXT,
+            imagePrompt: imagePromptValue.trim() || DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
           };
         } catch (error) {
           console.warn('No se pudo leer la configuración de Groq', error);
           return {
             model: DEFAULT_GROQ_MODEL,
             prompt: DEFAULT_GROQ_PROMPT_TEXT,
+            imagePrompt: DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
           };
         }
       }
@@ -3547,41 +3556,26 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
-      async function transcribeInstantSelectionsWithGroq() {
-        if (!instantSelections.length) return { topicText: '', detailTexts: [] };
-        if (!pdfDoc) return { topicText: '', detailTexts: [] };
-        const [topicSelection, ...detailSelections] = instantSelections;
-        const topicText = (await extractTextFromSelection(topicSelection)) || '';
-        if (!detailSelections.length) {
-          showToast('Agrega al menos una selección adicional para transcribir.', 'info');
-          return { topicText, detailTexts: [] };
-        }
-        const config = getGroqVisionConfig();
-        if (!config || !config.model) {
-          showToast('Configura el modelo y el prompt en los ajustes (⚙️).', 'info');
-          return null;
-        }
-        const ratio = window.devicePixelRatio || 1;
-        const TARGET_LONG_SIDE = 1800;
-        const MIN_RENDER_SCALE = 2;
-        const MAX_RENDER_SCALE = 10;
-        const images = [];
+      async function renderSelectionToImage(selection) {
+        if (!pdfDoc || !selection) return null;
+        const { pageNum, xp1, yp1, xp2, yp2 } = selection;
+        const widthFrac = Math.abs(xp2 - xp1);
+        const heightFrac = Math.abs(yp2 - yp1);
+        if (widthFrac === 0 || heightFrac === 0) return null;
 
-        for (const selection of detailSelections) {
-          const { pageNum, xp1, yp1, xp2, yp2 } = selection;
-          const widthFrac = Math.abs(xp2 - xp1);
-          const heightFrac = Math.abs(yp2 - yp1);
-          if (widthFrac === 0 || heightFrac === 0) continue;
-
+        try {
           const page = await pdfDoc.getPage(pageNum);
+          const ratio = window.devicePixelRatio || 1;
           const baseViewport = page.getViewport({ scale: 1 });
           const cssWidth = widthFrac * baseViewport.width;
           const cssHeight = heightFrac * baseViewport.height;
           const longestSide = Math.max(cssWidth, cssHeight);
-          const desiredScale = longestSide ? Math.max(1, TARGET_LONG_SIDE / longestSide) : 1;
+          const desiredScale = longestSide
+            ? Math.max(1, SELECTION_RENDER_TARGET_LONG_SIDE / longestSide)
+            : 1;
           const renderScale = Math.min(
-            MAX_RENDER_SCALE,
-            Math.max(MIN_RENDER_SCALE, desiredScale * ratio),
+            SELECTION_RENDER_MAX_SCALE,
+            Math.max(SELECTION_RENDER_MIN_SCALE, desiredScale * ratio),
           );
           const viewport = page.getViewport({ scale: renderScale });
           const minXp = Math.min(xp1, xp2);
@@ -3594,7 +3588,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           canvas.width = Math.max(1, Math.round(w));
           canvas.height = Math.max(1, Math.round(h));
           const ctx = canvas.getContext('2d', { alpha: false });
-          if (!ctx) continue;
+          if (!ctx) return null;
           ctx.fillStyle = '#fff';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.imageSmoothingEnabled = true;
@@ -3615,7 +3609,121 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
             ctx.drawImage(drawCanvas, sx2, sy2, sw2, sh2, 0, 0, canvas.width, canvas.height);
           }
 
-          images.push(canvas.toDataURL('image/png'));
+          return canvas.toDataURL('image/png');
+        } catch (error) {
+          console.error('Error renderizando selección', error);
+          return null;
+        }
+      }
+
+      function normalizeTranscriptionEntry(entry) {
+        if (typeof entry !== 'string') return '';
+        let current = entry.trim();
+        if (!current) return '';
+
+        for (let depth = 0; depth < 3; depth++) {
+          try {
+            const parsed = JSON.parse(current);
+            if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
+              return parsed.texto.trim();
+            }
+            if (typeof parsed === 'string') {
+              const next = parsed.trim();
+              if (next === current) break;
+              current = next;
+              continue;
+            }
+          } catch {}
+          break;
+        }
+
+        const match = current.match(/^\{\s*"texto"\s*:\s*"([\s\S]*)"\s*\}$/);
+        if (match) {
+          const rawValue = match[1]
+            .replace(/\\n/g, '\n')
+            .replace(/\\r/g, '\r')
+            .replace(/\\t/g, '\t')
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, '\\');
+          return rawValue.trim();
+        }
+
+        return current;
+      }
+
+      function parseTranscriptionArray(source) {
+        if (!Array.isArray(source)) return [];
+        return source
+          .map((item) => normalizeTranscriptionEntry(typeof item === 'string' ? item : ''))
+          .filter((value) => value.length);
+      }
+
+      async function transcribeSelectionImageWithGroq(selection, model, prompt) {
+        if (!selection || !model) return '';
+        const image = await renderSelectionToImage(selection);
+        if (!image) return '';
+
+        const response = await fetch('/api/groq/transcribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, prompt, images: [image] }),
+        });
+
+        if (!response.ok) {
+          let message = 'Error al transcribir la selección principal.';
+          try {
+            const errorData = await response.json();
+            if (errorData && typeof errorData.error === 'string') {
+              message = errorData.error;
+            }
+          } catch {}
+          throw new Error(message);
+        }
+
+        const data = await response.json();
+        const [first] = parseTranscriptionArray(
+          Array.isArray(data?.transcriptions) ? data.transcriptions : [],
+        );
+        return first || '';
+      }
+
+      async function transcribeInstantSelectionsWithGroq() {
+        if (!instantSelections.length) return { topicText: '', detailTexts: [] };
+        if (!pdfDoc) return { topicText: '', detailTexts: [] };
+        const [topicSelection, ...detailSelections] = instantSelections;
+        let topicText = (await extractTextFromSelection(topicSelection)) || '';
+        if (!detailSelections.length) {
+          showToast('Agrega al menos una selección adicional para transcribir.', 'info');
+          return { topicText, detailTexts: [] };
+        }
+        const config = getGroqVisionConfig();
+        if (!config || !config.model) {
+          showToast('Configura el modelo y el prompt en los ajustes (⚙️).', 'info');
+          return null;
+        }
+        if (!topicText) {
+          try {
+            const fallbackText = await transcribeSelectionImageWithGroq(
+              topicSelection,
+              config.model,
+              config.imagePrompt,
+            );
+            if (fallbackText) {
+              topicText = fallbackText;
+            }
+          } catch (error) {
+            const message =
+              error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+                ? error.message || 'Error al transcribir la selección principal.'
+                : 'Error al transcribir la selección principal.';
+            throw new Error(message);
+          }
+        }
+
+        const images = [];
+        for (const selection of detailSelections) {
+          const image = await renderSelectionToImage(selection);
+          if (image) images.push(image);
         }
 
         if (!images.length) {
@@ -3639,44 +3747,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           throw new Error(message);
         }
         const data = await response.json();
-        const transcriptions = Array.isArray(data?.transcriptions)
-          ? data.transcriptions.map((item) => (typeof item === 'string' ? item : ''))
-          : [];
-        const detailTexts = transcriptions
-          .map((entry) => {
-            let current = entry.trim();
-            if (!current) return '';
-
-            for (let depth = 0; depth < 3; depth++) {
-              try {
-                const parsed = JSON.parse(current);
-                if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
-                  return parsed.texto.trim();
-                }
-                if (typeof parsed === 'string') {
-                  const next = parsed.trim();
-                  if (next === current) break;
-                  current = next;
-                  continue;
-                }
-              } catch {}
-              break;
-            }
-
-            const match = current.match(/^\{\s*"texto"\s*:\s*"([\s\S]*)"\s*\}$/);
-            if (match) {
-              const rawValue = match[1]
-                .replace(/\\n/g, '\n')
-                .replace(/\\r/g, '\r')
-                .replace(/\\t/g, '\t')
-                .replace(/\\"/g, '"')
-                .replace(/\\\\/g, '\\');
-              return rawValue.trim();
-            }
-
-            return current;
-          })
-          .filter((value) => value.length);
+        const detailTexts = parseTranscriptionArray(data?.transcriptions);
         return { topicText, detailTexts };
       }
 
