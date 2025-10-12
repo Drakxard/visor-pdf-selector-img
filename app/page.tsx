@@ -2524,31 +2524,40 @@ export default function Home() {
       onDragOver={handleListDragOver}
       onDrop={handleListDrop(type)}
     >
-      {files.map((p) => (
+      {files.length === 0 ? (
         <li
-          key={p.path}
-          className={`flex items-center gap-2 ${
-            completed[p.path] ? 'line-through text-gray-400' : ''
-          } ${draggedFile?.path === p.path ? 'opacity-60' : ''}`}
-          draggable
-          onDragStart={handleDragStart(p, type)}
-          onDragEnd={handleDragEnd}
-          onDragOver={handleItemDragOver}
-          onDrop={handleDropOnItem(p, type)}
+          className="text-xs italic text-gray-500 dark:text-gray-400"
+          onDragOver={handleListDragOver}
         >
-          <span
-            className="flex-1 truncate cursor-pointer"
-            title={p.file.name}
-            onClick={() => handleSelectFile(p)}
-          >
-            {p.file.name}
-            {p.mediaType === 'video' && (
-              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
-            )}
-          </span>
-          <span className="text-xs text-gray-400">⋮⋮</span>
+          Sin archivos — suelta elementos aquí
         </li>
-      ))}
+      ) : (
+        files.map((p) => (
+          <li
+            key={p.path}
+            className={`flex items-center gap-2 ${
+              completed[p.path] ? 'line-through text-gray-400' : ''
+            } ${draggedFile?.path === p.path ? 'opacity-60' : ''}`}
+            draggable
+            onDragStart={handleDragStart(p, type)}
+            onDragEnd={handleDragEnd}
+            onDragOver={handleItemDragOver}
+            onDrop={handleDropOnItem(p, type)}
+          >
+            <span
+              className="flex-1 truncate cursor-pointer"
+              title={p.file.name}
+              onClick={() => handleSelectFile(p)}
+            >
+              {p.file.name}
+              {p.mediaType === 'video' && (
+                <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+              )}
+            </span>
+            <span className="text-xs text-gray-400">⋮⋮</span>
+          </li>
+        ))
+      )}
     </ul>
   )
 
@@ -2844,19 +2853,11 @@ export default function Home() {
             <div className="space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Teoría</h3>
-                {theoryFiles.length ? (
-                  renderCategorizedFileList(theoryFiles, 'theory')
-                ) : (
-                  <p className="text-xs text-gray-500">Sin archivos</p>
-                )}
+                {renderCategorizedFileList(theoryFiles, 'theory')}
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
-                {practiceFiles.length ? (
-                  renderCategorizedFileList(practiceFiles, 'practice')
-                ) : (
-                  <p className="text-xs text-gray-500">Sin archivos</p>
-                )}
+                {renderCategorizedFileList(practiceFiles, 'practice')}
               </div>
               <div>
                 <div className="flex items-center justify-between gap-2">
