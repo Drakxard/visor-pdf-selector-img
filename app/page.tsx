@@ -2349,15 +2349,23 @@ export default function Home() {
     (dir) => !aggregatedChildSet.has(dir),
   )
 
-  const directTheoryFiles = selectedFiles.filter(
-    (file) => file.tableType === 'theory',
-  )
-  const directPracticeFiles = selectedFiles.filter(
-    (file) => file.tableType === 'practice',
-  )
-
-  const collectAndSort = (paths: string[], direct: PdfFile[], orderKey: string) => {
-    const combined = [...direct, ...paths.flatMap((path) => collectFiles(path))]
+  const buildOrderKey = (path: string, type: 'theory' | 'practice') => `${path || ''}::${type}`
+  const theoryOrderKey = buildOrderKey(currentDirEntry.path || '', 'theory')
+  const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
+  const collectCategorizedFiles = (type: 'theory' | 'practice', orderKey: string) => {
+    const aggregated: PdfFile[] = [
+      ...selectedFiles,
+      ...theoryChildPaths.flatMap((path) => collectFiles(path)),
+      ...practiceChildPaths.flatMap((path) => collectFiles(path)),
+    ]
+    const seen = new Set<string>()
+    const filtered = aggregated.filter((file) => {
+      if (seen.has(file.path)) {
+        return false
+      }
+      seen.add(file.path)
+      return file.tableType === type
+    })
     const orderList = fileOrderOverrides[orderKey] ?? []
     const orderMap = new Map<string, number>()
     orderList.forEach((path, index) => {
@@ -2365,7 +2373,7 @@ export default function Home() {
         orderMap.set(path, index)
       }
     })
-    return combined.sort((a, b) => {
+    return filtered.sort((a, b) => {
       const aIndex = orderMap.has(a.path)
         ? (orderMap.get(a.path) as number)
         : Number.POSITIVE_INFINITY
@@ -2381,12 +2389,8 @@ export default function Home() {
       })
     })
   }
-
-  const buildOrderKey = (path: string, type: 'theory' | 'practice') => `${path || ''}::${type}`
-  const theoryOrderKey = buildOrderKey(currentDirEntry.path || '', 'theory')
-  const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
-  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles, theoryOrderKey)
-  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles, practiceOrderKey)
+  const theoryFiles = collectCategorizedFiles('theory', theoryOrderKey)
+  const practiceFiles = collectCategorizedFiles('practice', practiceOrderKey)
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
