@@ -4,6 +4,36 @@ import { DEFAULT_GROQ_PROMPT } from "@/lib/groq"
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+const DAILY_LIMIT = 100
+
+type DailyUsage = {
+  date: string
+  count: number
+}
+
+const rateLimitState = (() => {
+  const globalKey = "__groq_transcribe_rate_limit__" as const
+  const globalObj = globalThis as typeof globalThis & {
+    [globalKey]?: DailyUsage
+  }
+
+  if (!globalObj[globalKey]) {
+    globalObj[globalKey] = { date: new Date().toISOString().slice(0, 10), count: 0 }
+  }
+
+  return {
+    get state() {
+      const currentDate = new Date().toISOString().slice(0, 10)
+      const state = globalObj[globalKey]!
+      if (state.date !== currentDate) {
+        state.date = currentDate
+        state.count = 0
+      }
+      return state
+    },
+  }
+})()
+
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
 
@@ -19,6 +49,14 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "GROQ_API_KEY_CUSTOM no está configurada." },
       { status: 500 },
+    )
+  }
+
+  const usage = rateLimitState.state
+  if (usage.count >= DAILY_LIMIT) {
+    return NextResponse.json(
+      { error: "Se alcanzó el límite diario de uso." },
+      { status: 429 },
     )
   }
 
@@ -52,6 +90,8 @@ export async function POST(request: Request) {
   const promptText = prompt.trim() || DEFAULT_GROQ_PROMPT
 
   const results: string[] = []
+
+  usage.count += 1
 
   for (const image of normalizedImages) {
     const imageUrl = image.startsWith("data:") ? image : `data:image/png;base64,${image}`
