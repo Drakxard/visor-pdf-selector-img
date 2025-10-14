@@ -2,6 +2,53 @@ import { NextResponse } from "next/server"
 
 import { DEFAULT_GROQ_PROMPT } from "@/lib/groq"
 
+const MS_IN_DAY = 24 * 60 * 60 * 1000
+const DEFAULT_DAILY_LIMIT = 100
+
+type UsageState = {
+  count: number
+  resetAt: number
+}
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __groqTranscribeUsage?: UsageState
+}
+
+function getDailyLimit() {
+  const envLimit = Number(process.env.GROQ_TRANSCRIBE_DAILY_LIMIT)
+  if (Number.isFinite(envLimit) && envLimit > 0) {
+    return Math.floor(envLimit)
+  }
+  return DEFAULT_DAILY_LIMIT
+}
+
+function getUsageState(): UsageState {
+  const now = Date.now()
+  let state = globalThis.__groqTranscribeUsage
+
+  if (!state || now >= state.resetAt) {
+    const startOfTomorrow = new Date()
+    startOfTomorrow.setUTCHours(0, 0, 0, 0)
+    const resetAt = startOfTomorrow.getTime() + MS_IN_DAY
+    state = { count: 0, resetAt }
+    globalThis.__groqTranscribeUsage = state
+  }
+
+  return state
+}
+
+function assertWithinLimit() {
+  const state = getUsageState()
+  const limit = getDailyLimit()
+
+  if (state.count >= limit) {
+    throw new Error("DAILY_LIMIT_REACHED")
+  }
+
+  state.count += 1
+}
+
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 export const dynamic = "force-dynamic"
@@ -52,6 +99,18 @@ export async function POST(request: Request) {
   const promptText = prompt.trim() || DEFAULT_GROQ_PROMPT
 
   const results: string[] = []
+
+  try {
+    assertWithinLimit()
+  } catch (error) {
+    if (error instanceof Error && error.message === "DAILY_LIMIT_REACHED") {
+      return NextResponse.json(
+        { error: "Se alcanzó el límite diario de uso." },
+        { status: 429 },
+      )
+    }
+    throw error
+  }
 
   for (const image of normalizedImages) {
     const imageUrl = image.startsWith("data:") ? image : `data:image/png;base64,${image}`
