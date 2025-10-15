@@ -2732,7 +2732,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           if (!auxEditor) return;
           e.preventDefault();
           const rawHtml = auxEditor.innerHTML || '';
-          const rawText = auxEditor.textContent || '';
+          const rawText = getPlainTextWithLatex(auxEditor);
           const normalizedText = rawText.replace(/\u00a0/g, ' ').trim();
           const strippedHtml = rawHtml
             .replace(/<[^>]+>/g, '')
@@ -2899,11 +2899,62 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         span.dataset.cols = cols;
         span.dataset.values = values.map(r => r.join(',')).join('|');
         const latex = `\\left(\\begin{matrix}${latexRows}\\end{matrix}\\right)`;
+        span.dataset.latex = latex;
         span.textContent = `$${latex}$`;
         table.replaceWith(span);
         if (window.MathJax && window.MathJax.typesetPromise) {
           MathJax.typesetPromise([span]);
         }
+      }
+
+      function getMatrixLatexFromSpan(span) {
+        if (!span) return '';
+        const existing = span.dataset.latex;
+        if (existing) return existing;
+        const rows = parseInt(span.dataset.rows || '0', 10);
+        const cols = parseInt(span.dataset.cols || '0', 10);
+        let values = [];
+        if (span.dataset.values) {
+          values = span.dataset.values
+            .split('|')
+            .map(row => row.split(',').map(cell => (cell != null ? cell.trim() : '')));
+        }
+        if (!values.length && rows > 0 && cols > 0) {
+          values = Array.from({ length: rows }, () => Array.from({ length: cols }, () => ''));
+        }
+        const latexRows = values
+          .map(row => row.map(cell => (cell != null ? cell : '')).join(' & '))
+          .join(' \\\\ ');
+        const latex = `\\left(\\begin{matrix}${latexRows}\\end{matrix}\\right)`;
+        span.dataset.latex = latex;
+        return latex;
+      }
+
+      function getPlainTextWithLatex(root) {
+        if (!root) return '';
+        const clone = root.cloneNode(true);
+        clone.querySelectorAll('span.math-field').forEach(span => {
+          const latex = span.dataset.latex || span.textContent || '';
+          span.replaceWith(document.createTextNode(latex));
+        });
+        clone.querySelectorAll('span.matrix').forEach(span => {
+          const latex = getMatrixLatexFromSpan(span);
+          const textNode = document.createTextNode(latex || '');
+          span.replaceWith(textNode);
+        });
+        clone.querySelectorAll('table.matrix-editor').forEach(table => {
+          const values = Array.from(table.querySelectorAll('tr')).map(tr =>
+            Array.from(tr.querySelectorAll('td')).map(td => td.textContent.trim())
+          );
+          const latexRows = values.map(row => row.join(' & ')).join(' \\\\ ');
+          const latex = `\\left(\\begin{matrix}${latexRows}\\end{matrix}\\right)`;
+          table.replaceWith(document.createTextNode(latex));
+        });
+        clone.querySelectorAll('br').forEach(br => {
+          br.replaceWith('\n');
+        });
+        const text = clone.textContent || '';
+        return text.replace(/\u00a0/g, ' ').replace(/\r?\n/g, '\n');
       }
 
       function tryInsertMatrix(ev, container) {
@@ -2965,7 +3016,11 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
-            cloneSpans[idx].textContent = `$${latex}$`;
+            if (latex) {
+              orig.dataset.latex = latex;
+              if (cloneSpans[idx]) cloneSpans[idx].dataset.latex = latex;
+            }
+            if (cloneSpans[idx]) cloneSpans[idx].textContent = `$${latex}$`;
           });
           const html = tempDiv.innerHTML;
           undoStack.splice(undoIndex + 1);
@@ -3049,7 +3104,11 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
-            cloneSpans[idx].textContent = `$${latex}$`;
+            if (latex) {
+              orig.dataset.latex = latex;
+              if (cloneSpans[idx]) cloneSpans[idx].dataset.latex = latex;
+            }
+            if (cloneSpans[idx]) cloneSpans[idx].textContent = `$${latex}$`;
           });
           const rawContent = tempDiv.innerHTML.trim();
           const content = rawContent.replace(/\\n/g, '<span class="note-sep"></span>');
@@ -3094,6 +3153,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
                 } else {
                   const span = document.createElement('span');
                   span.className = 'math-field';
+                  span.dataset.latex = parts[i];
                   span.textContent = parts[i];
                   frag.appendChild(span);
                 }
@@ -3105,8 +3165,20 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
 
         tempDiv.querySelectorAll('span.math-field').forEach(span => {
           const textContent = span.textContent || '';
-          if (stripDelimiters && textContent.startsWith('$') && textContent.endsWith('$')) {
-            span.textContent = textContent.substring(1, textContent.length - 1);
+          const storedLatex = span.dataset.latex;
+          let latex = storedLatex || textContent;
+          if (!storedLatex && textContent.startsWith('$') && textContent.endsWith('$')) {
+            latex = textContent.substring(1, textContent.length - 1);
+          }
+          span.dataset.latex = latex;
+          span.textContent = stripDelimiters ? latex : `$${latex}$`;
+        });
+
+        tempDiv.querySelectorAll('span.matrix').forEach(span => {
+          const latex = getMatrixLatexFromSpan(span);
+          span.dataset.latex = latex;
+          if (!stripDelimiters) {
+            span.textContent = `$${latex}$`;
           }
         });
 
@@ -3114,18 +3186,23 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       }
       function enhanceMathField(span) {
         if (span._mqInstance) return;
-        const initialLatex = span.textContent; span.textContent = '';
+        const initialLatex = span.dataset.latex || span.textContent;
+        span.textContent = '';
         const mf = MQ.MathField(span, {
           spaceBehavesLikeTab: true,
           handlers: {
             edit: () => {
+              span.dataset.latex = mf.latex();
               const ta = span.closest('.note-textarea');
               if (ta && ta._saveState) ta._saveState();
             }
           }
         });
         span._mqInstance = mf;
-        if (initialLatex) mf.latex(initialLatex);
+        if (initialLatex) {
+          mf.latex(initialLatex);
+          span.dataset.latex = initialLatex;
+        }
 
         span.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter') {
