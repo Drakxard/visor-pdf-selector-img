@@ -2965,7 +2965,10 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
-            cloneSpans[idx].textContent = `$${latex}$`;
+            const clone = cloneSpans[idx];
+            if (!clone) return;
+            const textNode = document.createTextNode(latex ? `$${latex}$` : '');
+            clone.replaceWith(textNode);
           });
           const html = tempDiv.innerHTML;
           undoStack.splice(undoIndex + 1);
@@ -3049,7 +3052,10 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
-            cloneSpans[idx].textContent = `$${latex}$`;
+            const clone = cloneSpans[idx];
+            if (!clone) return;
+            const textNode = document.createTextNode(latex ? `$${latex}$` : '');
+            clone.replaceWith(textNode);
           });
           const rawContent = tempDiv.innerHTML.trim();
           const content = rawContent.replace(/\\n/g, '<span class="note-sep"></span>');
@@ -3070,6 +3076,16 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       function processNoteContent(content, stripDelimiters = false) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = content;
+
+        tempDiv.querySelectorAll('span.math-field').forEach(span => {
+          if (span.querySelector('.mq-root-block')) return;
+          const text = span.textContent || '';
+          const trimmed = text.trim();
+          const normalized = trimmed && trimmed.startsWith('$') && trimmed.endsWith('$')
+            ? trimmed
+            : (trimmed ? `$${trimmed}$` : '');
+          span.replaceWith(document.createTextNode(normalized));
+        });
 
         if (stripDelimiters) {
           tempDiv.querySelectorAll('span.matrix').forEach(span => {
