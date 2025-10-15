@@ -2965,7 +2965,11 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
-            cloneSpans[idx].textContent = `$${latex}$`;
+            if (latex) {
+              orig.dataset.latex = latex;
+              if (cloneSpans[idx]) cloneSpans[idx].dataset.latex = latex;
+            }
+            if (cloneSpans[idx]) cloneSpans[idx].textContent = `$${latex}$`;
           });
           const html = tempDiv.innerHTML;
           undoStack.splice(undoIndex + 1);
@@ -3049,7 +3053,11 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           const cloneSpans = tempDiv.querySelectorAll('span.math-field');
           origSpans.forEach((orig, idx) => {
             const latex = orig._mqInstance ? orig._mqInstance.latex() : '';
-            cloneSpans[idx].textContent = `$${latex}$`;
+            if (latex) {
+              orig.dataset.latex = latex;
+              if (cloneSpans[idx]) cloneSpans[idx].dataset.latex = latex;
+            }
+            if (cloneSpans[idx]) cloneSpans[idx].textContent = `$${latex}$`;
           });
           const rawContent = tempDiv.innerHTML.trim();
           const content = rawContent.replace(/\\n/g, '<span class="note-sep"></span>');
@@ -3094,6 +3102,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
                 } else {
                   const span = document.createElement('span');
                   span.className = 'math-field';
+                  span.dataset.latex = parts[i];
                   span.textContent = parts[i];
                   frag.appendChild(span);
                 }
@@ -3105,27 +3114,36 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
 
         tempDiv.querySelectorAll('span.math-field').forEach(span => {
           const textContent = span.textContent || '';
-          if (stripDelimiters && textContent.startsWith('$') && textContent.endsWith('$')) {
-            span.textContent = textContent.substring(1, textContent.length - 1);
+          const storedLatex = span.dataset.latex;
+          let latex = storedLatex || textContent;
+          if (!storedLatex && textContent.startsWith('$') && textContent.endsWith('$')) {
+            latex = textContent.substring(1, textContent.length - 1);
           }
+          span.dataset.latex = latex;
+          span.textContent = stripDelimiters ? latex : `$${latex}$`;
         });
 
         return tempDiv.innerHTML;
       }
       function enhanceMathField(span) {
         if (span._mqInstance) return;
-        const initialLatex = span.textContent; span.textContent = '';
+        const initialLatex = span.dataset.latex || span.textContent;
+        span.textContent = '';
         const mf = MQ.MathField(span, {
           spaceBehavesLikeTab: true,
           handlers: {
             edit: () => {
+              span.dataset.latex = mf.latex();
               const ta = span.closest('.note-textarea');
               if (ta && ta._saveState) ta._saveState();
             }
           }
         });
         span._mqInstance = mf;
-        if (initialLatex) mf.latex(initialLatex);
+        if (initialLatex) {
+          mf.latex(initialLatex);
+          span.dataset.latex = initialLatex;
+        }
 
         span.addEventListener('keydown', (ev) => {
           if (ev.key === 'Enter') {
