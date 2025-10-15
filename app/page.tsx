@@ -181,7 +181,9 @@ type PropositionEntry = {
 type NotebookEntry = {
   id: string
   name: string
-  url: string
+  url?: string
+  content?: string
+  type: 'link' | 'note'
 }
 
 const sortPropositions = (entries: PropositionEntry[]) => {
@@ -487,6 +489,10 @@ export default function Home() {
   const [newNotebookName, setNewNotebookName] = useState('')
   const notebookInputRef = useRef<HTMLInputElement>(null)
   const [creatingNotebook, setCreatingNotebook] = useState(false)
+  const [showSaveViewerNoteModal, setShowSaveViewerNoteModal] = useState(false)
+  const [viewerNoteDraftName, setViewerNoteDraftName] = useState('')
+  const [pendingViewerNote, setPendingViewerNote] = useState<{ html: string; text: string } | null>(null)
+  const saveViewerNoteInputRef = useRef<HTMLInputElement>(null)
   const [draggedFile, setDraggedFile] = useState<PdfFile | null>(null)
   const [draggedSourceType, setDraggedSourceType] = useState<'theory' | 'practice' | null>(null)
   const [draggedSourcePath, setDraggedSourcePath] = useState('')
@@ -1651,18 +1657,36 @@ export default function Home() {
                     : typeof raw.label === 'string' && raw.label.trim()
                       ? raw.label.trim()
                       : ''
+              const idValue =
+                typeof raw.id === 'string' && raw.id.trim()
+                  ? raw.id.trim()
+                  : generateNotebookId()
+              const typeValue = raw.type === 'note' ? 'note' : 'link'
+              if (!nameValue) return
+              if (typeValue === 'note') {
+                const contentValue =
+                  typeof raw.content === 'string' && raw.content.trim()
+                    ? raw.content.trim()
+                    : typeof raw.html === 'string' && raw.html.trim()
+                      ? raw.html.trim()
+                      : ''
+                if (!contentValue) return
+                entries.push({
+                  id: idValue,
+                  name: nameValue,
+                  content: contentValue,
+                  type: 'note',
+                })
+                return
+              }
               const urlValue =
                 typeof raw.url === 'string' && raw.url.trim()
                   ? raw.url.trim()
                   : typeof raw.href === 'string' && raw.href.trim()
                     ? raw.href.trim()
                     : ''
-              if (!nameValue || !urlValue) return
-              const idValue =
-                typeof raw.id === 'string' && raw.id.trim()
-                  ? raw.id.trim()
-                  : generateNotebookId()
-              entries.push({ id: idValue, name: nameValue, url: urlValue })
+              if (!urlValue) return
+              entries.push({ id: idValue, name: nameValue, url: urlValue, type: 'link' })
             })
             if (entries.length) {
               next[path] = entries
@@ -1787,6 +1811,15 @@ export default function Home() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [showNotebookInput])
+
+  useEffect(() => {
+    if (!showSaveViewerNoteModal) return
+    const timer = window.setTimeout(() => {
+      saveViewerNoteInputRef.current?.focus()
+      saveViewerNoteInputRef.current?.select?.()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [showSaveViewerNoteModal])
 
   useEffect(() => {
     setShowNotebookInput(false)
@@ -2095,6 +2128,38 @@ export default function Home() {
           } catch {}
         }
       }
+      if (e.data?.type === 'viewerSaveAuxNote') {
+        const rawHtml = typeof e.data.html === 'string' ? e.data.html : ''
+        const rawText = typeof e.data.text === 'string' ? e.data.text : ''
+        const normalizedText = rawText.replace(/\u00a0/g, ' ').trim()
+        const hasText = normalizedText.length > 0
+        const trimmedHtml = rawHtml.trim()
+        if (!hasText && !trimmedHtml) {
+          showToastMessage('error', 'La nota temporal está vacía.')
+          return
+        }
+        const convertTextToHtml = (value: string) =>
+          value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\r?\n/g, '<br>')
+
+        const finalHtml = trimmedHtml || convertTextToHtml(rawText)
+        const defaultFromText = hasText
+          ? normalizedText.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() || ''
+          : ''
+        const pdfName =
+          typeof e.data.pdfName === 'string' && e.data.pdfName.trim()
+            ? e.data.pdfName.trim()
+            : ''
+        const baseName = defaultFromText || (pdfName ? `Nota de ${pdfName}` : '')
+        const truncatedName = (baseName || 'Nota temporal').slice(0, 80)
+        setPendingViewerNote({ html: finalHtml, text: normalizedText })
+        setViewerNoteDraftName(truncatedName)
+        setShowSaveViewerNoteModal(true)
+        return
+      }
       if (e.data?.type === 'viewerCreateProposition') {
         const rawId = e.data.id
         const parsedId =
@@ -2150,6 +2215,7 @@ export default function Home() {
     setScopedStoredItem,
     setPropositionsByPath,
     setLastPropositionId,
+    showToastMessage,
     viewWeek,
   ])
 
@@ -2861,6 +2927,7 @@ export default function Home() {
         id: generateNotebookId(),
         name: trimmedName,
         url,
+        type: 'link',
       }
       setNotebooksByPath((prev) => {
         const prevEntries = prev[activeNotebookPath] ?? []
@@ -2900,12 +2967,78 @@ export default function Home() {
   }
 
   const handleOpenNotebook = (entry: NotebookEntry) => {
+    if (entry.type === 'note') {
+      const content = entry.content?.trim()
+      if (!content) {
+        showToastMessage('error', 'Esta nota no tiene contenido para cargar.')
+        return
+      }
+      const frameWindow = viewerRef.current?.contentWindow
+      if (!frameWindow) {
+        showToastMessage('error', 'Abre un PDF para cargar la nota temporal.')
+        return
+      }
+      try {
+        frameWindow.postMessage({ type: 'loadAuxNote', content }, '*')
+        showToastMessage('success', 'Nota temporal cargada en el visor')
+      } catch (error) {
+        console.error('Failed to load notebook note', error)
+        showToastMessage('error', 'No se pudo cargar la nota temporal en el visor.')
+      }
+      return
+    }
     try {
+      if (!entry.url) {
+        showToastMessage('error', 'El cuaderno no tiene un enlace válido.')
+        return
+      }
       window.open(entry.url, '_blank', 'noopener,noreferrer')
     } catch (error) {
       console.error('Failed to open notebook link', error)
       showToastMessage('error', 'No se pudo abrir el cuaderno en una nueva pestaña.')
     }
+  }
+
+  const handleCancelSaveViewerNote = () => {
+    setShowSaveViewerNoteModal(false)
+    setViewerNoteDraftName('')
+    setPendingViewerNote(null)
+  }
+
+  const handleConfirmSaveViewerNote = () => {
+    if (!pendingViewerNote) {
+      setShowSaveViewerNoteModal(false)
+      return
+    }
+    const trimmedName = viewerNoteDraftName.trim()
+    if (!trimmedName) {
+      showToastMessage('error', 'Ingresa un nombre para la nota.')
+      return
+    }
+    const content = pendingViewerNote.html.trim()
+    if (!content) {
+      showToastMessage('error', 'La nota temporal está vacía.')
+      handleCancelSaveViewerNote()
+      return
+    }
+    const entry: NotebookEntry = {
+      id: generateNotebookId(),
+      name: trimmedName,
+      content,
+      type: 'note',
+    }
+    setNotebooksByPath((prev) => {
+      const prevEntries = prev[activeNotebookPath] ?? []
+      const nextEntries = [...prevEntries, entry]
+      return {
+        ...prev,
+        [activeNotebookPath]: nextEntries,
+      }
+    })
+    showToastMessage('success', 'Nota guardada en cuadernos')
+    setShowSaveViewerNoteModal(false)
+    setViewerNoteDraftName('')
+    setPendingViewerNote(null)
   }
 
   const formatDirLabel = (path: string) => {
@@ -3670,6 +3803,83 @@ export default function Home() {
         </div>
       </div>
 
+    )}
+
+    {showSaveViewerNoteModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+        onClick={handleCancelSaveViewerNote}
+      >
+        <div
+          className="w-full max-w-sm space-y-4 rounded bg-white p-4 text-gray-800 shadow-lg dark:bg-gray-900 dark:text-gray-100"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Guardar nota temporal</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Asigna un nombre para guardar la nota en cuadernos y recuperarla rápidamente.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="text-sm underline"
+              onClick={handleCancelSaveViewerNote}
+            >
+              Cerrar
+            </button>
+          </div>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">
+                Nombre
+              </label>
+              <input
+                ref={saveViewerNoteInputRef}
+                value={viewerNoteDraftName}
+                onChange={(event) => setViewerNoteDraftName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    handleConfirmSaveViewerNote()
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault()
+                    handleCancelSaveViewerNote()
+                  }
+                }}
+                placeholder="Nombre de la nota"
+                className="w-full rounded border border-gray-300 bg-white p-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-950"
+              />
+            </div>
+            {pendingViewerNote?.text && (
+              <div className="space-y-1">
+                <label className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">
+                  Vista previa
+                </label>
+                <div className="max-h-40 whitespace-pre-wrap overflow-y-auto rounded border border-gray-200 bg-gray-50 p-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                  {pendingViewerNote.text}
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded border border-gray-300 px-3 py-1 text-sm dark:border-gray-600"
+              onClick={handleCancelSaveViewerNote}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="rounded bg-indigo-600 px-3 py-1 text-sm text-white transition hover:bg-indigo-700"
+              onClick={handleConfirmSaveViewerNote}
+            >
+              Guardar
+            </button>
+          </div>
+        </div>
+      </div>
     )}
 
     {showManualPropositionModal && (

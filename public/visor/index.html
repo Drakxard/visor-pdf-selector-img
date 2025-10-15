@@ -870,6 +870,12 @@
           }
         } else if (e.data.type === 'toggleFullscreen') {
           toggleFullscreen();
+        } else if (e.data.type === 'loadAuxNote') {
+          if (!auxEditor) return;
+          const content = typeof e.data.content === 'string' ? e.data.content : '';
+          auxEditor.innerHTML = content;
+          openAuxNotesPanel();
+          showToast('Nota temporal cargada', 'success');
         }
       });
 
@@ -2714,6 +2720,44 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           auxNotesRevealed = true;
           ensureAuxNotesButtonVisible();
           toggleAuxNotesPanel();
+          return;
+        }
+
+        if (
+          e.key.toLowerCase() === 'g' &&
+          e.altKey &&
+          !e.ctrlKey &&
+          !e.metaKey
+        ) {
+          if (!auxEditor) return;
+          e.preventDefault();
+          const rawHtml = auxEditor.innerHTML || '';
+          const rawText = auxEditor.textContent || '';
+          const normalizedText = rawText.replace(/\u00a0/g, ' ').trim();
+          const strippedHtml = rawHtml
+            .replace(/<[^>]+>/g, '')
+            .replace(/&nbsp;/gi, ' ')
+            .trim();
+          if (!normalizedText && !strippedHtml) {
+            showToast('Escribe una nota temporal antes de guardarla', 'info');
+            return;
+          }
+          try {
+            window.parent.postMessage(
+              {
+                type: 'viewerSaveAuxNote',
+                html: rawHtml,
+                text: rawText,
+                pdfPath: currentPdfPath,
+                pdfName: currentPdfName,
+              },
+              '*'
+            );
+            showToast('Confirma el guardado en cuadernos', 'info');
+          } catch (error) {
+            console.error('No se pudo enviar la nota temporal', error);
+            showToast('No se pudo enviar la nota temporal.', 'error');
+          }
           return;
         }
 
