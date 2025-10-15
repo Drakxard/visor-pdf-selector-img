@@ -870,6 +870,40 @@
           }
         } else if (e.data.type === 'toggleFullscreen') {
           toggleFullscreen();
+        } else if (e.data.type === 'loadTemporaryNote') {
+          const incoming = typeof e.data.content === 'string' ? e.data.content : '';
+          if (!auxEditor) {
+            showToast('El panel de notas temporales no está disponible.', 'error');
+            return;
+          }
+          if (!incoming) {
+            showToast('La nota recibida está vacía.', 'info');
+            return;
+          }
+          auxEditor.innerHTML = incoming;
+          initMathFields(auxEditor);
+          auxNotesRevealed = true;
+          ensureAuxNotesButtonVisible();
+          openAuxNotesPanel();
+          auxEditor.focus();
+          const label = typeof e.data.name === 'string' && e.data.name
+            ? `Nota "${e.data.name}" cargada`
+            : 'Nota temporal cargada';
+          showToast(label, 'success');
+        } else if (e.data.type === 'temporaryNoteSaved') {
+          const label = typeof e.data.name === 'string' && e.data.name
+            ? `Nota "${e.data.name}" guardada en cuadernos`
+            : 'Nota guardada en cuadernos';
+          showToast(label, 'success');
+        } else if (e.data.type === 'temporaryNoteSaveFailed') {
+          const msg = typeof e.data.message === 'string' && e.data.message
+            ? e.data.message
+            : 'No se pudo guardar la nota temporal.';
+          showToast(msg, 'error');
+        } else if (e.data.type === 'temporaryNoteReady') {
+          showToast('Ingresa un nombre para la nota en cuadernos.', 'info');
+        } else if (e.data.type === 'temporaryNoteSaveCancelled') {
+          showToast('Guardado de nota cancelado.', 'info');
         }
       });
 
@@ -2556,6 +2590,43 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           return;
         }
 
+        if (
+          !isEditing &&
+          !e.repeat &&
+          e.altKey &&
+          !e.ctrlKey &&
+          !e.metaKey &&
+          e.key.toLowerCase() === 'g'
+        ) {
+          e.preventDefault();
+          if (!auxEditor) {
+            showToast('El panel de notas temporales no está disponible.', 'error');
+            return;
+          }
+          const { html, text } = serializeAuxNoteContent();
+          if (!html || !text) {
+            showToast('La nota temporal está vacía.', 'info');
+            return;
+          }
+          try {
+            window.parent.postMessage(
+              {
+                type: 'requestSaveTemporaryNote',
+                content: html,
+                text,
+                pdfPath: currentPdfPath || '',
+                pdfName: currentPdfName || '',
+              },
+              '*',
+            );
+            showToast('Preparando nota temporal…', 'info');
+          } catch (error) {
+            console.error('Error enviando la nota temporal:', error);
+            showToast('No se pudo preparar la nota temporal.', 'error');
+          }
+          return;
+        }
+
         // Bloquear navegación si overlay visible
         if (loadingOverlay && !loadingOverlay.classList.contains('hidden')) {
           if (
@@ -4225,6 +4296,32 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         const imageData = currentCanvas._history.pop();
         ctx.putImageData(imageData, 0, 0);
         saveDrawing(currentCanvas);
+      }
+
+      function serializeAuxNoteContent() {
+        if (!auxEditor) return { html: '', text: '' };
+        const clone = auxEditor.cloneNode(true);
+        clone.querySelectorAll('table.matrix-editor').forEach(table => {
+          finalizeMatrixTable(table);
+        });
+        const originalMath = auxEditor.querySelectorAll('span.math-field');
+        const cloneMath = clone.querySelectorAll('span.math-field');
+        originalMath.forEach((orig, idx) => {
+          const latex = orig._mqInstance && typeof orig._mqInstance.latex === 'function'
+            ? orig._mqInstance.latex()
+            : (orig.textContent || '');
+          const target = cloneMath[idx];
+          if (target) {
+            target.innerHTML = '';
+            target.textContent = latex || '';
+          }
+        });
+        clone.querySelectorAll('[contenteditable]').forEach(node => node.removeAttribute('contenteditable'));
+        const html = clone.innerHTML.trim();
+        const text = clone.textContent
+          ? clone.textContent.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim()
+          : '';
+        return { html, text };
       }
 
       function ensureAuxNotesButtonVisible() {
