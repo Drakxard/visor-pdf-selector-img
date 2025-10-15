@@ -2131,13 +2131,7 @@ export default function Home() {
       if (e.data?.type === 'viewerSaveAuxNote') {
         const rawHtml = typeof e.data.html === 'string' ? e.data.html : ''
         const rawText = typeof e.data.text === 'string' ? e.data.text : ''
-        const normalizedText = rawText.replace(/\u00a0/g, ' ').trim()
-        const hasText = normalizedText.length > 0
         const trimmedHtml = rawHtml.trim()
-        if (!hasText && !trimmedHtml) {
-          showToastMessage('error', 'La nota temporal está vacía.')
-          return
-        }
         const convertTextToHtml = (value: string) =>
           value
             .replace(/&/g, '&amp;')
@@ -2146,6 +2140,38 @@ export default function Home() {
             .replace(/\r?\n/g, '<br>')
 
         const finalHtml = trimmedHtml || convertTextToHtml(rawText)
+
+        const computePreviewText = (html: string, fallbackText: string) => {
+          if (!html) {
+            return fallbackText.replace(/\u00a0/g, ' ')
+          }
+          const tempDiv = document.createElement('div')
+          tempDiv.innerHTML = html
+
+          tempDiv.querySelectorAll('span.note-sep').forEach((span) => {
+            span.replaceWith(document.createTextNode('\n'))
+          })
+
+          tempDiv.querySelectorAll<HTMLElement>('[data-latex]').forEach((element) => {
+            const latex = element.getAttribute('data-latex')
+            if (latex && latex.trim().length > 0) {
+              element.replaceWith(document.createTextNode(latex))
+            }
+          })
+
+          return (tempDiv.textContent || fallbackText || '').replace(/\u00a0/g, ' ')
+        }
+
+        const previewText = computePreviewText(finalHtml, rawText)
+        const normalizedText = previewText.trim()
+        const hasText = normalizedText.length > 0
+        const strippedHtml = trimmedHtml
+          ? trimmedHtml.replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, ' ').trim()
+          : ''
+        if (!hasText && !strippedHtml) {
+          showToastMessage('error', 'La nota temporal está vacía.')
+          return
+        }
         const defaultFromText = hasText
           ? normalizedText.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() || ''
           : ''
@@ -2155,7 +2181,7 @@ export default function Home() {
             : ''
         const baseName = defaultFromText || (pdfName ? `Nota de ${pdfName}` : '')
         const truncatedName = (baseName || 'Nota temporal').slice(0, 80)
-        setPendingViewerNote({ html: finalHtml, text: normalizedText })
+        setPendingViewerNote({ html: finalHtml, text: previewText })
         setViewerNoteDraftName(truncatedName)
         setShowSaveViewerNoteModal(true)
         return
