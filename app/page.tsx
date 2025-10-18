@@ -37,6 +37,14 @@ const isPracticeSegment = (segment: string) => {
   return normalized === "practica" || normalized === "practice"
 }
 
+const isWeekSegment = (segment: string) => {
+  const normalized = normalizeSegment(segment).replace(/\s+/g, " ").trim()
+  if (!normalized.startsWith("semana")) return false
+  const remainder = normalized.slice("semana".length).trim()
+  if (!remainder) return false
+  return /^[-_\s]*\d+/.test(remainder)
+}
+
 const getLastSegment = (path: string) => {
   const parts = path.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : ""
@@ -3067,6 +3075,53 @@ export default function Home() {
     setPendingViewerNote(null)
   }
 
+  const buildDirectoryDisplayName = (path: string) => {
+    const segments = path.split("/").filter(Boolean)
+    return segments.length ? segments.join(" / ") : "Inicio"
+  }
+
+  const buildDirectoryLinkUrl = (path: string) => {
+    const segments = path.split("/").filter(Boolean)
+    if (!segments.length) return "/"
+    return `/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`
+  }
+
+  const handleCreateDirectoryQuickLink = useCallback(
+    (path: string) => {
+      const segments = path.split("/").filter(Boolean)
+      if (!segments.length) {
+        showToastMessage("error", "No se puede crear un enlace para esta carpeta.")
+        return
+      }
+      const url = buildDirectoryLinkUrl(path)
+      const label = buildDirectoryDisplayName(path)
+      const normalizedUrl = url.trim().toLowerCase()
+      let added = false
+      let duplicate = false
+      setQuickLinks((prev) => {
+        if (prev.some((link) => (link.url || "").trim().toLowerCase() === normalizedUrl)) {
+          duplicate = true
+          return prev
+        }
+        added = true
+        const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+        return [...prev, { id, label, url }]
+      })
+      if (duplicate) {
+        showToastMessage("error", "Este enlace ya existe en tus links rápidos.")
+      } else if (added) {
+        showToastMessage("success", "Enlace agregado a tus links rápidos.")
+      }
+    },
+    [setQuickLinks, showToastMessage],
+  )
+
+  const directoryContainsWeekSegment = (path: string) =>
+    path
+      .split("/")
+      .filter(Boolean)
+      .some((segment) => isWeekSegment(segment))
+
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
     const name = segments.length ? segments[segments.length - 1] : path || "Inicio"
@@ -3165,10 +3220,28 @@ export default function Home() {
           {otherChildDirectories.length > 0 && (
             <ul className="space-y-1">
               {otherChildDirectories.map((dir) => (
-                <li key={dir} className="font-bold">
-                  <button onClick={() => setViewWeek(dir)}>
+                <li
+                  key={dir}
+                  className="font-bold flex items-center justify-between gap-2"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setViewWeek(dir)}
+                    className="flex-1 text-left"
+                  >
                     {formatDirLabel(dir)}
                   </button>
+                  {!directoryContainsWeekSegment(dir) && (
+                    <button
+                      type="button"
+                      onClick={() => handleCreateDirectoryQuickLink(dir)}
+                      className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+                      title={`Guardar enlace rápido para ${buildDirectoryDisplayName(dir)}`}
+                      aria-label={`Guardar enlace rápido para ${buildDirectoryDisplayName(dir)}`}
+                    >
+                      🔗
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
