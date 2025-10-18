@@ -37,6 +37,18 @@ const isPracticeSegment = (segment: string) => {
   return normalized === "practica" || normalized === "practice"
 }
 
+const isWeekSegment = (segment: string) => {
+  const normalized = normalizeSegment(segment)
+  const compact = normalized.replace(/\s+/g, " ").trim()
+  return /^semana\s+\d+$/.test(compact)
+}
+
+const pathHasWeekSegment = (path: string) =>
+  path
+    .split("/")
+    .filter(Boolean)
+    .some((segment) => isWeekSegment(segment))
+
 const getLastSegment = (path: string) => {
   const parts = path.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : ""
@@ -3067,6 +3079,33 @@ export default function Home() {
     setPendingViewerNote(null)
   }
 
+  const handleAddDirectoryQuickLink = useCallback(
+    (path: string) => {
+      const segments = path.split("/").filter(Boolean)
+      const label = segments.length ? segments.join(" / ") : "Inicio"
+      const urlPath = `/${segments.join("/")}`
+      const idBase = (normalizePathSegments(path) || "root").replace(/\s+/g, "-")
+      setQuickLinks((prev) => {
+        if (prev.some((link) => link.url === urlPath)) {
+          showToastMessage('error', 'Este enlace ya existe en tus links rápidos.')
+          return prev
+        }
+        if (prev.length >= QUICK_LINK_SLOT_COUNT) {
+          showToastMessage('error', 'Alcanzaste el máximo de enlaces rápidos.')
+          return prev
+        }
+        const entry: QuickLink = {
+          id: `dir-${idBase}-${Date.now()}`,
+          label,
+          url: urlPath,
+        }
+        showToastMessage('success', 'Enlace agregado a links rápidos.')
+        return [...prev, entry]
+      })
+    },
+    [setQuickLinks, showToastMessage],
+  )
+
   const formatDirLabel = (path: string) => {
     const segments = path.split("/").filter(Boolean)
     const name = segments.length ? segments[segments.length - 1] : path || "Inicio"
@@ -3164,13 +3203,38 @@ export default function Home() {
           </div>
           {otherChildDirectories.length > 0 && (
             <ul className="space-y-1">
-              {otherChildDirectories.map((dir) => (
-                <li key={dir} className="font-bold">
-                  <button onClick={() => setViewWeek(dir)}>
-                    {formatDirLabel(dir)}
-                  </button>
-                </li>
-              ))}
+              {otherChildDirectories.map((dir) => {
+                const breadcrumbLabel = formatBreadcrumb(dir)
+                const canCreateQuickLink = !pathHasWeekSegment(dir)
+                return (
+                  <li key={dir}>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setViewWeek(dir)}
+                        className="flex-1 text-left font-bold"
+                      >
+                        {formatDirLabel(dir)}
+                      </button>
+                      {canCreateQuickLink && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            handleAddDirectoryQuickLink(dir)
+                          }}
+                          className="text-sm px-2 py-1 border border-gray-300 rounded hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+                          title={`Agregar a links rápidos: ${breadcrumbLabel}`}
+                          aria-label={`Agregar a links rápidos: ${breadcrumbLabel}`}
+                        >
+                          🔗
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
           {showTheoryPractice ? (
