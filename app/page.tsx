@@ -11,7 +11,6 @@ import {
   useState,
 } from "react"
 import { useTheme } from "next-themes"
-import { usePathname, useRouter } from "next/navigation"
 
 import {
   DEFAULT_GROQ_IMAGE_PROMPT,
@@ -65,6 +64,22 @@ const formatQuickLinkUrlForDisplay = (url: string) => {
     return decodeURI(url)
   } catch {
     return url
+  }
+}
+
+const extractPathnameFromTarget = (value: string) => {
+  const raw = (value || '').trim()
+  if (!raw) return '/'
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    const parsed = new URL(raw, base)
+    return parsed.pathname || '/'
+  } catch {
+    if (raw.startsWith('/')) {
+      const index = raw.search(/[?#]/)
+      return index === -1 ? raw : raw.slice(0, index) || '/'
+    }
+    return '/'
   }
 }
 
@@ -475,7 +490,6 @@ const getDirectoryHandleForPath = async (
 
 export default function Home() {
   const { setTheme, theme } = useTheme()
-  const router = useRouter()
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
   const [names, setNames] = useState<string[]>([])
@@ -848,9 +862,19 @@ export default function Home() {
   )
   // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
-  const pathname = usePathname()
+  const [effectivePath, setEffectivePath] = useState<string>("/")
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const applyCurrentPath = () => {
+      const current = window.location.pathname || "/"
+      setEffectivePath((prev) => (prev === current ? prev : current))
+    }
+    applyCurrentPath()
+    window.addEventListener("popstate", applyCurrentPath)
+    return () => window.removeEventListener("popstate", applyCurrentPath)
+  }, [])
   const routeScope = useMemo(() => {
-    const rawPath = pathname ?? ''
+    const rawPath = effectivePath ?? ""
     const segments = rawPath.split('/')
       .filter(Boolean)
       .map((segment) => decodeURIComponent(segment))
@@ -874,7 +898,7 @@ export default function Home() {
       }
     }
     return { scope: 'global' as const }
-  }, [pathname])
+  }, [effectivePath])
 
   const normalizedDirectoryLookup = useMemo(() => {
     const map = new Map<string, string>()
@@ -966,9 +990,12 @@ export default function Home() {
 
   useEffect(() => {
     if (routeScope.scope === 'subject') return
-    const rawPath = pathname ?? ''
+    const rawPath = effectivePath ?? ''
     const segments = rawPath.split('/').filter(Boolean)
-    if (!segments.length) return
+    if (!segments.length) {
+      setViewWeek((prev) => (prev === null ? prev : null))
+      return
+    }
     const decodedSegments = segments.map((segment) => {
       try {
         return decodeURIComponent(segment)
@@ -977,18 +1004,17 @@ export default function Home() {
       }
     })
     const normalizedTarget = normalizePathSegments(decodedSegments.join('/'))
-    if (!normalizedTarget) return
-    const match = normalizedDirectoryLookup.get(normalizedTarget)
-    if (match) {
-      if (match !== viewWeek) {
-        setViewWeek(match)
-      }
+    if (!normalizedTarget) {
+      setViewWeek((prev) => (prev === null ? prev : null))
       return
     }
-    if (viewWeek !== null) {
-      setViewWeek(null)
+    const match = normalizedDirectoryLookup.get(normalizedTarget)
+    if (match) {
+      setViewWeek((prev) => (prev === match ? prev : match))
+      return
     }
-  }, [normalizedDirectoryLookup, pathname, routeScope, setViewWeek, viewWeek])
+    setViewWeek((prev) => (prev === null ? prev : null))
+  }, [effectivePath, normalizedDirectoryLookup, routeScope, setViewWeek])
 
   useEffect(() => {
     let storedModel = ''
@@ -2501,6 +2527,26 @@ export default function Home() {
     return filled
   }, [quickLinks])
 
+  const updateHistoryPath = useCallback(
+    (targetPath: string, options?: { replace?: boolean }) => {
+      const historyValue = (targetPath || '/').trim() || '/'
+      const nextPath = extractPathnameFromTarget(historyValue)
+      setEffectivePath((prev) => (prev === nextPath ? prev : nextPath))
+      if (typeof window === 'undefined') return
+      const currentFull = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      if (!options?.replace && currentFull === historyValue) {
+        return
+      }
+      const method: 'pushState' | 'replaceState' = options?.replace ? 'replaceState' : 'pushState'
+      try {
+        window.history[method](null, '', historyValue)
+      } catch (error) {
+        console.warn(`history.${method} failed for ${historyValue}`, error)
+      }
+    },
+    [],
+  )
+
   const openQuickLink = useCallback(
     (link: QuickLink) => {
       const rawUrl = (link.url || '').trim()
@@ -2526,7 +2572,7 @@ export default function Home() {
         }
         const encoded = encodePathForQuickLink(match)
         if (encoded) {
-          router.push(encoded)
+          updateHistoryPath(encoded)
         }
         setShowQuickLinks(false)
         return
@@ -2534,13 +2580,13 @@ export default function Home() {
       if (!rawUrl) return
       let handled = false
       if (rawUrl.startsWith('/')) {
-        router.push(rawUrl)
+        updateHistoryPath(rawUrl)
         handled = true
-      } else {
+      } else if (typeof window !== 'undefined') {
         try {
           const resolved = new URL(rawUrl, window.location.href)
           if (resolved.origin === window.location.origin) {
-            router.push(`${resolved.pathname}${resolved.search}${resolved.hash}`)
+            updateHistoryPath(`${resolved.pathname}${resolved.search}${resolved.hash}`)
             handled = true
           }
         } catch {}
@@ -2552,7 +2598,7 @@ export default function Home() {
       }
       setShowQuickLinks(false)
     },
-    [normalizedDirectoryLookup, router, setViewWeek, viewWeek],
+    [normalizedDirectoryLookup, setViewWeek, updateHistoryPath, viewWeek],
   )
 
   const navigateToDirectory = useCallback(
@@ -2565,14 +2611,14 @@ export default function Home() {
         setViewWeek(target)
         const encoded = encodePathForQuickLink(target)
         if (encoded) {
-          router.push(encoded)
+          updateHistoryPath(encoded)
         }
       } else {
         setViewWeek(null)
-        router.push('/')
+        updateHistoryPath('/')
       }
     },
-    [routeScope, router, setViewWeek],
+    [routeScope, setViewWeek, updateHistoryPath],
   )
 
   if (!mounted) return null
