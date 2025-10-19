@@ -70,6 +70,26 @@ const normalizePathSegments = (value: string) =>
     .map((segment) => normalizeSegment(segment))
     .join("/")
 
+const WEEK_SEGMENT_REGEX = /^semana\s*\d+/i
+
+const isWeekFolderPath = (path: string) =>
+  path
+    .split("/")
+    .filter(Boolean)
+    .some((segment) => WEEK_SEGMENT_REGEX.test(segment.trim()))
+
+const buildInternalDirectoryUrl = (path: string) => {
+  const segments = path.split("/").filter(Boolean)
+  if (!segments.length) return ""
+  return `/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`
+}
+
+const formatDirectoryLinkLabel = (path: string) => {
+  const segments = path.split("/").filter(Boolean)
+  if (!segments.length) return "Inicio"
+  return segments.join(" / ")
+}
+
 const isQuotaExceededError = (error: unknown) =>
   error instanceof DOMException &&
   (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED")
@@ -581,6 +601,45 @@ export default function Home() {
       showToastMessage('error', 'No se pudo copiar la ruta al portapapeles.')
     }
   }, [computedWindowsPath, showToastMessage])
+  const handleCreateQuickLinkForDirectory = useCallback(
+    (dirPath: string) => {
+      const normalizedPath = dirPath.trim()
+      if (!normalizedPath) return
+      const urlPath = buildInternalDirectoryUrl(normalizedPath)
+      if (!urlPath) {
+        showToastMessage('error', 'No se pudo generar el enlace para esta carpeta.')
+        return
+      }
+      const label = formatDirectoryLinkLabel(normalizedPath)
+      let toast: { type: 'success' | 'error'; text: string } | null = null
+      setQuickLinks((prev) => {
+        const normalizedUrl = urlPath.toLowerCase()
+        if (prev.some((link) => link.url.toLowerCase() === normalizedUrl)) {
+          toast = {
+            type: 'error',
+            text: 'Este enlace ya existe en tus links rápidos.',
+          }
+          return prev
+        }
+        const newLink: QuickLink = {
+          id: `custom-${Date.now().toString(36)}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`,
+          label,
+          url: urlPath,
+        }
+        toast = {
+          type: 'success',
+          text: 'Enlace agregado a links rápidos',
+        }
+        return [newLink, ...prev]
+      })
+      if (toast) {
+        showToastMessage(toast.type, toast.text)
+      }
+    },
+    [setQuickLinks, showToastMessage],
+  )
   const handleSaveWindowsBasePath = useCallback(() => {
     const sanitized = windowsBasePathDraft.trim().replace(/\//g, '\\')
     setWindowsBasePath(sanitized)
@@ -3166,9 +3225,26 @@ export default function Home() {
             <ul className="space-y-1">
               {otherChildDirectories.map((dir) => (
                 <li key={dir} className="font-bold">
-                  <button onClick={() => setViewWeek(dir)}>
-                    {formatDirLabel(dir)}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="flex-1 text-left hover:underline"
+                      onClick={() => setViewWeek(dir)}
+                    >
+                      {formatDirLabel(dir)}
+                    </button>
+                    {!isWeekFolderPath(dir) && (
+                      <button
+                        type="button"
+                        onClick={() => handleCreateQuickLinkForDirectory(dir)}
+                        className="text-xs px-2 py-1 border border-gray-300 rounded hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+                        title="Guardar enlace rápido de esta carpeta"
+                        aria-label={`Guardar enlace rápido de ${formatDirLabel(dir)}`}
+                      >
+                        🔗
+                      </button>
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
