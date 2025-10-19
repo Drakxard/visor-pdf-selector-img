@@ -37,6 +37,11 @@ const isPracticeSegment = (segment: string) => {
   return normalized === "practica" || normalized === "practice"
 }
 
+const isVideosSegment = (segment: string) => {
+  const normalized = normalizeSegment(segment)
+  return normalized === "videos" || normalized === "video"
+}
+
 const isWeekSegment = (segment: string) => {
   const normalized = normalizeSegment(segment)
   return /^semana\s*\d*$/.test(normalized)
@@ -2654,7 +2659,7 @@ export default function Home() {
     return diff
   }
 
-  const handleSelectFile = (pdf: PdfFile) => {
+  const handleSelectFile = useCallback((pdf: PdfFile) => {
     // if (timerRunning) pauseTimer()
     // setElapsedSeconds(0)
     // setUnsentSeconds(0)
@@ -2666,7 +2671,27 @@ export default function Home() {
       setCurrentPdf(pdf)
     }
     if (!pdf.isPdf) setViewerOpen(false)
-  }
+  }, [queue])
+
+  const handleVideoEnded = useCallback(() => {
+    if (!currentPdf || currentPdf.mediaType !== 'video') return
+    const containerPath = currentPdf.containerPath ?? ''
+    const entry = directoryTree[containerPath]
+    if (!entry) return
+    const videos = entry.files
+      .filter((file) => file.mediaType === 'video')
+      .sort((a, b) =>
+        a.file.name.localeCompare(b.file.name, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        }),
+      )
+    const index = videos.findIndex((file) => file.path === currentPdf.path)
+    if (index < 0) return
+    const nextVideo = videos[index + 1]
+    if (!nextVideo) return
+    handleSelectFile(nextVideo)
+  }, [currentPdf, directoryTree, handleSelectFile])
 
   const prevPdf = () => {
     if (queueIndex > 0) {
@@ -2778,7 +2803,14 @@ export default function Home() {
   const practiceChildPaths = childDirectories.filter((dir) =>
     isPracticeSegment(getLastSegment(dir)),
   )
-  const aggregatedChildSet = new Set([...theoryChildPaths, ...practiceChildPaths])
+  const videoChildPaths = childDirectories.filter((dir) =>
+    isVideosSegment(getLastSegment(dir)),
+  )
+  const aggregatedChildSet = new Set([
+    ...theoryChildPaths,
+    ...practiceChildPaths,
+    ...videoChildPaths,
+  ])
   const otherChildDirectories = childDirectories.filter(
     (dir) => !aggregatedChildSet.has(dir),
   )
@@ -2788,6 +2820,9 @@ export default function Home() {
   )
   const directPracticeFiles = selectedFiles.filter(
     (file) => file.tableType === 'practice',
+  )
+  const directVideoFiles = selectedFiles.filter(
+    (file) => file.mediaType === 'video',
   )
 
   const collectAndSort = (paths: string[], direct: PdfFile[], orderKey: string) => {
@@ -2821,12 +2856,31 @@ export default function Home() {
   const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
   const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles, theoryOrderKey)
   const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles, practiceOrderKey)
+  const collectVideoFiles = (paths: string[]) =>
+    paths.flatMap((path) => collectFiles(path)).filter((file) => file.mediaType === 'video')
+  const videoMap = new Map<string, PdfFile>()
+  ;[
+    ...directVideoFiles,
+    ...collectVideoFiles(videoChildPaths),
+  ].forEach((file) => {
+    if (file.mediaType !== 'video') return
+    if (!videoMap.has(file.path)) {
+      videoMap.set(file.path, file)
+    }
+  })
+  const videoFiles = Array.from(videoMap.values()).sort((a, b) =>
+    a.file.name.localeCompare(b.file.name, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    }),
+  )
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
     (
       theoryFiles.length > 0 ||
       practiceFiles.length > 0 ||
+      videoFiles.length > 0 ||
       aggregatedChildSet.size > 0 ||
       hasActivePropositions ||
       showPropositionInput ||
@@ -3453,6 +3507,14 @@ export default function Home() {
                 )}
               </div>
               <div>
+                <h3 className="text-sm font-semibold text-gray-500 uppercase">Videos</h3>
+                {videoFiles.length ? (
+                  renderFileList(videoFiles)
+                ) : (
+                  <p className="text-xs text-gray-500">Sin videos</p>
+                )}
+              </div>
+              <div>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <button
@@ -3740,8 +3802,10 @@ export default function Home() {
                 <video
                   key={videoUrl}
                   controls
+                  autoPlay
                   className="w-full h-full"
                   src={videoUrl}
+                  onEnded={handleVideoEnded}
                 >
                   Tu navegador no soporta la reproducción de video.
                 </video>
