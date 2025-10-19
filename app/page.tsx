@@ -68,6 +68,15 @@ const formatQuickLinkUrlForDisplay = (url: string) => {
   }
 }
 
+const ensureLeadingSlash = (value: string | null | undefined) => {
+  if (!value) return '/'
+  const trimmed = value.trim()
+  if (!trimmed) return '/'
+  if (trimmed === '/') return '/'
+  const withoutLeading = trimmed.replace(/^\/+/, '')
+  return `/${withoutLeading}`
+}
+
 const getLastSegment = (path: string) => {
   const parts = path.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : ""
@@ -475,7 +484,6 @@ const getDirectoryHandleForPath = async (
 
 export default function Home() {
   const { setTheme, theme } = useTheme()
-  const router = useRouter()
   const [setupComplete, setSetupComplete] = useState(true)
   const [step, setStep] = useState(0)
   const [names, setNames] = useState<string[]>([])
@@ -849,8 +857,20 @@ export default function Home() {
   // const autoPausedRef = useRef(false)
   const [restored, setRestored] = useState(false)
   const pathname = usePathname()
+  const [syncedPath, setSyncedPath] = useState(pathname ?? '/')
+  const skipNextPathSyncRef = useRef(false)
+  const router = useRouter()
+
+  useEffect(() => {
+    if (skipNextPathSyncRef.current) {
+      skipNextPathSyncRef.current = false
+      return
+    }
+    setSyncedPath(pathname ?? '/')
+  }, [pathname])
+
   const routeScope = useMemo(() => {
-    const rawPath = pathname ?? ''
+    const rawPath = syncedPath ?? ''
     const segments = rawPath.split('/')
       .filter(Boolean)
       .map((segment) => decodeURIComponent(segment))
@@ -874,7 +894,7 @@ export default function Home() {
       }
     }
     return { scope: 'global' as const }
-  }, [pathname])
+  }, [syncedPath])
 
   const normalizedDirectoryLookup = useMemo(() => {
     const map = new Map<string, string>()
@@ -893,6 +913,26 @@ export default function Home() {
     routeScope.scope === 'subject'
       ? `${routeScope.tableType}::${routeScope.normalizedSubject}`
       : 'global'
+
+  const updateUrlWithoutNavigation = useCallback((path: string | null) => {
+    if (typeof window === 'undefined') return
+    const targetPath = ensureLeadingSlash(path)
+    try {
+      window.history.replaceState(null, '', targetPath)
+    } catch (error) {
+      console.warn('No se pudo actualizar la URL sin navegar', error)
+    }
+  }, [])
+
+  const applyInternalPathChange = useCallback(
+    (path: string | null) => {
+      const targetPath = ensureLeadingSlash(path)
+      skipNextPathSyncRef.current = true
+      setSyncedPath(targetPath)
+      updateUrlWithoutNavigation(targetPath)
+    },
+    [setSyncedPath, updateUrlWithoutNavigation],
+  )
 
   const getScopedStorageKey = useCallback(
     (baseKey: string) => {
@@ -966,7 +1006,7 @@ export default function Home() {
 
   useEffect(() => {
     if (routeScope.scope === 'subject') return
-    const rawPath = pathname ?? ''
+    const rawPath = syncedPath ?? ''
     const segments = rawPath.split('/').filter(Boolean)
     if (!segments.length) return
     const decodedSegments = segments.map((segment) => {
@@ -988,7 +1028,7 @@ export default function Home() {
     if (viewWeek !== null) {
       setViewWeek(null)
     }
-  }, [normalizedDirectoryLookup, pathname, routeScope, setViewWeek, viewWeek])
+  }, [normalizedDirectoryLookup, routeScope, setViewWeek, syncedPath, viewWeek])
 
   useEffect(() => {
     let storedModel = ''
@@ -2525,9 +2565,7 @@ export default function Home() {
           setViewWeek(match)
         }
         const encoded = encodePathForQuickLink(match)
-        if (encoded) {
-          router.push(encoded)
-        }
+        applyInternalPathChange(encoded)
         setShowQuickLinks(false)
         return
       }
@@ -2551,8 +2589,8 @@ export default function Home() {
         } catch {}
       }
       setShowQuickLinks(false)
-    },
-    [normalizedDirectoryLookup, router, setViewWeek, viewWeek],
+  },
+    [applyInternalPathChange, normalizedDirectoryLookup, router, setViewWeek, viewWeek],
   )
 
   const navigateToDirectory = useCallback(
@@ -2564,15 +2602,13 @@ export default function Home() {
       if (target) {
         setViewWeek(target)
         const encoded = encodePathForQuickLink(target)
-        if (encoded) {
-          router.push(encoded)
-        }
+        applyInternalPathChange(encoded)
       } else {
         setViewWeek(null)
-        router.push('/')
+        applyInternalPathChange(null)
       }
     },
-    [routeScope, router, setViewWeek],
+    [applyInternalPathChange, routeScope, setViewWeek],
   )
 
   if (!mounted) return null
