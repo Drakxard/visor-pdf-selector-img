@@ -200,6 +200,7 @@ type QuickLink = {
   id: string
   label: string
   url: string
+  path?: string
 }
 
 type PropositionEntry = {
@@ -287,16 +288,27 @@ const NOTEBOOK_STORAGE_KEY = 'notebooksByPath'
 
 const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
   if (!Array.isArray(raw)) return []
-  const seen = new Set<string>()
+  const seenUrls = new Set<string>()
+  const seenPaths = new Set<string>()
   const result: QuickLink[] = []
+  const tryAddLink = (link: QuickLink) => {
+    const normalizedUrl = (link.url || '').toLowerCase()
+    const normalizedPath = link.path ? normalizePathSegments(link.path) : ''
+    if (normalizedPath) {
+      if (seenPaths.has(normalizedPath)) return
+      seenPaths.add(normalizedPath)
+    }
+    if (normalizedUrl) {
+      if (seenUrls.has(normalizedUrl)) return
+      seenUrls.add(normalizedUrl)
+    }
+    result.push(link)
+  }
   raw.forEach((item, index) => {
     if (typeof item === 'string') {
       const url = item.trim()
       if (!url) return
-      const key = url.toLowerCase()
-      if (seen.has(key)) return
-      seen.add(key)
-      result.push({ id: `${prefix}-${index}`, label: url, url })
+      tryAddLink({ id: `${prefix}-${index}`, label: url, url })
       return
     }
     if (!item || typeof item !== 'object') return
@@ -307,10 +319,14 @@ const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
         : typeof obj['href'] === 'string'
           ? (obj['href'] as string).trim()
           : ''
-    if (!rawUrlValue) return
-    const key = rawUrlValue.toLowerCase()
-    if (seen.has(key)) return
-    seen.add(key)
+    const rawPathValue =
+      typeof obj['path'] === 'string'
+        ? (obj['path'] as string)
+            .split('/')
+            .filter(Boolean)
+            .join('/')
+        : ''
+    if (!rawUrlValue && !rawPathValue) return
     const labelValue =
       typeof obj['label'] === 'string' && (obj['label'] as string).trim()
         ? (obj['label'] as string).trim()
@@ -323,7 +339,18 @@ const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
       typeof obj['id'] === 'string' && (obj['id'] as string).trim()
         ? (obj['id'] as string).trim()
         : `${prefix}-${index}`
-    result.push({ id: idValue, label: (labelValue || rawUrlValue), url: rawUrlValue })
+    const linkUrl = rawUrlValue || (rawPathValue ? encodePathForQuickLink(rawPathValue) : '')
+    const link: QuickLink = {
+      id: idValue,
+      label:
+        labelValue ||
+        (rawPathValue ? formatQuickLinkLabelFromPath(rawPathValue) : rawUrlValue || linkUrl),
+      url: linkUrl,
+    }
+    if (rawPathValue) {
+      link.path = rawPathValue
+    }
+    tryAddLink(link)
   })
   return result.slice(0, QUICK_LINK_SLOT_COUNT)
 }
@@ -620,13 +647,22 @@ export default function Home() {
         showToastMessage('error', 'No se pudo generar el enlace para esta carpeta.')
         return
       }
+      const normalizedPathKey = normalizePathSegments(trimmedPath)
       const url = encodePathForQuickLink(trimmedPath)
       if (!url) {
         showToastMessage('error', 'No se pudo generar el enlace para esta carpeta.')
         return
       }
       const normalizedUrl = url.toLowerCase()
-      if (quickLinks.some((link) => (link.url || '').toLowerCase() === normalizedUrl)) {
+      const alreadyLinkedByUrl = quickLinks.some(
+        (link) => (link.url || '').toLowerCase() === normalizedUrl,
+      )
+      const alreadyLinkedByPath = normalizedPathKey
+        ? quickLinks.some((link) =>
+            link.path ? normalizePathSegments(link.path) === normalizedPathKey : false,
+          )
+        : false
+      if (alreadyLinkedByUrl || alreadyLinkedByPath) {
         showToastMessage('error', 'Esta carpeta ya está en tus links rápidos.')
         return
       }
@@ -644,6 +680,7 @@ export default function Home() {
         id: `dir-${idBase || 'link'}-${Date.now()}`,
         label,
         url,
+        path: trimmedPath,
       }
       setQuickLinks([...quickLinks, newLink])
       showToastMessage('success', 'Enlace agregado a links rápidos')
@@ -2429,6 +2466,27 @@ export default function Home() {
   const openQuickLink = useCallback(
     (link: QuickLink) => {
       const rawUrl = (link.url || '').trim()
+      const pathCandidates = new Set<string>()
+      if (link.path) {
+        pathCandidates.add(link.path)
+      }
+      if (rawUrl.startsWith('/')) {
+        try {
+          const decoded = decodeURIComponent(rawUrl.slice(1))
+          if (decoded) {
+            pathCandidates.add(decoded)
+          }
+        } catch {}
+      }
+      for (const candidate of pathCandidates) {
+        const normalized = candidate.split('/').filter(Boolean).join('/')
+        if (!normalized) continue
+        if (directoryTree[normalized]) {
+          setViewWeek(normalized)
+          setShowQuickLinks(false)
+          return
+        }
+      }
       if (!rawUrl) return
       let handled = false
       if (rawUrl.startsWith('/')) {
@@ -2450,7 +2508,7 @@ export default function Home() {
       }
       setShowQuickLinks(false)
     },
-    [router],
+    [directoryTree, router, setViewWeek],
   )
 
   if (!mounted) return null
@@ -3236,11 +3294,15 @@ export default function Home() {
               {otherChildDirectories.map((dir) => {
                 const hasWeekSegment = pathContainsWeekSegment(dir)
                 const quickLinkUrl = encodePathForQuickLink(dir)
-                const alreadyLinked = quickLinkUrl
-                  ? quickLinks.some(
-                      (link) => (link.url || '').toLowerCase() === quickLinkUrl.toLowerCase(),
-                    )
-                  : false
+                const normalizedDirKey = normalizePathSegments(dir)
+                const alreadyLinked = quickLinks.some((link) => {
+                  if (link.path && normalizePathSegments(link.path) === normalizedDirKey) {
+                    return true
+                  }
+                  if (!quickLinkUrl) return false
+                  const linkUrl = (link.url || '').toLowerCase()
+                  return !!linkUrl && linkUrl === quickLinkUrl.toLowerCase()
+                })
                 const quickLinkDisabled =
                   hasWeekSegment || !quickLinkUrl || alreadyLinked || quickLinks.length >= QUICK_LINK_SLOT_COUNT
                 const quickLinkTitle = hasWeekSegment
