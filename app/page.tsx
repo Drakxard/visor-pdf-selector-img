@@ -37,6 +37,52 @@ const isPracticeSegment = (segment: string) => {
   return normalized === "practica" || normalized === "practice"
 }
 
+const isWeekSegment = (segment: string) => {
+  const normalized = normalizeSegment(segment)
+  return /^semana\s*\d*$/.test(normalized)
+}
+
+const pathContainsWeekSegment = (path: string) =>
+  path
+    .split("/")
+    .filter(Boolean)
+    .some((segment) => isWeekSegment(segment))
+
+const encodePathForQuickLink = (path: string) => {
+  const segments = path.split("/").filter(Boolean)
+  if (!segments.length) return ""
+  return `/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`
+}
+
+const decodePathFromQuickLinkUrl = (url: string) => {
+  if (!url.startsWith('/')) return null
+  const segments = url.split('/').filter(Boolean)
+  if (!segments.length) return ''
+  return segments
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    })
+    .join('/')
+}
+
+const formatQuickLinkLabelFromPath = (path: string) =>
+  path
+    .split("/")
+    .filter(Boolean)
+    .join(" / ")
+
+const formatQuickLinkUrlForDisplay = (url: string) => {
+  try {
+    return decodeURI(url)
+  } catch {
+    return url
+  }
+}
+
 const getLastSegment = (path: string) => {
   const parts = path.split("/").filter(Boolean)
   return parts.length ? parts[parts.length - 1] : ""
@@ -169,6 +215,7 @@ type QuickLink = {
   id: string
   label: string
   url: string
+  path?: string
 }
 
 type PropositionEntry = {
@@ -292,7 +339,9 @@ const normalizeQuickLinks = (raw: unknown, prefix = 'link'): QuickLink[] => {
       typeof obj['id'] === 'string' && (obj['id'] as string).trim()
         ? (obj['id'] as string).trim()
         : `${prefix}-${index}`
-    result.push({ id: idValue, label: (labelValue || rawUrlValue), url: rawUrlValue })
+    const pathValue =
+      typeof obj['path'] === 'string' && obj['path'].trim() ? obj['path'].trim() : undefined
+    result.push({ id: idValue, label: (labelValue || rawUrlValue), url: rawUrlValue, path: pathValue })
   })
   return result.slice(0, QUICK_LINK_SLOT_COUNT)
 }
@@ -581,6 +630,45 @@ export default function Home() {
       showToastMessage('error', 'No se pudo copiar la ruta al portapapeles.')
     }
   }, [computedWindowsPath, showToastMessage])
+
+  const handleAddDirectoryQuickLink = useCallback(
+    (path: string) => {
+      const trimmedPath = path.split('/').filter(Boolean).join('/')
+      if (!trimmedPath) {
+        showToastMessage('error', 'No se pudo generar el enlace para esta carpeta.')
+        return
+      }
+      const url = encodePathForQuickLink(trimmedPath)
+      if (!url) {
+        showToastMessage('error', 'No se pudo generar el enlace para esta carpeta.')
+        return
+      }
+      const normalizedUrl = url.toLowerCase()
+      if (quickLinks.some((link) => (link.url || '').toLowerCase() === normalizedUrl)) {
+        showToastMessage('error', 'Esta carpeta ya está en tus links rápidos.')
+        return
+      }
+      if (quickLinks.length >= QUICK_LINK_SLOT_COUNT) {
+        showToastMessage('error', 'No hay espacios disponibles en los links rápidos.')
+        return
+      }
+      const label = formatQuickLinkLabelFromPath(trimmedPath) || trimmedPath
+      const idBase = trimmedPath
+        .split('/')
+        .map((segment) => normalizeSegment(segment).replace(/[^a-z0-9]+/g, '-'))
+        .join('-')
+        .replace(/^-+|-+$/g, '')
+      const newLink: QuickLink = {
+        id: `dir-${idBase || 'link'}-${Date.now()}`,
+        label,
+        url,
+        path: trimmedPath,
+      }
+      setQuickLinks([...quickLinks, newLink])
+      showToastMessage('success', 'Enlace agregado a links rápidos')
+    },
+    [quickLinks, showToastMessage],
+  )
   const handleSaveWindowsBasePath = useCallback(() => {
     const sanitized = windowsBasePathDraft.trim().replace(/\//g, '\\')
     setWindowsBasePath(sanitized)
@@ -2361,6 +2449,38 @@ export default function Home() {
     (link: QuickLink) => {
       const rawUrl = (link.url || '').trim()
       if (!rawUrl) return
+
+      const directoryPath = (() => {
+        if (link.path && link.path.trim()) {
+          return link.path.trim()
+        }
+        return decodePathFromQuickLinkUrl(rawUrl)
+      })()
+
+      if (directoryPath !== null && directoryPath !== undefined) {
+        const targetPath = directoryPath
+        if (targetPath === '' || directoryTree[targetPath]) {
+          const segments = targetPath.split('/').filter(Boolean)
+          if (segments.length >= 2) {
+            const [modeSegment, subjectSegment, ...rest] = segments
+            if (subjectSegment && (isTheorySegment(modeSegment) || isPracticeSegment(modeSegment))) {
+              const baseRoute = `/${encodeURIComponent(modeSegment)}/${encodeURIComponent(subjectSegment)}`
+              if (pathname !== baseRoute) {
+                router.push(baseRoute)
+              }
+              if (rest.length === 0) {
+                setViewWeek(targetPath || null)
+                setShowQuickLinks(false)
+                return
+              }
+            }
+          }
+          setViewWeek(targetPath || null)
+          setShowQuickLinks(false)
+          return
+        }
+      }
+
       let handled = false
       if (rawUrl.startsWith('/')) {
         router.push(rawUrl)
@@ -2381,7 +2501,7 @@ export default function Home() {
       }
       setShowQuickLinks(false)
     },
-    [router],
+    [directoryTree, pathname, router, setViewWeek],
   )
 
   if (!mounted) return null
@@ -3164,13 +3284,43 @@ export default function Home() {
           </div>
           {otherChildDirectories.length > 0 && (
             <ul className="space-y-1">
-              {otherChildDirectories.map((dir) => (
-                <li key={dir} className="font-bold">
-                  <button onClick={() => setViewWeek(dir)}>
-                    {formatDirLabel(dir)}
-                  </button>
-                </li>
-              ))}
+              {otherChildDirectories.map((dir) => {
+                const hasWeekSegment = pathContainsWeekSegment(dir)
+                const quickLinkUrl = encodePathForQuickLink(dir)
+                const alreadyLinked = quickLinkUrl
+                  ? quickLinks.some(
+                      (link) => (link.url || '').toLowerCase() === quickLinkUrl.toLowerCase(),
+                    )
+                  : false
+                const quickLinkDisabled =
+                  hasWeekSegment || !quickLinkUrl || alreadyLinked || quickLinks.length >= QUICK_LINK_SLOT_COUNT
+                const quickLinkTitle = hasWeekSegment
+                  ? 'Las carpetas de Semana no generan enlaces personalizados'
+                  : alreadyLinked
+                    ? 'Esta carpeta ya está guardada en tus links rápidos'
+                    : quickLinks.length >= QUICK_LINK_SLOT_COUNT
+                      ? 'No hay espacios disponibles en los links rápidos'
+                      : 'Agregar a links rápidos'
+                return (
+                  <li key={dir} className="font-bold flex items-center gap-2">
+                    <button onClick={() => setViewWeek(dir)} className="flex-1 text-left">
+                      {formatDirLabel(dir)}
+                    </button>
+                    {!hasWeekSegment && (
+                      <button
+                        type="button"
+                        onClick={() => handleAddDirectoryQuickLink(dir)}
+                        className="text-sm px-2 py-1 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                        title={quickLinkTitle}
+                        aria-label={quickLinkTitle}
+                        disabled={quickLinkDisabled}
+                      >
+                        🔗
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
           {showTheoryPractice ? (
@@ -3816,7 +3966,9 @@ export default function Home() {
                   {link.label || 'Espacio libre'}
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                  {link.url || 'Configura este enlace en tu archivo config.json'}
+                  {link.url
+                    ? formatQuickLinkUrlForDisplay(link.url)
+                    : 'Configura este enlace en tu archivo config.json'}
                 </div>
               </button>
             ))}
