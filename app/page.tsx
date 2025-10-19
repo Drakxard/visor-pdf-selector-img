@@ -876,6 +876,18 @@ export default function Home() {
     return { scope: 'global' as const }
   }, [pathname])
 
+  const normalizedDirectoryLookup = useMemo(() => {
+    const map = new Map<string, string>()
+    Object.keys(directoryTree).forEach((path) => {
+      if (!path) return
+      const normalized = normalizePathSegments(path)
+      if (normalized && !map.has(normalized)) {
+        map.set(normalized, path)
+      }
+    })
+    return map
+  }, [directoryTree])
+
   const weekSelectId = useId()
   const routeScopeKey =
     routeScope.scope === 'subject'
@@ -951,6 +963,32 @@ export default function Home() {
     )
     return matchedOption ? matchedOption.path : ''
   }, [routeScope, subjectWeekOptions, viewWeek])
+
+  useEffect(() => {
+    if (routeScope.scope === 'subject') return
+    const rawPath = pathname ?? ''
+    const segments = rawPath.split('/').filter(Boolean)
+    if (!segments.length) return
+    const decodedSegments = segments.map((segment) => {
+      try {
+        return decodeURIComponent(segment)
+      } catch {
+        return segment
+      }
+    })
+    const normalizedTarget = normalizePathSegments(decodedSegments.join('/'))
+    if (!normalizedTarget) return
+    const match = normalizedDirectoryLookup.get(normalizedTarget)
+    if (match) {
+      if (match !== viewWeek) {
+        setViewWeek(match)
+      }
+      return
+    }
+    if (viewWeek !== null) {
+      setViewWeek(null)
+    }
+  }, [normalizedDirectoryLookup, pathname, routeScope, setViewWeek, viewWeek])
 
   useEffect(() => {
     let storedModel = ''
@@ -2479,13 +2517,19 @@ export default function Home() {
         } catch {}
       }
       for (const candidate of pathCandidates) {
-        const normalized = candidate.split('/').filter(Boolean).join('/')
+        const normalized = normalizePathSegments(candidate)
         if (!normalized) continue
-        if (directoryTree[normalized]) {
-          setViewWeek(normalized)
-          setShowQuickLinks(false)
-          return
+        const match = normalizedDirectoryLookup.get(normalized)
+        if (!match) continue
+        if (match !== viewWeek) {
+          setViewWeek(match)
         }
+        const encoded = encodePathForQuickLink(match)
+        if (encoded) {
+          router.push(encoded)
+        }
+        setShowQuickLinks(false)
+        return
       }
       if (!rawUrl) return
       let handled = false
@@ -2508,7 +2552,27 @@ export default function Home() {
       }
       setShowQuickLinks(false)
     },
-    [directoryTree, router, setViewWeek],
+    [normalizedDirectoryLookup, router, setViewWeek, viewWeek],
+  )
+
+  const navigateToDirectory = useCallback(
+    (target: string | null) => {
+      if (routeScope.scope !== 'global') {
+        setViewWeek(target)
+        return
+      }
+      if (target) {
+        setViewWeek(target)
+        const encoded = encodePathForQuickLink(target)
+        if (encoded) {
+          router.push(encoded)
+        }
+      } else {
+        setViewWeek(null)
+        router.push('/')
+      }
+    },
+    [routeScope, router, setViewWeek],
   )
 
   if (!mounted) return null
@@ -3227,13 +3291,13 @@ export default function Home() {
         <aside className="border-b md:border-r p-4 space-y-2">
           {viewWeek !== null && (
             <div className="mb-2 flex flex-wrap gap-2">
-              <button className="underline" onClick={() => setViewWeek(null)}>
+              <button className="underline" onClick={() => navigateToDirectory(null)}>
                 Inicio
               </button>
               {parentDirectory !== null && (
                 <button
                   className="underline"
-                  onClick={() => setViewWeek(parentDirectory || null)}
+                  onClick={() => navigateToDirectory(parentDirectory || null)}
                 >
                   ← Volver
                 </button>
@@ -3314,7 +3378,7 @@ export default function Home() {
                       : 'Agregar a links rápidos'
                 return (
                   <li key={dir} className="font-bold flex items-center gap-2">
-                    <button onClick={() => setViewWeek(dir)} className="flex-1 text-left">
+                    <button onClick={() => navigateToDirectory(dir)} className="flex-1 text-left">
                       {formatDirLabel(dir)}
                     </button>
                     {!hasWeekSegment && (
@@ -3547,7 +3611,7 @@ export default function Home() {
             <p className="text-sm text-gray-500">Carpeta vacía</p>
           )}
         </aside>
-       <section
+        <section
           className={`flex flex-col flex-1 md:h-screen ${viewerOpen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900' : ''}`}
         >
           {viewerOpen ? (
@@ -3564,8 +3628,8 @@ export default function Home() {
                     onClick={() => {
                       setViewerOpen(false)
                       setPdfFullscreen(false)
-                        setViewWeek(null)
-                      }}
+                      navigateToDirectory(null)
+                    }}
                   >
                     Inicio
                   </button>
