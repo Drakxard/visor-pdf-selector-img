@@ -555,6 +555,9 @@ export default function Home() {
   const [newNotebookName, setNewNotebookName] = useState('')
   const notebookInputRef = useRef<HTMLInputElement>(null)
   const [creatingNotebook, setCreatingNotebook] = useState(false)
+  const [editingNotebookId, setEditingNotebookId] = useState<string | null>(null)
+  const [editingNotebookName, setEditingNotebookName] = useState('')
+  const editingNotebookInputRef = useRef<HTMLInputElement | null>(null)
   const [showSaveViewerNoteModal, setShowSaveViewerNoteModal] = useState(false)
   const [viewerNoteDraftName, setViewerNoteDraftName] = useState('')
   const [pendingViewerNote, setPendingViewerNote] = useState<{ html: string; text: string } | null>(null)
@@ -1997,6 +2000,15 @@ export default function Home() {
   }, [showNotebookInput])
 
   useEffect(() => {
+    if (!editingNotebookId) return
+    const timer = window.setTimeout(() => {
+      editingNotebookInputRef.current?.focus()
+      editingNotebookInputRef.current?.select?.()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [editingNotebookId])
+
+  useEffect(() => {
     if (!showSaveViewerNoteModal) return
     const timer = window.setTimeout(() => {
       saveViewerNoteInputRef.current?.focus()
@@ -2009,6 +2021,9 @@ export default function Home() {
     setShowNotebookInput(false)
     setNewNotebookName('')
     setCreatingNotebook(false)
+    setEditingNotebookId(null)
+    setEditingNotebookName('')
+    editingNotebookInputRef.current = null
   }, [viewWeek])
 
   useEffect(() => {
@@ -2756,6 +2771,13 @@ export default function Home() {
   const activeNotebookPath = activePropositionPath
   const activeNotebooks = notebooksByPath[activeNotebookPath] ?? []
   const hasActiveNotebooks = activeNotebooks.length > 0
+
+  useEffect(() => {
+    setEditingNotebookId(null)
+    setEditingNotebookName('')
+    editingNotebookInputRef.current = null
+  }, [activeNotebookPath])
+
   const propositionStatusIcon = allPropositionsRead
     ? '✔'
     : anyPropositionRead
@@ -3201,7 +3223,58 @@ export default function Home() {
     }
   }
 
+  const handleStartNotebookEditing = (entry: NotebookEntry) => {
+    setEditingNotebookId(entry.id)
+    setEditingNotebookName(entry.name)
+  }
+
+  const handleCancelNotebookEditing = () => {
+    setEditingNotebookId(null)
+    setEditingNotebookName('')
+    editingNotebookInputRef.current = null
+  }
+
+  const handleConfirmNotebookEditing = (entryId: string) => {
+    const trimmedName = editingNotebookName.trim()
+    if (!trimmedName) {
+      showToastMessage('error', 'Ingresa un nombre para el cuaderno.')
+      return
+    }
+    let result: 'none' | 'missing' | 'updated' = 'none'
+    setNotebooksByPath((prev) => {
+      const prevEntries = prev[activeNotebookPath] ?? []
+      const index = prevEntries.findIndex((item) => item.id === entryId)
+      if (index === -1) {
+        result = 'missing'
+        return prev
+      }
+      const existing = prevEntries[index]
+      if (existing.name === trimmedName) {
+        return prev
+      }
+      const nextEntries = [...prevEntries]
+      nextEntries[index] = { ...existing, name: trimmedName }
+      result = 'updated'
+      return {
+        ...prev,
+        [activeNotebookPath]: nextEntries,
+      }
+    })
+    if (result === 'missing') {
+      showToastMessage('error', 'No se encontró el cuaderno que intentas editar.')
+      handleCancelNotebookEditing()
+      return
+    }
+    handleCancelNotebookEditing()
+    if (result === 'updated') {
+      showToastMessage('success', 'Nombre del cuaderno actualizado')
+    }
+  }
+
   const handleRemoveNotebook = (entry: NotebookEntry) => {
+    if (editingNotebookId === entry.id) {
+      handleCancelNotebookEditing()
+    }
     setNotebooksByPath((prev) => {
       const prevEntries = prev[activeNotebookPath] ?? []
       const nextEntries = prevEntries.filter((item) => item.id !== entry.id)
@@ -3601,28 +3674,86 @@ export default function Home() {
                 )}
                 {activeNotebooks.length > 0 ? (
                   <ul className="mt-2 space-y-1">
-                    {activeNotebooks.map((entry) => (
-                      <li
-                        key={entry.id}
-                        className="flex items-center justify-between gap-2"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleOpenNotebook(entry)}
-                          className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
-                        >
-                          {entry.name}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveNotebook(entry)}
-                          className="text-sm text-gray-400 transition-colors hover:text-red-500"
-                          aria-label={`Eliminar cuaderno ${entry.name}`}
-                        >
-                          ✕
-                        </button>
-                      </li>
-                    ))}
+                    {activeNotebooks.map((entry) => {
+                      const isEditing = editingNotebookId === entry.id
+                      return (
+                        <li key={entry.id} className="flex items-center gap-2">
+                          {isEditing ? (
+                            <input
+                              ref={(node) => {
+                                if (isEditing) {
+                                  editingNotebookInputRef.current = node
+                                }
+                              }}
+                              value={editingNotebookName}
+                              onChange={(event) =>
+                                setEditingNotebookName(event.target.value)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  handleConfirmNotebookEditing(entry.id)
+                                } else if (event.key === 'Escape') {
+                                  event.preventDefault()
+                                  handleCancelNotebookEditing()
+                                }
+                              }}
+                              className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900"
+                              aria-label={`Editar nombre del cuaderno ${entry.name}`}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenNotebook(entry)}
+                              className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
+                            >
+                              {entry.name}
+                            </button>
+                          )}
+                          <div className="flex items-center gap-1">
+                            {isEditing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleConfirmNotebookEditing(entry.id)}
+                                  className="text-sm text-gray-400 transition-colors hover:text-green-500"
+                                  aria-label={`Guardar nombre del cuaderno ${editingNotebookName || entry.name}`}
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelNotebookEditing}
+                                  className="text-sm text-gray-400 transition-colors hover:text-gray-600"
+                                  aria-label={`Cancelar edición del cuaderno ${entry.name}`}
+                                >
+                                  ↺
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartNotebookEditing(entry)}
+                                  className="text-sm text-gray-400 transition-colors hover:text-indigo-500"
+                                  aria-label={`Editar cuaderno ${entry.name}`}
+                                >
+                                  ✎
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveNotebook(entry)}
+                                  className="text-sm text-gray-400 transition-colors hover:text-red-500"
+                                  aria-label={`Eliminar cuaderno ${entry.name}`}
+                                >
+                                  ✕
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </li>
+                      )
+                    })}
                   </ul>
                 ) : !showNotebookInput ? (
                   <p className="mt-2 text-xs text-gray-500">Sin cuadernos</p>
