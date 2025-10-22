@@ -553,7 +553,10 @@ export default function Home() {
   const [notebooksHydrated, setNotebooksHydrated] = useState(false)
   const [showNotebookInput, setShowNotebookInput] = useState(false)
   const [newNotebookName, setNewNotebookName] = useState('')
+  const [editingNotebookId, setEditingNotebookId] = useState<string | null>(null)
+  const [editingNotebookName, setEditingNotebookName] = useState('')
   const notebookInputRef = useRef<HTMLInputElement>(null)
+  const editingNotebookInputRef = useRef<HTMLInputElement>(null)
   const [creatingNotebook, setCreatingNotebook] = useState(false)
   const [showSaveViewerNoteModal, setShowSaveViewerNoteModal] = useState(false)
   const [viewerNoteDraftName, setViewerNoteDraftName] = useState('')
@@ -1997,6 +2000,15 @@ export default function Home() {
   }, [showNotebookInput])
 
   useEffect(() => {
+    if (!editingNotebookId) return
+    const timer = window.setTimeout(() => {
+      editingNotebookInputRef.current?.focus()
+      editingNotebookInputRef.current?.select?.()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [editingNotebookId])
+
+  useEffect(() => {
     if (!showSaveViewerNoteModal) return
     const timer = window.setTimeout(() => {
       saveViewerNoteInputRef.current?.focus()
@@ -2008,6 +2020,8 @@ export default function Home() {
   useEffect(() => {
     setShowNotebookInput(false)
     setNewNotebookName('')
+    setEditingNotebookId(null)
+    setEditingNotebookName('')
     setCreatingNotebook(false)
   }, [viewWeek])
 
@@ -3201,7 +3215,54 @@ export default function Home() {
     }
   }
 
+  const handleStartEditNotebook = (entry: NotebookEntry) => {
+    setShowNotebookInput(false)
+    setNewNotebookName('')
+    setEditingNotebookId(entry.id)
+    setEditingNotebookName(entry.name)
+  }
+
+  const handleCancelEditNotebook = () => {
+    setEditingNotebookId(null)
+    setEditingNotebookName('')
+  }
+
+  const handleConfirmEditNotebook = (entryId: string) => {
+    const trimmedName = editingNotebookName.trim()
+    if (!trimmedName) {
+      showToastMessage('error', 'Ingresa un nombre para el cuaderno.')
+      return
+    }
+    let found = false
+    let updated = false
+    setNotebooksByPath((prev) => {
+      const prevEntries = prev[activeNotebookPath] ?? []
+      if (!prevEntries.length) return prev
+      const nextEntries = prevEntries.map((item) => {
+        if (item.id !== entryId) return item
+        found = true
+        if (item.name === trimmedName) return item
+        updated = true
+        return { ...item, name: trimmedName }
+      })
+      if (!found || !updated) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activeNotebookPath]: nextEntries,
+      }
+    })
+    if (updated) {
+      showToastMessage('success', 'Nombre del cuaderno actualizado')
+    }
+    handleCancelEditNotebook()
+  }
+
   const handleRemoveNotebook = (entry: NotebookEntry) => {
+    if (editingNotebookId === entry.id) {
+      handleCancelEditNotebook()
+    }
     setNotebooksByPath((prev) => {
       const prevEntries = prev[activeNotebookPath] ?? []
       const nextEntries = prevEntries.filter((item) => item.id !== entry.id)
@@ -3602,25 +3663,76 @@ export default function Home() {
                 {activeNotebooks.length > 0 ? (
                   <ul className="mt-2 space-y-1">
                     {activeNotebooks.map((entry) => (
-                      <li
-                        key={entry.id}
-                        className="flex items-center justify-between gap-2"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleOpenNotebook(entry)}
-                          className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
-                        >
-                          {entry.name}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveNotebook(entry)}
-                          className="text-sm text-gray-400 transition-colors hover:text-red-500"
-                          aria-label={`Eliminar cuaderno ${entry.name}`}
-                        >
-                          ✕
-                        </button>
+                      <li key={entry.id} className="flex items-center gap-2">
+                        {editingNotebookId === entry.id ? (
+                          <input
+                            ref={editingNotebookInputRef}
+                            value={editingNotebookName}
+                            onChange={(event) =>
+                              setEditingNotebookName(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                handleConfirmEditNotebook(entry.id)
+                              } else if (event.key === 'Escape') {
+                                event.preventDefault()
+                                handleCancelEditNotebook()
+                              }
+                            }}
+                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900"
+                            aria-label={`Editar nombre del cuaderno ${entry.name}`}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenNotebook(entry)}
+                            className="flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid"
+                          >
+                            {entry.name}
+                          </button>
+                        )}
+                        <div className="flex items-center gap-1">
+                          {editingNotebookId === entry.id ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmEditNotebook(entry.id)}
+                                className="text-sm text-gray-400 transition-colors hover:text-green-500"
+                                aria-label={`Guardar nombre del cuaderno ${entry.name}`}
+                              >
+                                ✔
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancelEditNotebook}
+                                className="text-sm text-gray-400 transition-colors hover:text-gray-600"
+                                aria-label="Cancelar edición del cuaderno"
+                              >
+                                ✕
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditNotebook(entry)}
+                                className="text-sm text-gray-400 transition-colors hover:text-blue-500"
+                                aria-label={`Renombrar cuaderno ${entry.name}`}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveNotebook(entry)}
+                                className="text-sm text-gray-400 transition-colors hover:text-red-500"
+                                aria-label={`Eliminar cuaderno ${entry.name}`}
+                              >
+                                ✕
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
