@@ -4,7 +4,53 @@ import { DEFAULT_GROQ_PROMPT } from "@/lib/groq"
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-const normalizeLatexBackslashes = (value: string) => value.replace(/\\+/g, "\\")
+const collapseLatexBackslashes = (value: string) => value.replace(/\\+/g, "\\")
+
+const unwrapGroqText = (value: string, depth = 0): string => {
+  if (!value || depth > 5) return value
+
+  const trimmed = value.trim()
+  if (!trimmed) return trimmed
+
+  try {
+    const parsed = JSON.parse(trimmed)
+
+    if (typeof parsed === "string") {
+      return unwrapGroqText(parsed, depth + 1)
+    }
+
+    if (Array.isArray(parsed)) {
+      const joined = parsed
+        .map((item) => {
+          if (typeof item === "string") return item
+          if (item && typeof item === "object" && "text" in item) {
+            const textValue = (item as { text?: unknown }).text
+            if (typeof textValue === "string") {
+              return textValue
+            }
+          }
+          return ""
+        })
+        .filter(Boolean)
+        .join(" ")
+      if (joined) {
+        return unwrapGroqText(joined, depth + 1)
+      }
+    }
+
+    if (parsed && typeof parsed === "object" && "texto" in parsed) {
+      const texto = (parsed as { texto?: unknown }).texto
+      if (typeof texto === "string") {
+        return unwrapGroqText(texto, depth + 1)
+      }
+    }
+  } catch {}
+
+  return trimmed
+}
+
+const normalizeLatexOutput = (value: string) =>
+  collapseLatexBackslashes(unwrapGroqText(value))
 
 const DAILY_LIMIT = 100
 
@@ -135,7 +181,7 @@ export async function POST(request: Request) {
       const content = choice?.message?.content
 
       if (typeof content === "string") {
-        results.push(normalizeLatexBackslashes(content))
+        results.push(normalizeLatexOutput(content))
       } else if (Array.isArray(content)) {
         const text = content
           .map((part: unknown) => {
@@ -148,7 +194,7 @@ export async function POST(request: Request) {
           })
           .filter(Boolean)
           .join(" ")
-        results.push(normalizeLatexBackslashes(text))
+        results.push(normalizeLatexOutput(text))
       } else {
         results.push("")
       }
