@@ -4,6 +4,45 @@ import { DEFAULT_GROQ_PROMPT } from "@/lib/groq"
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+const JSON_ESCAPE_CHARS = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"])
+
+const collapseLatexBackslashes = (value: string) => {
+  if (!value.includes("\\")) return value
+
+  let result = ""
+  let index = 0
+
+  while (index < value.length) {
+    const char = value[index]
+    if (char !== "\\") {
+      result += char
+      index += 1
+      continue
+    }
+
+    let nextIndex = index + 1
+    while (nextIndex < value.length && value[nextIndex] === "\\") {
+      nextIndex += 1
+    }
+
+    const runLength = nextIndex - index
+    if (runLength === 1) {
+      result += "\\"
+    } else {
+      const following = value[nextIndex] ?? ""
+      if (following && JSON_ESCAPE_CHARS.has(following)) {
+        result += "\\".repeat(runLength)
+      } else {
+        result += "\\"
+      }
+    }
+
+    index = nextIndex
+  }
+
+  return result
+}
+
 const DAILY_LIMIT = 100
 
 type DailyUsage = {
@@ -133,7 +172,7 @@ export async function POST(request: Request) {
       const content = choice?.message?.content
 
       if (typeof content === "string") {
-        results.push(content)
+        results.push(collapseLatexBackslashes(content))
       } else if (Array.isArray(content)) {
         const text = content
           .map((part: unknown) => {
@@ -146,7 +185,7 @@ export async function POST(request: Request) {
           })
           .filter(Boolean)
           .join(" ")
-        results.push(text)
+        results.push(collapseLatexBackslashes(text))
       } else {
         results.push("")
       }
