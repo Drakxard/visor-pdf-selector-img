@@ -3628,6 +3628,17 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
+      function normalizeGroqTranscriptionText(value) {
+        if (typeof value !== 'string') return '';
+        return value
+          .replace(/\\n/g, '\n')
+          .replace(/\\r/g, '\r')
+          .replace(/\\t/g, '\t')
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, '\\')
+          .trim();
+      }
+
       async function callGroqVision(model, prompt, images, defaultPrompt = DEFAULT_GROQ_PROMPT_TEXT) {
         const promptText = (typeof prompt === 'string' ? prompt : '').trim() || defaultPrompt;
         const response = await fetch('/api/groq/transcribe', {
@@ -3733,7 +3744,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
                 DEFAULT_GROQ_IMAGE_PROMPT_TEXT,
               );
               if (imageTranscription) {
-                topicText = imageTranscription.trim();
+                topicText = normalizeGroqTranscriptionText(imageTranscription);
               }
             } catch (error) {
               console.error('Error transcribiendo la selección principal con Groq', error);
@@ -3767,6 +3778,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         );
         const detailTexts = transcriptions
           .map((entry) => {
+            if (typeof entry !== 'string') return '';
             let current = entry.trim();
             if (!current) return '';
 
@@ -3774,7 +3786,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
               try {
                 const parsed = JSON.parse(current);
                 if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
-                  return parsed.texto.trim();
+                  return normalizeGroqTranscriptionText(parsed.texto);
                 }
                 if (typeof parsed === 'string') {
                   const next = parsed.trim();
@@ -3788,16 +3800,10 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
 
             const match = current.match(/^\{\s*"texto"\s*:\s*"([\s\S]*)"\s*\}$/);
             if (match) {
-              const rawValue = match[1]
-                .replace(/\\n/g, '\n')
-                .replace(/\\r/g, '\r')
-                .replace(/\\t/g, '\t')
-                .replace(/\\"/g, '"')
-                .replace(/\\\\/g, '\\');
-              return rawValue.trim();
+              return normalizeGroqTranscriptionText(match[1]);
             }
 
-            return current;
+            return normalizeGroqTranscriptionText(current);
           })
           .filter((value) => value.length);
         return { topicText, detailTexts };
