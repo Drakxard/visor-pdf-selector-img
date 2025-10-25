@@ -545,6 +545,10 @@ export default function Home() {
   const [showPropositionInput, setShowPropositionInput] = useState(false)
   const [newPropositionTitle, setNewPropositionTitle] = useState('')
   const propositionInputRef = useRef<HTMLInputElement>(null)
+  const [creatingProposition, setCreatingProposition] = useState(false)
+  const [editingPropositionId, setEditingPropositionId] = useState<number | null>(null)
+  const [editingPropositionTitle, setEditingPropositionTitle] = useState('')
+  const editingPropositionInputRef = useRef<HTMLInputElement>(null)
   const [showManualPropositionModal, setShowManualPropositionModal] = useState(false)
   const [manualPropositionTitle, setManualPropositionTitle] = useState('')
   const [manualPropositionUrl, setManualPropositionUrl] = useState('')
@@ -1979,6 +1983,15 @@ export default function Home() {
   }, [showPropositionInput])
 
   useEffect(() => {
+    if (editingPropositionId === null) return
+    const timer = window.setTimeout(() => {
+      editingPropositionInputRef.current?.focus()
+      editingPropositionInputRef.current?.select?.()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [editingPropositionId])
+
+  useEffect(() => {
     if (!showManualPropositionModal) return
     const timer = window.setTimeout(() => {
       manualPropositionTitleRef.current?.focus()
@@ -1989,6 +2002,8 @@ export default function Home() {
   useEffect(() => {
     setShowPropositionInput(false)
     setNewPropositionTitle('')
+    setEditingPropositionId(null)
+    setEditingPropositionTitle('')
   }, [viewWeek])
 
   useEffect(() => {
@@ -2767,6 +2782,9 @@ export default function Home() {
   const unreadPropositions = activePropositions.filter((entry) => !entry.read).length
   const allPropositionsRead = hasActivePropositions && unreadPropositions === 0
   const anyPropositionRead = activePropositions.some((entry) => entry.read)
+  const anyPropositionMissingUrl = activePropositions.some(
+    (entry) => !(entry.url ?? '').trim(),
+  )
   const activeNotebookPath = activePropositionPath
   const activeNotebooks = notebooksByPath[activeNotebookPath] ?? []
   const hasActiveNotebooks = activeNotebooks.length > 0
@@ -3056,7 +3074,108 @@ export default function Home() {
     })
   }
 
+  const handleCreateProposition = async () => {
+    if (creatingProposition) return
+    const trimmedTitle = newPropositionTitle.trim()
+    if (!trimmedTitle) {
+      showToastMessage('error', 'Ingresa un nombre para el subtema.')
+      return
+    }
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.clipboard ||
+      typeof navigator.clipboard.readText !== 'function'
+    ) {
+      showToastMessage('error', 'No se puede acceder al portapapeles.')
+      return
+    }
+    setCreatingProposition(true)
+    try {
+      const clipboardText = await navigator.clipboard.readText()
+      const url = clipboardText.trim()
+      if (!url) {
+        showToastMessage('error', 'El portapapeles no contiene un enlace.')
+        return
+      }
+      if (!/^https?:\/\//i.test(url)) {
+        showToastMessage('error', 'El enlace debe comenzar con http:// o https://.')
+        return
+      }
+      const nextId = lastPropositionId + 1
+      const entry: PropositionEntry = {
+        id: nextId,
+        title: trimmedTitle,
+        read: false,
+        url,
+      }
+      setPropositionsByPath((prev) => {
+        const prevEntries = prev[activePropositionPath] ?? []
+        const nextEntries = sortPropositions([...prevEntries, entry])
+        return {
+          ...prev,
+          [activePropositionPath]: nextEntries,
+        }
+      })
+      setLastPropositionId(nextId)
+      setNewPropositionTitle('')
+      setShowPropositionInput(false)
+      showToastMessage('success', 'Proposición agregada')
+    } catch (error) {
+      console.error('Failed to read clipboard', error)
+      showToastMessage('error', 'No se pudo leer el portapapeles.')
+    } finally {
+      setCreatingProposition(false)
+    }
+  }
+
+  const handleStartEditProposition = (entry: PropositionEntry) => {
+    setShowPropositionInput(false)
+    setNewPropositionTitle('')
+    setEditingPropositionId(entry.id)
+    setEditingPropositionTitle(entry.title)
+  }
+
+  const handleCancelEditProposition = () => {
+    setEditingPropositionId(null)
+    setEditingPropositionTitle('')
+  }
+
+  const handleConfirmEditProposition = (entryId: number) => {
+    const trimmedTitle = editingPropositionTitle.trim()
+    if (!trimmedTitle) {
+      showToastMessage('error', 'Ingresa un nombre para la proposición.')
+      return
+    }
+    let found = false
+    let updated = false
+    setPropositionsByPath((prev) => {
+      const prevEntries = prev[activePropositionPath] ?? []
+      if (!prevEntries.length) return prev
+      const nextEntries = prevEntries.map((item) => {
+        if (item.id !== entryId) return item
+        found = true
+        if (item.title === trimmedTitle) return item
+        updated = true
+        return { ...item, title: trimmedTitle }
+      })
+      if (!found || !updated) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activePropositionPath]: sortPropositions(nextEntries),
+      }
+    })
+    if (updated) {
+      showToastMessage('success', 'Nombre de la proposición actualizado')
+    }
+    handleCancelEditProposition()
+  }
+
   const handleRemoveProposition = (entry: PropositionEntry) => {
+    if (editingPropositionId === entry.id) {
+      handleCancelEditProposition()
+    }
     setPropositionsByPath((prev) => {
       const prevEntries = prev[activePropositionPath] ?? []
       const nextEntries = prevEntries.filter((item) => item.id !== entry.id)
@@ -3072,36 +3191,6 @@ export default function Home() {
         [activePropositionPath]: sortPropositions(nextEntries),
       }
     })
-  }
-
-  const handleCreateProposition = () => {
-    const trimmedTitle = newPropositionTitle.trim()
-    if (!trimmedTitle) {
-      showToastMessage('error', 'Ingresa un nombre para el subtema.')
-      return
-    }
-    const normalizedBase = propositionBaseUrl.trim().replace(/\/+$/, '')
-    if (!normalizedBase) {
-      showToastMessage('error', 'Configura la URL base de proposiciones en ajustes.')
-      return
-    }
-    const nextId = lastPropositionId + 1
-    const creationUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(trimmedTitle)}`
-    window.open(creationUrl, '_blank', 'noopener,noreferrer')
-    setPropositionsByPath((prev) => {
-      const prevEntries = prev[activePropositionPath] ?? []
-      const nextEntries = sortPropositions([
-        ...prevEntries,
-        { id: nextId, title: trimmedTitle, read: false },
-      ])
-      return {
-        ...prev,
-        [activePropositionPath]: nextEntries,
-      }
-    })
-    setLastPropositionId(nextId)
-    setNewPropositionTitle('')
-    setShowPropositionInput(false)
   }
 
   const handleCloseManualPropositionModal = () => {
@@ -3138,6 +3227,7 @@ export default function Home() {
       }
     })
     setLastPropositionId(nextId)
+    showToastMessage('success', 'Proposición agregada')
     handleCloseManualPropositionModal()
   }
 
@@ -3518,11 +3608,13 @@ export default function Home() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        setManualPropositionTitle('')
-                        setManualPropositionUrl('')
-                        setShowManualPropositionModal(true)
-                      }}
+                    onClick={() => {
+                      setManualPropositionTitle('')
+                      setManualPropositionUrl('')
+                      setEditingPropositionId(null)
+                      setEditingPropositionTitle('')
+                      setShowManualPropositionModal(true)
+                    }}
                       className="text-sm font-semibold uppercase text-gray-500 transition-colors hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-gray-400 dark:hover:text-gray-200"
                       title="Agregar proposición manualmente"
                     >
@@ -3548,6 +3640,8 @@ export default function Home() {
                     className="rounded border border-gray-300 px-2 text-xs leading-6 dark:border-gray-600"
                     onClick={() => {
                       setNewPropositionTitle('')
+                      setEditingPropositionId(null)
+                      setEditingPropositionTitle('')
                       setShowPropositionInput(true)
                       window.setTimeout(() => {
                         propositionInputRef.current?.focus()
@@ -3567,7 +3661,7 @@ export default function Home() {
                       onKeyDown={(event) => {
                         if (event.key === 'Enter') {
                           event.preventDefault()
-                          handleCreateProposition()
+                          void handleCreateProposition()
                         } else if (event.key === 'Escape') {
                           event.preventDefault()
                           handleCancelAddProposition()
@@ -3575,43 +3669,97 @@ export default function Home() {
                       }}
                       className="w-full rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900"
                       placeholder="Nombre del subtema"
+                      disabled={creatingProposition}
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      Presiona Enter para crear la proposición.
+                      {creatingProposition
+                        ? 'Leyendo portapapeles...'
+                        : 'Copia el enlace de la proposición y presiona Enter para guardarla.'}
                     </p>
                   </div>
                 )}
                 {activePropositions.length > 0 ? (
                   <ul className="mt-2 space-y-1">
                     {activePropositions.map((entry) => (
-                      <li
-                        key={entry.id}
-                        className="flex items-center justify-between gap-2"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => handleOpenProposition(entry)}
-                          className={`flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid ${
-                            entry.read ? 'text-gray-400 line-through' : ''
-                          }`}
-                        >
-                          {entry.title}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveProposition(entry)}
-                          className="text-sm text-gray-400 transition-colors hover:text-red-500"
-                          aria-label={`Eliminar proposición ${entry.title}`}
-                        >
-                          ✕
-                        </button>
+                      <li key={entry.id} className="flex items-center gap-2">
+                        {editingPropositionId === entry.id ? (
+                          <input
+                            ref={editingPropositionInputRef}
+                            value={editingPropositionTitle}
+                            onChange={(event) =>
+                              setEditingPropositionTitle(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                event.preventDefault()
+                                handleConfirmEditProposition(entry.id)
+                              } else if (event.key === 'Escape') {
+                                event.preventDefault()
+                                handleCancelEditProposition()
+                              }
+                            }}
+                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-gray-700 dark:bg-gray-900"
+                            aria-label={`Editar nombre de la proposición ${entry.title}`}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenProposition(entry)}
+                            className={`flex-1 text-left text-sm underline decoration-dotted hover:decoration-solid ${
+                              entry.read ? 'text-gray-400 line-through' : ''
+                            }`}
+                          >
+                            {entry.title}
+                          </button>
+                        )}
+                        <div className="flex items-center gap-1">
+                          {editingPropositionId === entry.id ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmEditProposition(entry.id)}
+                                className="text-sm text-gray-400 transition-colors hover:text-green-500"
+                                aria-label={`Guardar nombre de la proposición ${entry.title}`}
+                              >
+                                ✔
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancelEditProposition}
+                                className="text-sm text-gray-400 transition-colors hover:text-gray-600"
+                                aria-label="Cancelar edición de la proposición"
+                              >
+                                ✕
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditProposition(entry)}
+                                className="text-sm text-gray-400 transition-colors hover:text-blue-500"
+                                aria-label={`Editar nombre de la proposición ${entry.title}`}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveProposition(entry)}
+                                className="text-sm text-gray-400 transition-colors hover:text-red-500"
+                                aria-label={`Eliminar proposición ${entry.title}`}
+                              >
+                                ✕
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
                 ) : !showPropositionInput ? (
                   <p className="mt-2 text-xs text-gray-500">Sin proposiciones</p>
                 ) : null}
-                {!propositionBaseUrl && !showPropositionInput && (
+                {anyPropositionMissingUrl && !propositionBaseUrl && !showPropositionInput && (
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
                     Configura la URL base en ajustes para habilitar los enlaces.
                   </p>
