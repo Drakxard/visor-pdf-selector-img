@@ -1025,6 +1025,33 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
       let saveTimeout = null;
       let db = null;
 
+      function getCurrentContainerTags() {
+        const segments = (currentPdfPath || '')
+          .split('/')
+          .map((segment) => segment.trim())
+          .filter(Boolean);
+        if (!segments.length) return [];
+        const lastSegment = segments[segments.length - 1];
+        if (
+          lastSegment &&
+          ((currentPdfName && lastSegment.toLowerCase() === currentPdfName.toLowerCase()) ||
+            /\.[a-z0-9]+$/i.test(lastSegment))
+        ) {
+          segments.pop();
+        }
+        return segments;
+      }
+
+      function buildPropositionUrl(basePath, propositionId, propositionTitle) {
+        const normalizedBase = (basePath || '').replace(/\/+$/, '');
+        const encodedTitle = encodeURIComponent(propositionTitle);
+        const url = `${normalizedBase}/nuevaproposicion/${propositionId}=${encodedTitle}`;
+        const tags = getCurrentContainerTags();
+        if (!tags.length) return url;
+        const query = tags.map((tag) => `tag=${encodeURIComponent(tag)}`).join('&');
+        return `${url}?${query}`;
+      }
+
       // Carpeta de PDFs + navegación entre PDFs
       const pdfFolderBtn = document.getElementById('pdf-folder-btn');
       const startBtn = document.getElementById('start-btn');
@@ -1865,7 +1892,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
                 '*',
               );
             } catch {}
-            const targetUrl = `${normalizedBase}/nuevaproposicion/${nextId}=${encodeURIComponent(topic)}`;
+            const targetUrl = buildPropositionUrl(normalizedBase, nextId, topic);
             window.open(targetUrl, '_blank', 'noopener,noreferrer');
             setLastPropositionIdSetting(nextId);
           });
@@ -1940,7 +1967,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           if (topicValue && baseUrl) {
             const normalizedBase = baseUrl.replace(/\/+$/, '');
             const previewId = getLastPropositionIdSetting() + 1;
-            const previewUrl = `${normalizedBase}/nuevaproposicion/${previewId}=${encodeURIComponent(topicValue)}`;
+            const previewUrl = buildPropositionUrl(normalizedBase, previewId, topicValue);
             transcriptionLinkButton.disabled = false;
             transcriptionLinkButton.title = previewUrl;
             transcriptionLinkButton.setAttribute('aria-label', `Abrir ${topicValue}`);
