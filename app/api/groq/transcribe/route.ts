@@ -4,7 +4,7 @@ import { DEFAULT_GROQ_PROMPT } from "@/lib/groq"
 
 const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-const normalizeLatexBackslashes = (value: string) => value.replace(/\\\\/g, "\\")
+const normalizeLatexBackslashes = (value: string) => value.replace(/\\+/g, "\\")
 
 const DAILY_LIMIT = 100
 
