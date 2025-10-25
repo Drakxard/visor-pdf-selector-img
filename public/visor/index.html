@@ -3647,7 +3647,9 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
         const data = await response.json();
         return Array.isArray(data?.transcriptions)
-          ? data.transcriptions.map((item) => (typeof item === 'string' ? item : ''))
+          ? data.transcriptions.map((item) =>
+              typeof item === 'string' ? item.replace(/\\\\/g, '\\') : ''
+            )
           : [];
       }
 
