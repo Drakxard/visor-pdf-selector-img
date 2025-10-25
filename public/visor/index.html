@@ -3759,6 +3759,26 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
           return { topicText, detailTexts: [] };
         }
 
+        const decodeGroqTextValue = (value) => {
+          const decodeEscapes = (input) =>
+            input
+              .replace(/\\n/g, '\n')
+              .replace(/\\r/g, '\r')
+              .replace(/\\(?![nr])/g, '\\');
+
+          const trimmed = typeof value === 'string' ? value.trim() : '';
+          if (!trimmed) return '';
+
+          try {
+            const normalized = JSON.parse(
+              `"${trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`,
+            );
+            return decodeEscapes(normalized).trim();
+          } catch {
+            return decodeEscapes(trimmed);
+          }
+        };
+
         const transcriptions = await callGroqVision(
           config.model,
           config.prompt,
@@ -3774,7 +3794,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
               try {
                 const parsed = JSON.parse(current);
                 if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
-                  return parsed.texto.trim();
+                  return decodeGroqTextValue(parsed.texto);
                 }
                 if (typeof parsed === 'string') {
                   const next = parsed.trim();
@@ -3788,16 +3808,10 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
 
             const match = current.match(/^\{\s*"texto"\s*:\s*"([\s\S]*)"\s*\}$/);
             if (match) {
-              const rawValue = match[1]
-                .replace(/\\n/g, '\n')
-                .replace(/\\r/g, '\r')
-                .replace(/\\t/g, '\t')
-                .replace(/\\"/g, '"')
-                .replace(/\\\\/g, '\\');
-              return rawValue.trim();
+              return decodeGroqTextValue(match[1]);
             }
 
-            return current;
+            return decodeGroqTextValue(current);
           })
           .filter((value) => value.length);
         return { topicText, detailTexts };
