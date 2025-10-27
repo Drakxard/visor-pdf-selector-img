@@ -197,6 +197,47 @@ const determineDefaultTableType = (containerPath: string): 'theory' | 'practice'
   return 'theory'
 }
 
+type SegmentStyle = 'lower' | 'upper' | 'capitalized' | 'mixed'
+
+const detectSegmentStyle = (value: string | null | undefined): SegmentStyle => {
+  if (!value) return 'capitalized'
+  if (value === value.toUpperCase()) return 'upper'
+  if (value === value.toLowerCase()) return 'lower'
+  const rest = value.slice(1)
+  if (value[0] === value[0].toUpperCase() && rest === rest.toLowerCase()) {
+    return 'capitalized'
+  }
+  return 'mixed'
+}
+
+const deriveSegmentNameForType = (
+  sourceSegment: string | null | undefined,
+  targetType: 'theory' | 'practice',
+) => {
+  const normalized = sourceSegment ? normalizeSegment(sourceSegment) : ''
+  const useEnglish = normalized === 'theory' || normalized === 'practice'
+  const hasAccent = sourceSegment ? /[áéíóúÁÉÍÓÚ]/.test(sourceSegment) : false
+  let base: string
+  if (useEnglish) {
+    base = targetType === 'practice' ? 'practice' : 'theory'
+  } else if (hasAccent) {
+    base = targetType === 'practice' ? 'práctica' : 'teoría'
+  } else {
+    base = targetType === 'practice' ? 'practica' : 'teoria'
+  }
+  const style = detectSegmentStyle(sourceSegment)
+  switch (style) {
+    case 'upper':
+      return base.toUpperCase()
+    case 'lower':
+      return base.toLowerCase()
+    case 'capitalized':
+    case 'mixed':
+    default:
+      return base.charAt(0).toUpperCase() + base.slice(1)
+  }
+}
+
 type DirectoryEntry = {
   path: string
   name: string
@@ -1337,6 +1378,129 @@ export default function Home() {
       setDirPaths(filtered.directories)
     },
     [rootHandle],
+  )
+
+  const persistTableTypeChange = useCallback(
+    async (file: PdfFile, targetType: 'theory' | 'practice') => {
+      if (!rootHandle) {
+        showToastMessage('error', 'Vuelve a seleccionar la carpeta para mover archivos.')
+        return
+      }
+      const containerPath = file.containerPath ?? ''
+      const dirSegments = containerPath.split('/').filter(Boolean)
+      let classificationIndex = -1
+      for (let i = dirSegments.length - 1; i >= 0; i--) {
+        if (isTheorySegment(dirSegments[i]) || isPracticeSegment(dirSegments[i])) {
+          classificationIndex = i
+          break
+        }
+      }
+      if (classificationIndex === -1) {
+        showToastMessage(
+          'error',
+          'No se pudo identificar una carpeta de teoría o práctica para mover el archivo.',
+        )
+        return
+      }
+      const parentSegments = dirSegments.slice(0, classificationIndex)
+      const suffixSegments = dirSegments.slice(classificationIndex + 1)
+      const parentPath = parentSegments.join('/')
+      const currentSegment = dirSegments[classificationIndex] ?? null
+      const parentEntry = directoryTree[parentPath]
+      const siblingPaths = parentEntry?.subdirs ?? []
+      let targetSegment: string | null = null
+      for (const sibling of siblingPaths) {
+        const segmentName = getLastSegment(sibling)
+        if (targetType === 'practice') {
+          if (isPracticeSegment(segmentName)) {
+            targetSegment = segmentName
+            break
+          }
+        } else if (isTheorySegment(segmentName)) {
+          targetSegment = segmentName
+          break
+        }
+      }
+      if (!targetSegment) {
+        targetSegment = deriveSegmentNameForType(currentSegment, targetType)
+      }
+      const targetSegments = [...parentSegments]
+      if (targetSegment) {
+        targetSegments.push(targetSegment)
+      }
+      const targetContainerSegments = [...targetSegments, ...suffixSegments]
+      const targetContainerPath = targetContainerSegments.join('/')
+      const sourceRelativePath = containerPath
+        ? `${containerPath}/${file.file.name}`
+        : file.file.name
+      const targetRelativePath = targetContainerPath
+        ? `${targetContainerPath}/${file.file.name}`
+        : file.file.name
+      if (sourceRelativePath === targetRelativePath) {
+        return
+      }
+      try {
+        const sourceDirHandle = await getDirectoryHandleForPath(rootHandle, containerPath)
+        if (!(await verifyPermission(sourceDirHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para modificar la carpeta original.')
+          return
+        }
+        let sourceFileHandle: FileSystemFileHandle
+        try {
+          sourceFileHandle = await sourceDirHandle.getFileHandle(file.file.name)
+        } catch (error) {
+          console.error('Failed to locate source file for move', error)
+          showToastMessage('error', 'No se encontró el archivo de origen en la carpeta seleccionada.')
+          return
+        }
+        if (!(await verifyPermission(sourceFileHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para leer o escribir el archivo seleccionado.')
+          return
+        }
+        const sourceFile = await sourceFileHandle.getFile()
+        const targetDirHandle = await getDirectoryHandleForPath(
+          rootHandle,
+          targetContainerPath,
+        )
+        if (!(await verifyPermission(targetDirHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para escribir en la carpeta de destino.')
+          return
+        }
+        const targetFileHandle = await targetDirHandle.getFileHandle(file.file.name, {
+          create: true,
+        })
+        if (!(await verifyPermission(targetFileHandle, 'readwrite'))) {
+          showToastMessage('error', 'Sin permiso para escribir el archivo en la carpeta destino.')
+          return
+        }
+        const writable = await targetFileHandle.createWritable()
+        await writable.write(await sourceFile.arrayBuffer())
+        await writable.close()
+        if (containerPath !== targetContainerPath) {
+          try {
+            await sourceDirHandle.removeEntry(file.file.name)
+          } catch (error) {
+            console.error('Failed to remove source file after move', error)
+            showToastMessage(
+              'error',
+              'El archivo se copió pero no se pudo eliminar del directorio original.',
+            )
+            await refreshDirectory(rootHandle)
+            return
+          }
+        }
+        await refreshDirectory(rootHandle)
+      } catch (error) {
+        console.error('Failed to persist table type change', error)
+        showToastMessage('error', 'No se pudo mover el archivo al directorio destino.')
+      }
+    },
+    [
+      rootHandle,
+      directoryTree,
+      refreshDirectory,
+      showToastMessage,
+    ],
   )
 
   const loadConfig = async (files: File[]) => {
@@ -2813,15 +2977,23 @@ export default function Home() {
     (dir) => !aggregatedChildSet.has(dir),
   )
 
-  const directTheoryFiles = selectedFiles.filter(
-    (file) => file.tableType === 'theory',
-  )
-  const directPracticeFiles = selectedFiles.filter(
-    (file) => file.tableType === 'practice',
-  )
-
-  const collectAndSort = (paths: string[], direct: PdfFile[], orderKey: string) => {
-    const combined = [...direct, ...paths.flatMap((path) => collectFiles(path))]
+  const buildOrderKey = (path: string, type: 'theory' | 'practice') => `${path || ''}::${type}`
+  const theoryOrderKey = buildOrderKey(currentDirEntry.path || '', 'theory')
+  const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
+  const collectCategorizedFiles = (type: 'theory' | 'practice', orderKey: string) => {
+    const aggregated: PdfFile[] = [
+      ...selectedFiles,
+      ...theoryChildPaths.flatMap((path) => collectFiles(path)),
+      ...practiceChildPaths.flatMap((path) => collectFiles(path)),
+    ]
+    const seen = new Set<string>()
+    const filtered = aggregated.filter((file) => {
+      if (seen.has(file.path)) {
+        return false
+      }
+      seen.add(file.path)
+      return file.tableType === type
+    })
     const orderList = fileOrderOverrides[orderKey] ?? []
     const orderMap = new Map<string, number>()
     orderList.forEach((path, index) => {
@@ -2829,7 +3001,7 @@ export default function Home() {
         orderMap.set(path, index)
       }
     })
-    return combined.sort((a, b) => {
+    return filtered.sort((a, b) => {
       const aIndex = orderMap.has(a.path)
         ? (orderMap.get(a.path) as number)
         : Number.POSITIVE_INFINITY
@@ -2845,12 +3017,8 @@ export default function Home() {
       })
     })
   }
-
-  const buildOrderKey = (path: string, type: 'theory' | 'practice') => `${path || ''}::${type}`
-  const theoryOrderKey = buildOrderKey(currentDirEntry.path || '', 'theory')
-  const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
-  const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles, theoryOrderKey)
-  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles, practiceOrderKey)
+  const theoryFiles = collectCategorizedFiles('theory', theoryOrderKey)
+  const practiceFiles = collectCategorizedFiles('practice', practiceOrderKey)
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
@@ -2894,6 +3062,8 @@ export default function Home() {
       handleDragEnd()
       return
     }
+    const fileToMove = draggedFile
+    const sourceType = draggedSourceType
     const uniqueOrderedPaths = orderedPaths.filter((path, index, arr) => {
       const firstIndex = arr.indexOf(path)
       return firstIndex === index
@@ -2931,6 +3101,9 @@ export default function Home() {
       return { ...prev, [draggedFile.path]: type }
     })
     handleDragEnd()
+    if (sourceType !== type) {
+      void persistTableTypeChange(fileToMove, type)
+    }
   }
 
   const handleDropOnItem = (targetFile: PdfFile, type: 'theory' | 'practice') =>
@@ -2988,31 +3161,40 @@ export default function Home() {
       onDragOver={handleListDragOver}
       onDrop={handleListDrop(type)}
     >
-      {files.map((p) => (
+      {files.length === 0 ? (
         <li
-          key={p.path}
-          className={`flex items-center gap-2 ${
-            completed[p.path] ? 'line-through text-gray-400' : ''
-          } ${draggedFile?.path === p.path ? 'opacity-60' : ''}`}
-          draggable
-          onDragStart={handleDragStart(p, type)}
-          onDragEnd={handleDragEnd}
-          onDragOver={handleItemDragOver}
-          onDrop={handleDropOnItem(p, type)}
+          className="text-xs italic text-gray-500 dark:text-gray-400"
+          onDragOver={handleListDragOver}
         >
-          <span
-            className="flex-1 truncate cursor-pointer"
-            title={p.file.name}
-            onClick={() => handleSelectFile(p)}
-          >
-            {p.file.name}
-            {p.mediaType === 'video' && (
-              <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
-            )}
-          </span>
-          <span className="text-xs text-gray-400">⋮⋮</span>
+          Sin archivos — suelta elementos aquí
         </li>
-      ))}
+      ) : (
+        files.map((p) => (
+          <li
+            key={p.path}
+            className={`flex items-center gap-2 ${
+              completed[p.path] ? 'line-through text-gray-400' : ''
+            } ${draggedFile?.path === p.path ? 'opacity-60' : ''}`}
+            draggable
+            onDragStart={handleDragStart(p, type)}
+            onDragEnd={handleDragEnd}
+            onDragOver={handleItemDragOver}
+            onDrop={handleDropOnItem(p, type)}
+          >
+            <span
+              className="flex-1 truncate cursor-pointer"
+              title={p.file.name}
+              onClick={() => handleSelectFile(p)}
+            >
+              {p.file.name}
+              {p.mediaType === 'video' && (
+                <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+              )}
+            </span>
+            <span className="text-xs text-gray-400">⋮⋮</span>
+          </li>
+        ))
+      )}
     </ul>
   )
 
@@ -3584,19 +3766,11 @@ export default function Home() {
             <div className="space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Teoría</h3>
-                {theoryFiles.length ? (
-                  renderCategorizedFileList(theoryFiles, 'theory')
-                ) : (
-                  <p className="text-xs text-gray-500">Sin archivos</p>
-                )}
+                {renderCategorizedFileList(theoryFiles, 'theory')}
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
-                {practiceFiles.length ? (
-                  renderCategorizedFileList(practiceFiles, 'practice')
-                ) : (
-                  <p className="text-xs text-gray-500">Sin archivos</p>
-                )}
+                {renderCategorizedFileList(practiceFiles, 'practice')}
               </div>
               <div>
                 <div className="flex items-center justify-between gap-2">
