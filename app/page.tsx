@@ -37,6 +37,9 @@ const isPracticeSegment = (segment: string) => {
   return normalized === "practica" || normalized === "practice"
 }
 
+const isVideosSegment = (segment: string) =>
+  normalizeSegment(segment) === "videos"
+
 const isWeekSegment = (segment: string) => {
   const normalized = normalizeSegment(segment)
   return /^semana\s*\d*$/.test(normalized)
@@ -2808,7 +2811,15 @@ export default function Home() {
   const practiceChildPaths = childDirectories.filter((dir) =>
     isPracticeSegment(getLastSegment(dir)),
   )
-  const aggregatedChildSet = new Set([...theoryChildPaths, ...practiceChildPaths])
+  const videoChildPaths = childDirectories.filter((dir) =>
+    isVideosSegment(getLastSegment(dir)),
+  )
+
+  const aggregatedChildSet = new Set([
+    ...theoryChildPaths,
+    ...practiceChildPaths,
+    ...videoChildPaths,
+  ])
   const otherChildDirectories = childDirectories.filter(
     (dir) => !aggregatedChildSet.has(dir),
   )
@@ -2850,13 +2861,41 @@ export default function Home() {
   const theoryOrderKey = buildOrderKey(currentDirEntry.path || '', 'theory')
   const practiceOrderKey = buildOrderKey(currentDirEntry.path || '', 'practice')
   const theoryFiles = collectAndSort(theoryChildPaths, directTheoryFiles, theoryOrderKey)
-  const practiceFiles = collectAndSort(practiceChildPaths, directPracticeFiles, practiceOrderKey)
+  const practiceFilesAll = collectAndSort(
+    practiceChildPaths,
+    directPracticeFiles,
+    practiceOrderKey,
+  )
+  const practiceDocuments = practiceFilesAll.filter(
+    (file) => file.mediaType !== "video",
+  )
+  const practiceVideosFromAll = practiceFilesAll.filter(
+    (file) => file.mediaType === "video",
+  )
+  const nestedVideos = videoChildPaths
+    .flatMap((path) => collectFiles(path))
+    .filter((file) => file.mediaType === "video")
+  const practiceVideoFiles = [...practiceVideosFromAll, ...nestedVideos]
+    .reduce<PdfFile[]>((acc, file) => {
+      if (!acc.some((existing) => existing.path === file.path)) {
+        acc.push(file)
+      }
+      return acc
+    }, [])
+    .sort((a, b) =>
+      a.file.name.localeCompare(b.file.name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    )
+  const hasPracticeContent =
+    practiceDocuments.length > 0 || practiceVideoFiles.length > 0
   const currentDepth = (viewWeek?.split('/').filter(Boolean).length ?? 0)
   const showTheoryPractice =
     currentDepth >= 2 &&
     (
       theoryFiles.length > 0 ||
-      practiceFiles.length > 0 ||
+      hasPracticeContent ||
       aggregatedChildSet.size > 0 ||
       hasActivePropositions ||
       showPropositionInput ||
@@ -2942,7 +2981,7 @@ export default function Home() {
       }
       event.preventDefault()
       event.stopPropagation()
-      const list = (type === 'theory' ? theoryFiles : practiceFiles)
+      const list = (type === 'theory' ? theoryFiles : practiceDocuments)
         .map((file) => file.path)
         .filter((path) => path !== draggedFile.path)
       let targetIndex = list.indexOf(targetFile.path)
@@ -2973,7 +3012,9 @@ export default function Home() {
         return
       }
       event.preventDefault()
-      const currentPaths = (type === 'theory' ? theoryFiles : practiceFiles).map(
+      const currentPaths = (
+        type === 'theory' ? theoryFiles : practiceDocuments
+      ).map(
         (file) => file.path,
       )
       if (!currentPaths.includes(draggedFile.path)) {
@@ -2982,7 +3023,10 @@ export default function Home() {
       applyDropResult(type, currentPaths)
     }
 
-  const renderCategorizedFileList = (files: PdfFile[], type: 'theory' | 'practice') => (
+  const renderCategorizedFileList = (
+    files: PdfFile[],
+    type: 'theory' | 'practice',
+  ) => (
     <ul
       className="space-y-1"
       onDragOver={handleListDragOver}
@@ -3039,6 +3083,67 @@ export default function Home() {
       ))}
     </ul>
   )
+
+  const renderVideoList = (files: PdfFile[]) => (
+    <ul className="space-y-1">
+      {files.map((p) => (
+        <li
+          key={p.path}
+          className={`flex items-center gap-2 ${
+            completed[p.path] ? 'line-through text-gray-400' : ''
+          }`}
+        >
+          <span
+            className="flex-1 truncate cursor-pointer"
+            title={p.file.name}
+            onClick={() => handleSelectFile(p)}
+          >
+            {p.file.name}
+            <span className="ml-2 text-xs text-indigo-500 uppercase">Video</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+
+  const handleVideoEnded = useCallback(() => {
+    if (!currentPdf || currentPdf.mediaType !== 'video') return
+    const containerPath = currentPdf.containerPath ?? ''
+    const targetEntry =
+      containerPath in directoryTree
+        ? directoryTree[containerPath]
+        : containerPath
+          ? null
+          : directoryTree['']
+    let siblings: PdfFile[] = []
+    if (targetEntry) {
+      siblings = targetEntry.files.filter((file) => file.mediaType === 'video')
+    } else {
+      siblings = queue.filter(
+        (file) => file.mediaType === 'video' && (file.containerPath ?? '') === containerPath,
+      )
+    }
+    if (siblings.length <= 1) return
+    const sorted = siblings
+      .slice()
+      .sort((a, b) =>
+        a.file.name.localeCompare(b.file.name, undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        }),
+      )
+    const currentIndex = sorted.findIndex((file) => file.path === currentPdf.path)
+    if (currentIndex < 0) return
+    const nextVideo = sorted[currentIndex + 1]
+    if (!nextVideo) return
+    const nextQueueIndex = queue.findIndex((file) => file.path === nextVideo.path)
+    if (nextQueueIndex >= 0) {
+      setQueueIndex(nextQueueIndex)
+      setCurrentPdf(queue[nextQueueIndex])
+    } else {
+      setCurrentPdf(nextVideo)
+    }
+  }, [currentPdf, directoryTree, queue])
 
   const handleCancelAddProposition = () => {
     setShowPropositionInput(false)
@@ -3592,12 +3697,18 @@ export default function Home() {
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-gray-500 uppercase">Práctica</h3>
-                {practiceFiles.length ? (
-                  renderCategorizedFileList(practiceFiles, 'practice')
+                {practiceDocuments.length ? (
+                  renderCategorizedFileList(practiceDocuments, 'practice')
                 ) : (
                   <p className="text-xs text-gray-500">Sin archivos</p>
                 )}
               </div>
+              {practiceVideoFiles.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase">Videos</h3>
+                  {renderVideoList(practiceVideoFiles)}
+                </div>
+              )}
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
@@ -3895,7 +4006,7 @@ export default function Home() {
           ) : null}
           {(showTheoryPractice
             ? theoryFiles.length === 0 &&
-              practiceFiles.length === 0 &&
+              !hasPracticeContent &&
               otherChildDirectories.length === 0
             : childDirectories.length === 0 && selectedFiles.length === 0) && (
             <p className="text-sm text-gray-500">Carpeta vacía</p>
@@ -3994,8 +4105,10 @@ export default function Home() {
                 <video
                   key={videoUrl}
                   controls
+                  autoPlay
                   className="w-full h-full"
                   src={videoUrl}
+                  onEnded={handleVideoEnded}
                 >
                   Tu navegador no soporta la reproducción de video.
                 </video>
