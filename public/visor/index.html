@@ -937,6 +937,44 @@ No agregues texto adicional, ni explicaciones, ni bloques de código, ni comilla
 No devuelvas varios objetos.
 Tu respuesta completa debe ser un único objeto JSON válido.`;
       const DEFAULT_GROQ_IMAGE_PROMPT_TEXT = 'Transcribe el texto de la imagen';
+      const JSON_ESCAPE_CHARS = new Set(['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']);
+
+      function collapseLatexBackslashes(value) {
+        if (typeof value !== 'string' || value.indexOf('\\') === -1) return value;
+
+        let result = '';
+        let index = 0;
+
+        while (index < value.length) {
+          const char = value[index];
+          if (char !== '\\') {
+            result += char;
+            index += 1;
+            continue;
+          }
+
+          let nextIndex = index + 1;
+          while (nextIndex < value.length && value[nextIndex] === '\\') {
+            nextIndex += 1;
+          }
+
+          const runLength = nextIndex - index;
+          if (runLength === 1) {
+            result += '\\';
+          } else {
+            const following = value[nextIndex] ?? '';
+            if (following && JSON_ESCAPE_CHARS.has(following)) {
+              result += '\\'.repeat(runLength);
+            } else {
+              result += '\\';
+            }
+          }
+
+          index = nextIndex;
+        }
+
+        return result;
+      }
       const PROPOSITION_BASE_URL_KEY = 'propositionBaseUrl';
       const PROPOSITION_LAST_ID_KEY = 'propositionLastId';
       const TOPIC_LINK_ICON_SRC = '/visor/images/subtema-link.svg';
@@ -1950,11 +1988,16 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
         }
       }
 
-      function showTranscriptionModal(formattedText, detailTexts, topicText) {
+      function showTranscriptionModal(formattedText, detailTexts, topicText, originalJson) {
         const modal = ensureTranscriptionModal();
         if (transcriptionOutput) {
           transcriptionOutput.textContent = formattedText;
           transcriptionOutput.dataset.copyValue = formattedText;
+          if (originalJson) {
+            transcriptionOutput.dataset.originalJson = originalJson;
+          } else {
+            delete transcriptionOutput.dataset.originalJson;
+          }
         }
         const normalizedTopic = typeof topicText === 'string' ? topicText.replace(/\s+/g, ' ').trim() : '';
         if (transcriptionSubtitle) {
@@ -2692,14 +2735,16 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
                 keepSelections = true;
                 return;
               }
-              const formatted = JSON.stringify({ texto: combined });
+              const normalizedCombined = collapseLatexBackslashes(combined);
+              const formattedJson = JSON.stringify({ texto: normalizedCombined });
+              const formatted = collapseLatexBackslashes(formattedJson);
               const copied = await copyTextToClipboard(formatted);
               if (copied) {
                 showToast('Transcripciones copiadas al portapapeles', 'success');
               } else {
                 showToast('No se pudo copiar automáticamente', 'warning');
               }
-              showTranscriptionModal(formatted, detailTexts, topicText);
+              showTranscriptionModal(formatted, detailTexts, topicText, formattedJson);
             } catch (error) {
               keepSelections = true;
               console.error('Error transcribiendo selecciones:', error);
@@ -3801,7 +3846,7 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
               try {
                 const parsed = JSON.parse(current);
                 if (parsed && typeof parsed === 'object' && typeof parsed.texto === 'string') {
-                  return parsed.texto.trim();
+                  return collapseLatexBackslashes(parsed.texto.trim());
                 }
                 if (typeof parsed === 'string') {
                   const next = parsed.trim();
@@ -3821,10 +3866,10 @@ Tu respuesta completa debe ser un único objeto JSON válido.`;
                 .replace(/\\t/g, '\t')
                 .replace(/\\"/g, '"')
                 .replace(/\\\\/g, '\\');
-              return rawValue.trim();
+              return collapseLatexBackslashes(rawValue.trim());
             }
 
-            return current;
+            return collapseLatexBackslashes(current);
           })
           .filter((value) => value.length);
         return { topicText, detailTexts };
